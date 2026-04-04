@@ -4,14 +4,14 @@ import { ApiResponse } from 'src/types/data-types';
 import { APIs } from '../apis';
 const API_ENDPOINTS = {
   GTPL_SUPPORT: {
-    BASE_URL: 'http://prod.gigatel.me:40501/api/',
+    BASE_URL: 'http://mob.gigatel.me:40501/api/',
     GET_CUSTOMER_LIST: 'Customer/GetCustomerList',
     GET_CIRCUIT_INFO: 'CircuitInfo/GetCircuitInfoByCustomerId',
     GET_CHAMBERS_BY_CIRCUIT: 'Chamber/GetChambersByCircuitId',
     UPDATE_CIRCUIT_INFO: 'CircuitInfo/UpdateCircuitInfo',
   },
   GIGATEL_MAIN: {
-    BASE_URL: 'http://prod.gigatel.me:60104/api/',
+    BASE_URL: 'http://mob.gigatel.me:60104/api/',
     GET_NEAREST_CHAMBERS: 'Chamber/GetNearestChambersList',
     GET_CHAMBERS_BY_CIRCUIT: 'CircuitInfo/GetChambersByCircuitId',
   },

@@ -43,11 +43,11 @@ type PickerItem = {
 };
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PICKER_DATA: PickerItem[] = [
+  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
   {label: 'Pole', value: 'Pole', icon: IMAGES.PoleImage},
+  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
   {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
   {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
-  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
-  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
 ];
 // ─── Screen ───────────────────────────────────────────────────────────────────
 const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
@@ -322,25 +322,33 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       return false;
     }
   };
-
   // ── Camera ─────────────────────────────────────────────────────────────────
   const openCameraForSlot = async (slot: 1 | 2) => {
-    // ✅ Check/request camera permission before launching
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) return;
 
     const options: CameraOptions = {
       mediaType: 'photo',
-      cameraType: 'back',
+      cameraType: 'back', // ✅ force back camera
       quality: 0.4,
       maxWidth: 800,
       maxHeight: 800,
       saveToPhotos: false,
+      presentationStyle: 'fullScreen', // ✅ important for consistency
     };
     launchCamera(options, (res: ImagePickerResponse) => {
-      if (res.didCancel || res.errorCode || !res.assets?.length) return;
-      const uri = res.assets[0]?.uri;
+      if (res.didCancel) return;
+
+      if (res.errorCode) {
+        console.log('Camera Error:', res.errorMessage);
+        return;
+      }
+
+      if (!res.assets || res.assets.length === 0) return;
+
+      const uri = res.assets[0].uri;
       if (!uri) return;
+
       if (slot === 1) setImage1(uri);
       else setImage2(uri);
     });

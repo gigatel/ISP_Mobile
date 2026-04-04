@@ -69,6 +69,7 @@
     "react-native-simple-toast": "^3.3.2",
     "react-native-system-navigation-bar": "^2.6.4",
     "react-native-tts": "^4.1.1",
+    "react-native-view-shot": "^4.0.3",
     "react-native-vision-camera": "^4.7.1",
     "react-native-webview": "^13.13.5",
     "react-native-year-month-pickers": "^1.1.0",
