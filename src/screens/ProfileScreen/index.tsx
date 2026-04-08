@@ -46,7 +46,9 @@ const ProfileScreen: FC<ScreenProps.ProfileScreen> = ({
     try {
       setIsLoading(true);
       setLocationError('');
+
       const permissionStatus = await Location.checkPermission();
+
       if (permissionStatus !== 'granted') {
         Alert.alert(
           'Permission Required',
@@ -55,11 +57,20 @@ const ProfileScreen: FC<ScreenProps.ProfileScreen> = ({
         );
         return;
       }
-      const data = (await Location.getAddressFromLatLong(
-        forceRefresh,
-      )) as DataType.GeoAddress;
-      if (data?.address) {
-        setAddress(data.address);
+
+      const data = await Location.getAddressFromLatLong(forceRefresh);
+
+      // ✅ FIX: addressList handle करो
+      let finalAddress = '';
+
+      if (data?.addressList && data.addressList.length > 0) {
+        finalAddress = data.addressList[0];
+      } else if (data?.address) {
+        finalAddress = data.address;
+      }
+
+      if (finalAddress) {
+        setAddress(finalAddress);
         Common.showToast('Address updated successfully!');
       } else {
         setLocationError('Unable to fetch address');

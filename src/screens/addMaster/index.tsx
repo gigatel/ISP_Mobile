@@ -43,11 +43,11 @@ type PickerItem = {
 };
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PICKER_DATA: PickerItem[] = [
+  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
+  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
   {label: 'Pole', value: 'Pole', icon: IMAGES.PoleImage},
   {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
   {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
-  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
-  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
 ];
 // ─── Screen ───────────────────────────────────────────────────────────────────
 const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
@@ -83,11 +83,10 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-
   // ── ✅ Page load pe getAddressLocation call ────────────────────────────────
-  useEffect(() => {
-    getAddressLocation(false);
-  }, []);
+  // useEffect(() => {
+  //   getAddressLocation(false);
+  // }, []);
 
   // ── Get current address ────────────────────────────────────────────────────
   const getAddressLocation = async (forceRefresh = false) => {
@@ -196,25 +195,89 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   };
 
   // ── Location inside modal (GPS button) ────────────────────────────────────
+  // const handleFetchLocation = async () => {
+  //   console.log('handleFecthLocation');
+  //   try {
+  //     setIsFetchingLocation(true);
+  //     const permissionStatus = await Location.checkPermission();
+  //     if (permissionStatus !== 'granted') {
+  //       Alert.alert('Permission Required', 'Location permission needed.');
+  //       return;
+  //     }
+  //     console.log('log11');
+
+  //     // const data: any = await Location.getAddressFromLatLong(true);
+  //     const data: any = await Location.getAddressFromLatLong();
+  //     console.log('log12', data);
+
+  //     if (data?.lat && data?.long) {
+  //       setLatLngText(`${data.lat}, ${data.long}`);
+
+  //       // reset fields
+  //       setSelectedAddress('');
+  //       setMasterAddress('');
+  //       setArea('');
+  //       setCity('');
+  //       setStateName('');
+  //       setCountry('');
+  //       setPincode('');
+  //       console.log('data', {data});
+
+  //       // ✅ ⭐ MAIN FIX: addressList ko dropdown me daal
+  //       // if (data?.addressList?.length) {
+  //       //   const formattedSuggestions = data.addressList.map(
+  //       //     (item: string, index: number) => ({
+  //       //       id: index,
+  //       //       label: item,
+  //       //       value: item,
+  //       //     }),
+  //       //   );
+
+  //       //   console.log('✅ Suggestions:', formattedSuggestions);
+
+  //       //   setAddressSuggestions(formattedSuggestions); // ⭐ yaha set kar
+  //       //   setShowAddressDropdown(true); // ⭐ dropdown open kar
+  //       // }
+  //       if (data?.addressList?.length) {
+  //         const formattedSuggestions = data.addressList.map(
+  //           (item: string, index: number) => ({
+  //             id: index,
+  //             label: item,
+  //             value: item,
+  //           }),
+  //         );
+  //         setAddressSuggestions(formattedSuggestions);
+  //         setShowAddressDropdown(true);
+  //       }
+
+  //       Common.showToast('Location fetched! Please select address.');
+  //     } else {
+  //       Alert.alert('Error', 'Unable to fetch coordinates');
+  //     }
+  //   } catch (e: any) {
+  //     Alert.alert('Error', e?.message || 'Failed to fetch location');
+  //   } finally {
+  //     setIsFetchingLocation(false);
+  //   }
+  // };
   const handleFetchLocation = async () => {
     console.log('handleFecthLocation');
     try {
       setIsFetchingLocation(true);
+
       const permissionStatus = await Location.checkPermission();
       if (permissionStatus !== 'granted') {
         Alert.alert('Permission Required', 'Location permission needed.');
         return;
       }
-      console.log('log11');
 
-      // const data: any = await Location.getAddressFromLatLong(true);
       const data: any = await Location.getAddressFromLatLong();
-      console.log('log12', data);
+      console.log('📦 Location Data:', data);
 
       if (data?.lat && data?.long) {
         setLatLngText(`${data.lat}, ${data.long}`);
 
-        // reset fields
+        // ✅ reset fields
         setSelectedAddress('');
         setMasterAddress('');
         setArea('');
@@ -223,7 +286,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         setCountry('');
         setPincode('');
 
-        // ✅ ⭐ MAIN FIX: addressList ko dropdown me daal
+        // ✅ ⭐ MULTIPLE ADDRESS → DROPDOWN
         if (data?.addressList?.length) {
           const formattedSuggestions = data.addressList.map(
             (item: string, index: number) => ({
@@ -232,11 +295,19 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
               value: item,
             }),
           );
-
           console.log('✅ Suggestions:', formattedSuggestions);
 
-          setAddressSuggestions(formattedSuggestions); // ⭐ yaha set kar
-          setShowAddressDropdown(true); // ⭐ dropdown open kar
+          // 👉 dropdown list
+          setAddressSuggestions(formattedSuggestions);
+          setShowAddressDropdown(true);
+
+          // ✅ ⭐ ONLY ONE ADDRESS SAVE (FIRST ONE DEFAULT)
+          const firstAddress = data.addressList[0];
+
+          console.log('✅ Default Selected Address:', firstAddress);
+
+          setSelectedAddress(firstAddress);
+          setMasterAddress(firstAddress);
         }
 
         Common.showToast('Location fetched! Please select address.');
@@ -273,14 +344,11 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   const requestCameraPermission = async (): Promise<boolean> => {
     // iOS — launchCamera handles permission natively, no manual check needed
     if (Platform.OS === 'ios') return true;
-
     // Android — check then request
     const permission = PERMISSIONS.ANDROID.CAMERA;
     try {
       const status = await check(permission);
-
       if (status === RESULTS.GRANTED) return true;
-
       if (status === RESULTS.DENIED) {
         // First time or previously denied but requestable
         const result = await request(permission);

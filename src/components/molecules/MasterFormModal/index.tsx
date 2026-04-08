@@ -207,7 +207,7 @@ export const MasterFormModal: FC<MasterFormModalProps> = ({
                       </View>
                     </TouchableOpacity>
 
-                    {showAddressDropdown && (
+                    {showAddressDropdown && addressSuggestions?.length > 0 && (
                       <View style={styles.dropdownContainer}>
                         <ScrollView
                           nestedScrollEnabled
@@ -218,14 +218,14 @@ export const MasterFormModal: FC<MasterFormModalProps> = ({
                               key={index}
                               style={styles.dropdownItem}
                               onPress={() => {
-                                onAddressSelect(item.value); // ⭐ FIX
-                                onMasterAddressChange(item.value); // ⭐ FIX
+                                console.log('📍 Selected:', item.value);
+                                onAddressSelect(item.value); // ✅ ONLY THIS
                               }}>
                               <Text style={styles.dropdownText}>
-                                {item.label} {/* ⭐ FIX */}
+                                {item.label}
                               </Text>
                             </TouchableOpacity>
-                          ))}{' '}
+                          ))}
                         </ScrollView>
                       </View>
                     )}

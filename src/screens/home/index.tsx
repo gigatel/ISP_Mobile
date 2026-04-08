@@ -17,7 +17,10 @@ import {COLORS, CONSTANT, FONTS, IMAGES, SIZE, STYLES} from '@res';
 import {todayAttendanceApi} from '@slices/attendance.slice';
 import {getLoginTokenApi} from '@slices/dashboard.slice'; // ← dashboardListApi removed
 import {DataType, ScreenProps} from '@types';
-import {attachPosterDispatch} from '../../services/LocationPosterCore';
+import {
+  attachPosterDispatch,
+  postOnceIfDue,
+} from '../../services/LocationPosterCore';
 import {startForegroundPoster} from '../../services/ForegroundLocationPoster';
 import {attachDispatch} from '../../services/LocationBatteryService';
 import WelcomeModal from '../../components/molecules/WelcomeModal';
@@ -42,6 +45,7 @@ import {
 import React, {
   FC,
   memo,
+  useRef,
   useCallback,
   useEffect,
   useMemo,
@@ -60,6 +64,7 @@ import {
   NativeModules,
   NativeEventEmitter,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import * as Animiatable from 'react-native-animatable';
 import {connect, useDispatch} from 'react-redux';
@@ -606,13 +611,17 @@ const Home: FC<ScreenProps.Home> = ({
 
   const [showLocationSheet, setShowLocationSheet] = useState(false);
   const [isLoading, setisLoading] = useState(false);
+  const [locationError, setLocationError] = useState('');
   const [showWelcome, setShowWelcome] = useState(false);
   const [showSync, setShowSync] = useState(false);
+  const [currentAddress, setCurrentAddress] = useState('');
+  const locationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [dlActive, setDlActive] = useState<boolean>(false);
   const [dlPercent, setDlPercent] = useState<number>(0);
   const [dlDownloaded, setDlDownloaded] = useState<number>(0);
   const [dlTotal, setDlTotal] = useState<number>(-1);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [address, setAddress] = useState('');
   const loginData = Preferences.getData('LOGIN_RESPONSE');
   const user = loginData;
 
@@ -645,6 +654,16 @@ const Home: FC<ScreenProps.Home> = ({
           (mv1?.project_name as string | undefined) ?? 'Employee Master',
       };
     }, [dashboardList]);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const addrData = Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS);
+      if (addrData?.address && addrData.address !== currentAddress) {
+        setCurrentAddress(addrData.address);
+      }
+    }, 5000); // check every 5s for UI update
+
+    return () => clearInterval(interval);
+  }, [currentAddress]);
 
   useEffect(() => {
     let isActive = true;
@@ -667,7 +686,46 @@ const Home: FC<ScreenProps.Home> = ({
   }, [serverVersionCode]);
 
   const hideDashboardModules = forcedUpdateRequired;
+  // const getAddressLocation = async (forceRefresh = false) => {
+  //   try {
+  //     console.log('data1');
+  //     setisLoading(true);
+  //     setLocationError('');
 
+  //     const permissionStatus = await Location.checkPermission();
+
+  //     if (permissionStatus !== 'granted') {
+  //       Alert.alert(
+  //         'Permission Required',
+  //         'Location permission is required to fetch address.',
+  //         [{text: 'OK'}],
+  //       );
+  //       return;
+  //     }
+
+  //     const data = await Location.getAddressFromLatLong(forceRefresh);
+
+  //     // ✅ FIX: addressList handle करो
+  //     let finalAddress = '';
+
+  //     if (data?.addressList && data.addressList.length > 0) {
+  //       finalAddress = data.addressList[0];
+  //     } else if (data?.address) {
+  //       finalAddress = data.address;
+  //     }
+
+  //     if (finalAddress) {
+  //       setAddress(finalAddress);
+  //       // Common.showToast('Address updated successfully!');
+  //     } else {
+  //       setLocationError('Unable to fetch address');
+  //     }
+  //   } catch (e: any) {
+  //     setLocationError(e?.message || 'Location error');
+  //   } finally {
+  //     setisLoading(false);
+  //   }
+  // };
   useEffect(() => {
     Preferences.setData(
       'FORCE_UPDATE_REQUIRED',
@@ -757,10 +815,52 @@ const Home: FC<ScreenProps.Home> = ({
       __DEV__ && console.warn('[Home] ensurePostingServices failed', e);
     }
   }, [dispatch]);
+  // useEffect(() => {
+  //   const sub = AppState.addEventListener('change', async state => {
+  //     if (['active', 'background'].includes(state)) {
+  //       await ensurePostingServices();
 
+  //       // ✅ ADD THIS LINE (IMPORTANT)
+  //       await postOnceIfDue('bg', dispatch);
+  //     }
+  //   });
+  //   return () => sub.remove();
+  // }, [ensurePostingServices]);
   useEffect(() => {
     void ensurePostingServices();
   }, [ensurePostingServices]);
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+
+      const startInterval = () => {
+        if (locationTimerRef.current) clearInterval(locationTimerRef.current);
+        locationTimerRef.current = setInterval(async () => {
+          try {
+            await postOnceIfDue('fg', dispatch);
+          } catch (e) {
+            __DEV__ && console.warn('[Home] postOnceIfDue failed', e);
+          }
+        }, 30_000); // every 30 seconds
+      };
+
+      const startLocationFlow = async () => {
+        try {
+          await ensurePostingServices();
+          startInterval();
+        } catch (err) {
+          __DEV__ && console.warn('[Home] startLocationFlow failed', err);
+        }
+      };
+
+      startLocationFlow();
+
+      return () => {
+        isMounted = false;
+        if (locationTimerRef.current) clearInterval(locationTimerRef.current);
+      };
+    }, [ensurePostingServices, dispatch]),
+  );
 
   useEffect(() => {
     if (employeeName.length > 0) setShowWelcome(true);
@@ -793,6 +893,23 @@ const Home: FC<ScreenProps.Home> = ({
       subE.remove();
     };
   }, []);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async state => {
+      __DEV__ && console.log('[AppState]', state);
+      if (
+        state === 'active' ||
+        state === 'background' ||
+        state === 'inactive'
+      ) {
+        try {
+          await ensurePostingServices();
+        } catch (e) {
+          __DEV__ && console.warn('[BG] ensure on AppState failed', e);
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [ensurePostingServices]);
 
   // ── Keep posting services alive on AppState changes ───────────────────────────
   useEffect(() => {
@@ -812,36 +929,6 @@ const Home: FC<ScreenProps.Home> = ({
     return () => sub.remove();
   }, [ensurePostingServices]);
 
-  // useEffect(() => {
-  //   const key = pickGoogleMapKey(dashboardList);
-  //   if (key) Preferences.setData('GOOGLE_MAPS_API_KEY', key);
-  // }, [dashboardList]);
-
-  // useEffect(() => {
-  //   const eid = employeeId(dashboardList);
-  //   if (eid) Preferences.setData('EMPLOYEE_ID', eid);
-  // }, [dashboardList]);
-
-  // useFocusEffect(
-  //   useCallback(() => {
-  //     if (
-  //       dashboardList?.employeeDetails?.id &&
-  //       dashboardList.employeeDetails.companyId
-  //     ) {
-  //       dispatch(
-  //         todayAttendanceApi({
-  //           employeeId: dashboardList?.employeeDetails?.id,
-  //           companyId: dashboardList?.employeeDetails?.companyId,
-  //         }),
-  //       );
-  //     }
-  //   }, [
-  //     dashboardList?.employeeDetails?.companyId,
-  //     dashboardList?.employeeDetails?.id,
-  //     dispatch,
-  //   ]),
-  // );
-
   const handleStartService = useCallback(async () => {
     const res = await Location.checkPermission();
     if (res) {
@@ -850,6 +937,11 @@ const Home: FC<ScreenProps.Home> = ({
       await ensurePostingServices();
     }
   }, [ensurePostingServices]);
+  useEffect(() => {
+    dispatch(getLoginTokenApi());
+    Permissions.requestPermission();
+    handleStartService();
+  }, [dispatch, handleStartService]);
 
   // ── One-time mount: location sheet check only (no dashboardListApi) ───────────
   useEffect(() => {
@@ -862,26 +954,8 @@ const Home: FC<ScreenProps.Home> = ({
     useCallback(() => {
       setShowPrivacy(false);
       handleStartService();
-      Geolocation.getCurrentPosition(
-        info => {
-          Preferences.setData('LAST_GEO_ADDRESS', {
-            address: '',
-            lat: info.coords.latitude,
-            long: info.coords.longitude,
-          });
-          Location.getAddressWithLatLong(
-            info.coords.latitude,
-            info.coords.longitude,
-          ).then(data => {
-            Preferences.setData('LAST_GEO_ADDRESS', data);
-          });
-        },
-        err => Common.error('getCurrentPosition HOME Error::', err),
-        {timeout: 20000, maximumAge: 0, enableHighAccuracy: false},
-      );
     }, [handleStartService]),
   );
-
   const syncOfflineData = async () => {
     try {
       setShowSync(false);
@@ -929,6 +1003,51 @@ const Home: FC<ScreenProps.Home> = ({
       sync();
     }, []),
   );
+  useEffect(() => {
+    const fetchAndSaveInitialAddress = async () => {
+      try {
+        // ✅ Ensure permission first
+        const hasPermission = await Location.checkPermission();
+        if (!hasPermission) {
+          const granted = await Permissions.requestPermission();
+          if (!granted) {
+            __DEV__ &&
+              console.log('[Home] Permission denied, skipping location fetch');
+            return;
+          }
+        }
+
+        // ✅ Get address using your helper (it gets coords internally)
+        const geo =
+          (await Location.getAddressFromLatLong()) as DataType.GeoAddress;
+        console.log('[Home] updated geoLocation', geo);
+
+        if (geo?.lat && geo?.long) {
+          // Save to preferences
+          Preferences.setData(Preferences.KEY.LAST_GEO_ADDRESS, {
+            lat: geo.lat,
+            long: geo.long,
+            address: geo.address ?? '',
+          });
+
+          __DEV__ &&
+            console.log('[Home] initial address fetched:', geo.address);
+
+          // ✅ Trigger first post after address fetched
+          await postOnceIfDue('fg', dispatch);
+        } else {
+          __DEV__ && console.log('[Home] could not fetch valid coordinates');
+        }
+      } catch (err) {
+        __DEV__ && console.warn('[Home] initial address fetch error:', err);
+      }
+    };
+
+    // small delay for GPS initialization
+    const timer = setTimeout(fetchAndSaveInitialAddress, 1000);
+    return () => clearTimeout(timer);
+  }, [dispatch]);
+
   const appVersionName = DeviceInfo.getVersion();
   const appBuildNumber = DeviceInfo.getBuildNumber();
   const hasApiModules = (dashboardList?.projectListAll?.length ?? 0) > 0;

@@ -6,7 +6,6 @@ import { error, getNetConnection, log, success } from './common';
 import { getData, removeData, setData } from './preferences';
 import { checkPermission } from './location';
 import { getFormatedTime } from './times';
-import { COLORS } from '@res';
 const UPDATE_INTERVAL = 0.25 * 60 * 1000; // 15 seconds
 const NOTIFICATION_ID = 'gigatel-location-tracking';
 let watchId: number | null;
@@ -51,13 +50,13 @@ export const startLocationService = async (): Promise<boolean> => {
     // Display foreground service notification
     await notifee.displayNotification({
       id: NOTIFICATION_ID,
-      title: 'Giga ISP is Running',
+      title: 'gigatrack is Running',
       body: 'For update the task and data, tap for more information',
       android: {
         channelId: channelId,
         asForegroundService: true,
         smallIcon: 'ic_launcher',
-        color: COLORS.PRIMARY,
+        color: AndroidColor.PURPLE,
         colorized: true,
         ongoing: true,
         importance: AndroidImportance.HIGH,
@@ -78,11 +77,14 @@ export const startLocationService = async (): Promise<boolean> => {
     return false;
   }
 };
-
 // Handle foreground notification events
 export function setupForegroundServiceEvents() {
   const unsubscribe = notifee.onForegroundEvent(({ type, detail }: { type: any, detail: any }) => {
     console.log('setupForegroundServiceEvents', type, detail);
+    console.log('detail', detail?.notification?.data?.body);
+    console.log('type:',type);
+    
+    
     if (type === EventType.ACTION_PRESS && detail?.pressAction.id === 'details') {
       log('Stop tracking action pressed');
       // notifee.stopForegroundService();
@@ -113,11 +115,9 @@ export const startLocationTracking = async (): Promise<number | null> => {
       log('Cannot start foreground service: missing location permissions');
       return null;
     }
-
     watchId = Geolocation.watchPosition(
       async position => {
         const { latitude, longitude } = position?.coords;
-
         log('BG Location::', position?.coords, getFormatedTime('HH:mm:ss'));
         const isnet = await getNetConnection();
         if (isnet) {

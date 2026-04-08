@@ -38,11 +38,18 @@ export interface Coords {
   altitude?: number;
   altitudeAccuracy?: number;
 }
-export interface GeoAddress {
-  lat: number
-  long: number,
-  address: string
-}
+export type GeoAddress = {
+  // address: string;
+  // lat: number;
+  // long: number;
+  // addressList?: string[];  // ✅ ADD THIS
+  address: string;
+  addressList?: string[]; // ⭐ ADD THIS
+  lat: number;
+  long: number;
+
+};
+
 export interface GeoError {
   code: number;
   message: string;

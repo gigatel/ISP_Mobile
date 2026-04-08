@@ -1,10 +1,10 @@
 //Base URL Dev
-// export const BASE_URL = 'http://mob.gigatel.me:40651/api/';//hrms_ios
-// export const BASE_URL_2 = 'http://mob.gigatel.me:60107/api/';//isp
-// export const BASE_URL_3 = 'http://mob.gigatel.me:40653/api/';//locationISP
-export const BASE_URL = 'http://prod.gigatel.me:7003/api/';
-export const BASE_URL_2 = 'http://prod.gigatel.me:7004/api/';
-export const BASE_URL_3 = 'http://prod.gigatel.me:7005/api/';
+export const BASE_URL = 'http://mob.gigatel.me:40651/api/';//hrms_ios
+export const BASE_URL_2 = 'http://mob.gigatel.me:60107/api/';//isp
+export const BASE_URL_3 = 'http://mob.gigatel.me:40653/api/';//locationISP
+// export const BASE_URL = 'http://prod.gigatel.me:7003/api/';
+// export const BASE_URL_2 = 'http://prod.gigatel.me:7004/api/';
+// export const BASE_URL_3 = 'http://prod.gigatel.me:7005/api/';
 //! Account
 //
 export const DashboardList = BASE_URL + 'AppDashboard/DashboardList2';
@@ -56,3 +56,4 @@ export const InsertUpdateRouteChamberMapping = BASE_URL_2 + 'RouteMasterMob/Inse
 export const UpadteChamberPathDetails = BASE_URL_2 + 'RouteMasterMob/UpdateRoutePathDetails';
 //
 export const postLocationAPI = BASE_URL_3 + 'Location/PostLocation';
+export const UpdateMobileLocation = BASE_URL_3 + 'Location/UpdateMobileLocation';

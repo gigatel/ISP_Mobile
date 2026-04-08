@@ -220,11 +220,11 @@ export const createInitialRouteAPI = createAsyncThunk<
         masterId: payload.masterId,
         orderNo: payload.orderNo,
         routePath: payload.routePath,
-      }; 
-       console.log('startinitialrouteapi',{body})
+      };
+      console.log('startinitialrouteapi', { body })
 
       const res = await APIs.postRequestWithJsonWithBody({
-        path: 'http://prod.gigatel.me:60107/api/RouteMasterMob/InsertUpdateRouteInitialInfo',
+        path: 'http://mob.gigatel.me:60107/api/RouteMasterMob/InsertUpdateRouteInitialInfo',
         body,
         isAuth: true,
       });
@@ -258,7 +258,7 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
       const body = { ...payload };
 
       const res = await APIs.postRequestWithJsonWithBody({
-        path: 'http://prod.gigatel.me:60107/api/RouteMasterMob/InsertUpdateRouteChamberMapping',
+        path: 'http://mob.gigatel.me:60107/api/RouteMasterMob/InsertUpdateRouteChamberMapping',
         body,
         isAuth: true,
       });
@@ -345,7 +345,7 @@ export const updateRoutePathDetailsAPI = createAsyncThunk<
   async (payload, thunkApi) => {
     try {
       const res = await APIs.postRequestWithJsonWithBody({
-        path: 'http://prod.gigatel.me:7004/api/RouteMasterMob/UpdateRoutePathDetails',
+        path: 'http://mob.gigatel.me:60107/api/RouteMasterMob/UpdateRoutePathDetails',
         body: payload,
         isAuth: true,
       });
@@ -432,7 +432,7 @@ export const addRouteAPI = createAsyncThunk<any, AddRouteArgs, { rejectValue: Ap
       }
       console.log('📤 Sending request to server...');
       const res = await APIs.postRequestWithFormData({
-        path: 'http://prod.gigatel.me:60107/api/RouteMasterMob/InsertUpdateRouteMasterMob',
+        path: 'http://mob.gigatel.me:60107/api/RouteMasterMob/InsertUpdateRouteMasterMob',
         body: formData,
         isAuth: true,
         isFormData: true,

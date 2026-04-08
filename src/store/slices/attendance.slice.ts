@@ -1,7 +1,3 @@
-/*
- @ 𝔸𝕦𝕥𝕙𝕠𝕣: ℙ𝕒𝕟𝕜𝕒𝕛 𝕂𝕦𝕞𝕒𝕣 ℙ𝕣𝕒𝕛𝕒𝕡𝕒𝕥𝕚
- @ 𝔼𝕞𝕒𝕚𝕝: 𝕡𝕜𝕡𝕣𝕒𝕛𝕒𝕡𝕒𝕥𝕚𝟙𝟙𝟡𝟡𝟟@𝕘𝕞𝕒𝕚𝕝.𝕔𝕠𝕞
- */
 import { APIs, URLs } from '@apis';
 import { goBack } from '@navigation/services';
 import { createAsyncThunk, createEntityAdapter, createSlice } from '@reduxjs/toolkit';
@@ -10,7 +6,6 @@ import { Common, Preferences } from '@utils';
 import { clearChamberTaskData } from './task.slice';
 import { log } from 'src/utils/common';
 import { OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX, type PreferenceKey } from './../../utils/preferences';
-import { BASE_URL_6 } from 'src/apis/urls';
 const ATTENDANCE = 'attendance';
 const PROJECT = 'project';
 const attendanceAddapter = createEntityAdapter();
@@ -94,7 +89,7 @@ const normalizeLatLngToWKT = (input?: string): string => {
   const out: string[] = [];
   for (const p of parts) {
     const cleaned = p.replace(/[()]/g, '').trim();
-
+  
     if (!cleaned) continue;
     const hasComma = cleaned.includes(',');
     const [a, b] = (hasComma ? cleaned.split(',') : cleaned.split(/\s+/)).map(x => x.trim());
@@ -164,14 +159,14 @@ export const getprojectPathApi = createAsyncThunk<
           status: 0,
           success: false,
           message: 'Offline and no cached project path available',
-          data: { projectId: pid },
+          data: { projectId: pid }, 
         };
         return thunkApi.rejectWithValue(err);
       }
       // 2) Fetch fresh (if online, or refresh requested)
       if (isNetOn || refresh) {
         const res = await APIs.getRequestWithQuery({
-          path: `${URLs.getApproveProjectPathList}?projectId=${pid}`,
+          path: `http://mob.gigatel.me:40701/api/Project/GetProjectApprovePath?projectId=${pid}`,
           params: '',
           isAuth: true,
         });
@@ -234,7 +229,7 @@ export const viewAttendanceApi = createAsyncThunk(
     } catch (error) {
       thunkApi.rejectWithValue(error);
     }
-  },
+  },  
 );
 //viewAttendanceInOutReportApi
 export const viewAttendanceInOutReportApi = createAsyncThunk(
@@ -278,7 +273,7 @@ export const getTodayWorkingOnBehalfApi = createAsyncThunk(
     const paramStr = typeof params === 'string' ? params : '';
     const cacheKey = `${OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX}${paramStr}` as PreferenceKey;
     // console.log('attendenceSliceBehalf',{paramStr}{buster});
-
+    
     try {
       // hit network FIRST; add cache-buster to avoid stale proxies
       const buster = `${paramStr.includes('?') ? '&' : '?'}_=${Date.now()}`;
@@ -287,7 +282,7 @@ export const getTodayWorkingOnBehalfApi = createAsyncThunk(
         params: `${paramStr}${buster}`, // e.g. "?empId=500&_={ts}"
         isAuth: true,
       });
-      console.log('getTodayWorkingOnBehalfApiparams', `${paramStr}${buster}`)
+      console.log('getTodayWorkingOnBehalfApiparams',`${paramStr}${buster}`)
 
       if (res?.status === 200 && res?.success) {
         Preferences.setData(cacheKey, res); // refresh cache for this param
@@ -367,7 +362,7 @@ export const markAttendanceApi = createAsyncThunk(
   `${ATTENDANCE}/markAttendanceApi`,
   async (params: any, thunkApi) => {
     try {
-      console.log('attendanceParams', { params })
+      console.log('attendanceParams',{params})
       const param = params ?? {};
       const res = await APIs.postRequestWithJson({
         path: URLs.markAttendance,
@@ -424,14 +419,14 @@ export const todayAttendanceApi = createAsyncThunk(
         return offData;
       }
       const param = params ?? {};
-      console.log('paramData==>', { param })
+      console.log('paramData==>',{param})
       const res = await APIs.postRequestWithJson({
         path: URLs.todayAttendance,
         params: param,
         isAuth: true,
       });
       if (res?.status === 200 && res.success) {
-        console.log('datanew', res)
+        console.log('datanew', res) 
         Preferences.setData('OFFLINE_TODAY_ATTENDANCE_DATA', res);
         const mark = {
           status: res.todayDuty?.status,
@@ -462,7 +457,7 @@ export const projectListApi = createAsyncThunk<
       const { query = {}, params = {}, body = {} } = args ?? {};
       console.log({ body })
       const res = await APIs.postRequestWithJsonWithBody({
-        path: `${URLs.getProjectListByProjectNameAndRange}`,
+        path: `http://mob.gigatel.me:40701/api/ProjectList/GetProjectListByNameAndRange`,
         query,
         params,
         body,
@@ -584,7 +579,7 @@ export const insertUpdateProjectPathByVendorApi = createAsyncThunk<
       }
     }
     const res = await (APIs as any).postRequestWithFormData({
-      path: `${URLs.InsertUpdateProjectPathByVendor}`,
+      path: 'http://mob.gigatel.me:40701/api/Project/InsertUpdateProjectPathByVendor',
       body: form,
       isAuth: true,
 
@@ -648,7 +643,6 @@ interface AttendanceSliceState {
   postLocation: DataType.PostLocationResponse | null;
   insertPathResponse: any | null;
 }
-
 const initialState: AttendanceSliceState = attendanceAddapter.getInitialState({
   viewAttLoading: 'idle',
   inoutLoading: 'idle',
@@ -678,7 +672,6 @@ const initialState: AttendanceSliceState = attendanceAddapter.getInitialState({
   postLocation: null,
   insertPathResponse: null,              // ✅ added
 });
-
 const attendanceSlice = createSlice({
   name: ATTENDANCE,
   initialState,
@@ -710,7 +703,6 @@ const attendanceSlice = createSlice({
     builder.addCase(getTodayWorkingOnBehalfApi.pending, (state,) => {
       state.onBehalfLoading = 'pending';
     });
-
     builder.addCase(getTodayWorkingOnBehalfApi.fulfilled, (state, action) => {
       state.onBehalfLoading = 'fulfilled';
       state.todayWorkingOnBehalfData = action.payload?.data?.map((item: DataType.TodayBehalfOf) => ({
@@ -731,12 +723,10 @@ const attendanceSlice = createSlice({
       state.zoneChambersLoading = 'fulfilled';
       state.zoneChambersData = action.payload.data ?? [];
       Preferences.setData('EMPLOYEE_ZONE_CHAMBERS', action.payload.data ?? []);
-    }
-    );
+    });
     builder.addCase(getEmpZoneChambersApi.rejected, (state,) => {
       state.zoneChambersLoading = 'rejected';
     });
-    //! Get Emp Office Branches
     builder.addCase(getEmpOfficeBranchesApi.pending, (state,) => {
       state.officeBranchesLoading = 'pending';
     });

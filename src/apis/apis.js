@@ -397,7 +397,7 @@ export const getAddressFromCoordinates = async (latitude, longitude) => {
       return null;
     }
   } catch (error) {
-    Common.error('Error fetching address:', error?.message ?? '');
+    Common.error('Error fetching address22:', error?.message ?? '');
     return null;
   }
 };

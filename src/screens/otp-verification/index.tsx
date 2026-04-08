@@ -37,6 +37,8 @@ type OtpVerifyModule = {
   getOtp?: () => Promise<void>;
 } | null;
 const ENABLE_AUTO_SMS = true;
+// const ENABLE_AUTO_SMS = false;
+
 // ─────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────
@@ -217,7 +219,6 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
       });
     }, 1000);
   };
-
   // ─────────────────────────────────────────────
   // CORE VERIFY
   // ─────────────────────────────────────────────

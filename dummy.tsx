@@ -1,1130 +1,1272 @@
-// import {Buttons, ListView} from '@atoms';
-// import {COLORS, CONTENT, FONTS, IMAGES, SIZE} from '@res';
-// import {Preferences} from '@utils';
-// import React, {memo} from 'react';
-// import {
-//   BackHandler,
-//   Image,
-//   Platform,
-//   StyleSheet,
-//   Text,
-//   View,
-// } from 'react-native';
-// import ModalSheet from '../modal-sheet';
+//latest giga isp working code
 
-// interface LocationPermissionProps {
-//   show: boolean;
-//   onPrivacyPress?: () => void;
-//   onAllowPress?: () => void;
-// }
-
-// const PrivacyItem = memo(({item}: {item: any}) => {
-//   return (
-//     <View style={styles.outerView}>
-//       <Text style={styles.titleText}>{item.title}</Text>
-//       <Text style={styles.descText}>{item.description}</Text>
-//     </View>
-//   );
-// });
-
-// export const PrivacyList = () => {
-//   return (
-//     <ListView
-//       data={CONTENT.privacyContent}
-//       renderItem={({item}) => <PrivacyItem item={item} />}
-//     />
-//   );
-// };
-
-// const LocationPermission: React.FC<LocationPermissionProps> = ({
-//   show,
-//   onPrivacyPress,
-//   onAllowPress,
-// }) => {
-//   return (
-//     <ModalSheet
-//       show={show}
-//       title={'Permission Required'}
-//       onPrimaryPress={() => {
-//         Preferences.setData('FIRST_OPEN', 'no');
-//         Preferences.setData('ALLOWED_ACCESS_FOR_LOCATION_BACKGROUND', 'yes');
-//         onAllowPress?.();
-//       }}
-//       primaryTitle={'Allow Access'}
-//       closeTitle={'Exit'}
-//       onClosePress={
-//         Platform.OS === 'android'
-//           ? () => {
-//               BackHandler.exitApp();
-//             }
-//           : undefined
-//       }>
-//       <Image
-//         source={IMAGES.LocationAccess}
-//         resizeMode={'contain'}
-//         style={styles.iconStyle}
-//       />
-//       <Text style={styles.infoTitleText}>
-//         {'Location Permission Information'}
-//       </Text>
-//       <Text style={styles.infoDescText}>
-//         {
-//           'GTPL needs your location to monitor your work tasks effectively. With your permission, we’ll collect location data when you’re using the app or when it’s in the background to support your daily operations.'
-//         }
-//       </Text>
-//       <Buttons
-//         type={'leftIconText'}
-//         title={'Check GTPL Privacy Policy'}
-//         icon={IMAGES.Privacy}
-//         viewStyle={styles.privacyButton}
-//         onPress={onPrivacyPress}
-//       />
-//       {/* {isBlocked && (
-//         <Text style={styles.blockedDesctext}>
-//           {
-//             'You have denied location access multiple times, so we can no longer request it automatically. Please enable location permissions manually in your device settings.'
-//           }
-//         </Text>
-//       )} */}
-//     </ModalSheet>
-//   );
-// };
-
-// export default LocationPermission;
-
-// const styles = StyleSheet.create({
-//   privacyButton: {
-//     alignSelf: 'flex-start',
-//     marginVertical: SIZE.MVS(15),
-//     borderRadius: 0,
-//   },
-//   blockedDesctext: {
-//     fontFamily: FONTS.REGULAR,
-//     fontSize: SIZE.MS(13),
-//     color: COLORS.ERROR,
-//     marginTop: SIZE.MVS(10),
-//   },
-//   infoDescText: {
-//     fontFamily: FONTS.REGULAR,
-//     fontSize: SIZE.MS(13),
-//     color: COLORS.TEXT_LIGHT,
-//     marginTop: SIZE.MVS(10),
-//   },
-//   infoTitleText: {
-//     fontFamily: FONTS.BOLD,
-//     fontSize: SIZE.MS(18),
-//     color: COLORS.TEXT_DARK,
-//   },
-//   iconStyle: {
-//     width: SIZE.MS(180),
-//     height: SIZE.MS(180),
-//     alignSelf: 'center',
-//   },
-//   titleText: {
-//     fontSize: SIZE.MS(16),
-//     fontFamily: FONTS.MEDIUM,
-//     color: COLORS.TEXT_DARKER,
-//     marginBottom: SIZE.MVS(10),
-//   },
-//   descText: {
-//     fontSize: SIZE.MS(14),
-//     fontFamily: FONTS.REGULAR,
-//     color: COLORS.TEXT_MEDIUM,
-//     marginBottom: SIZE.MVS(10),
-//   },
-//   outerView: {
-//     marginVertical: SIZE.MVS(10),
-//   },
-// });
-import React, {FC, useState, useEffect} from 'react';
+import {OLA_MAP_API} from '@env';
+import Geolocation, {
+  GeolocationResponse,
+} from '@react-native-community/geolocation';
+import {DataType} from '@types';
+import {Linking, Platform} from 'react-native';
 import {
-  View,
-  Image,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  ScrollView,
-  Modal,
-  ActivityIndicator,
-  Platform,
-  Linking,
-} from 'react-native';
-import {Screen} from '@organisms';
-import {BackHeader} from '@molecules';
-import {MasterFormModal} from '../../components/molecules/MasterFormModal';
-import {ScreenProps, DataType} from '@types';
-import {COLORS, IMAGES, FONTS, SIZE} from '@res';
-import LinearGradient from 'react-native-linear-gradient';
-import {Location, Common} from '@utils';
-import {parseAddressComponents} from '../../components/molecules/addressParser';
-import {StoreDispatch} from '@reducers';
-import {UpdateMasterAPI, GetMasterByNameAPI} from '@slices/route.slice';
+  isLocationEnabled,
+  promptForEnableLocationIfNeeded,
+} from 'react-native-android-location-enabler';
 import {
-  launchCamera,
-  CameraOptions,
-  ImagePickerResponse,
-} from 'react-native-image-picker';
-import {useDispatch} from 'react-redux';
-import {
+  check,
+  checkMultiple,
+  openSettings,
   PERMISSIONS,
   request,
-  check,
+  requestMultiple,
   RESULTS,
-  openSettings,
 } from 'react-native-permissions';
+import {alert, error, log} from './common';
+import {getData, setData} from './preferences';
+import {Preferences} from '@utils';
+const OLA_BASE = 'https://api.olamaps.io/places/v1';
+/* ======================================================
+    🆓 केवल OLA MAPS - 100% FREE (5 Million calls/month)
+    ⚡ Reverse Geocode: Lat/Long → Address में convert करता है
+    📍 Ola Maps India के लिए बेस्ट है और बिल्कुल मुफ्त!
+  ========================================================= */
+export const fetchOlaReverseGeocode = async (lat: number, lon: number) => {
+  console.log('fetchOlaReverseGeocode11');
+  try {
+    console.log('fetchOlaReverseGeocode12');
+    // Step 1: Coordinates को validate करें
+    if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
+      console.log('fetchOlaReverseGeocode13');
 
-type PickerItem = {
-  label: string;
-  value: string;
-  icon: any;
-};
-// ─── Constants ────────────────────────────────────────────────────────────────
-const PICKER_DATA: PickerItem[] = [
-  {label: 'Pole', value: 'Pole', icon: IMAGES.PoleImage},
-  {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
-  {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
-  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
-  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
-];
-// ─── Screen ───────────────────────────────────────────────────────────────────
-const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
-  const dispatch = useDispatch<StoreDispatch>();
-  // ── Location state ─────────────────────────────────────────────────────────
-  const [address, setAddress] = useState('');
-  const [isLocationLoading, setIsLocationLoading] = useState(false);
-  // ── Master type selection ──────────────────────────────────────────────────
-  const [selectedType, setSelectedType] = useState<PickerItem | null>(null);
-  // ── Master lists ───────────────────────────────────────────────────────────
-  const [masterList, setMasterList] = useState<any[]>([]);
-  const [isLoadingMasters, setIsLoadingMasters] = useState(false);
-  // ── Modals ─────────────────────────────────────────────────────────────────
-  const [existingVisible, setExistingVisible] = useState(false);
-  const [masterFormVisible, setMasterFormVisible] = useState(false);
-  // ── MasterFormModal fields ─────────────────────────────────────────────────
-  const [masterName, setMasterName] = useState('');
-  const [latLngText, setLatLngText] = useState('');
-  const [masterAddress, setMasterAddress] = useState('');
-  const [selectedAddress, setSelectedAddress] = useState('');
-  const [area, setArea] = useState('');
-  const [city, setCity] = useState('');
-  const [stateName, setStateName] = useState('');
-  const [country, setCountry] = useState('');
-  const [pincode, setPincode] = useState('');
-  const [landmark, setLandmark] = useState('');
-  const [extra1, setExtra1] = useState('');
-  const [extra2, setExtra2] = useState('');
-  const [image1, setImage1] = useState('');
-  const [image2, setImage2] = useState('');
-  const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
-  const [showAddressDropdown, setShowAddressDropdown] = useState(false);
-  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-
-  // ── ✅ Page load pe getAddressLocation call ────────────────────────────────
-  useEffect(() => {
-    getAddressLocation();
-  }, []);
-
-  // ── Get current address (page load — no param needed) ─────────────────────
-  // FIX: Location.getAddressFromLatLong() accepts NO arguments as per Location.ts
-  //      definition: export const getAddressFromLatLong = (): Promise<DataType.GeoAddress>
-  //      Removed the `forceRefresh` boolean param that was incorrectly being passed.
-  const getAddressLocation = async () => {
-    try {
-      setIsLocationLoading(true);
-      const permissionStatus = await Location.checkPermission();
-      if (permissionStatus !== 'granted') {
-        return;
-      }
-      // ✅ No argument — matches actual Location.ts signature
-      const data =
-        (await Location.getAddressFromLatLong()) as DataType.GeoAddress;
-      if (data?.address) {
-        setAddress(data.address);
-      }
-    } catch (e: any) {
-      console.warn('[AddMaster] getAddressLocation error:', e?.message);
-    } finally {
-      setIsLocationLoading(false);
+      console.warn('❌ Invalid coordinates:', {lat, lon});
+      return {address: 'Invalid coordinates', lat: 0, long: 0};
     }
-  };
-
-  // ── Reset form ─────────────────────────────────────────────────────────────
-  const resetForm = () => {
-    setMasterName('');
-    setLatLngText('');
-    setMasterAddress('');
-    setSelectedAddress('');
-    setLandmark('');
-    setArea('');
-    setCity('');
-    setStateName('');
-    setCountry('');
-    setPincode('');
-    setExtra1('');
-    setExtra2('');
-    setImage1('');
-    setImage2('');
-    setAddressSuggestions([]);
-    setShowAddressDropdown(false);
-  };
-
-  // ── Fetch master list ──────────────────────────────────────────────────────
-  const fetchMasterList = async (masterType: string) => {
-    try {
-      setIsLoadingMasters(true);
-      setMasterList([]);
-      const response = await dispatch(
-        GetMasterByNameAPI({name: masterType}),
-      ).unwrap();
-      if (response?.data && Array.isArray(response.data)) {
-        setMasterList(response.data);
-      } else if (Array.isArray(response)) {
-        setMasterList(response);
-      } else {
-        setMasterList([]);
-      }
-    } catch (error) {
-      console.error('❌ Error fetching masters:', error);
-      setMasterList([]);
-    } finally {
-      setIsLoadingMasters(false);
+    console.log('olaMapAPI11', OLA_MAP_API);
+    // Step 2: API Key check करें (.env file में होनी चाहिए)
+    if (!OLA_MAP_API) {
+      console.error('❌ OLA_MAP_API key missing in .env file');
+      return {address: 'API key missing', lat, long: lon};
     }
-  };
+    console.log('fetchOlaReverseGeocode12', OLA_MAP_API);
 
-  // ── Select master type ─────────────────────────────────────────────────────
-  const handleCheckboxSelect = (item: PickerItem) => {
-    setSelectedType(item);
-    fetchMasterList(item.value);
-  };
-
-  // ── Open "Existing" modal ──────────────────────────────────────────────────
-  const handleExistingClick = async () => {
-    if (!selectedType) {
-      Alert.alert('No Selection', 'Please select a master type first');
-      return;
-    }
-    try {
-      setIsLoadingMasters(true);
-      const response = await dispatch(
-        GetMasterByNameAPI({name: selectedType.value}),
-      ).unwrap();
-      const data =
-        response?.data && Array.isArray(response.data)
-          ? response.data
-          : Array.isArray(response)
-          ? response
-          : [];
-      if (data.length === 0) {
-        Alert.alert('No Data', `No ${selectedType.label} found`);
-        return;
-      }
-      setMasterList(data);
-      setExistingVisible(true);
-    } catch {
-      Alert.alert('Error', 'Failed to fetch data');
-    } finally {
-      setIsLoadingMasters(false);
-    }
-  };
-
-  // ── Open "Add New" form modal ──────────────────────────────────────────────
-  const handleOpenMasterForm = () => {
-    resetForm();
-    setMasterFormVisible(true);
-  };
-
-  // ── FIX: Location inside modal (GPS button) ────────────────────────────────
-  // Location.getAddressFromLatLong() has NO params per Location.ts definition.
-  // It always uses allowCache:false internally. We just call it directly.
-  // After fetch → populate lat/lng + open dropdown with suggestions so user
-  // can pick one of the 4 formatted addresses returned by the API.
-  const handleFetchLocation = async () => {
-    try {
-      setIsFetchingLocation(true);
-
-      const permissionStatus = await Location.checkPermission();
-      if (permissionStatus !== 'granted') {
-        Alert.alert('Permission Required', 'Location permission needed.');
-        return;
-      }
-
-      // ✅ No argument — matches actual Location.ts signature
-      const data =
-        (await Location.getAddressFromLatLong()) as DataType.GeoAddress;
-
-      console.log('[handleFetchLocation] data:', JSON.stringify(data, null, 2));
-
-      if (data?.lat && data?.long) {
-        // ── Set lat/lng text ──────────────────────────────────────────────
-        setLatLngText(`${data.lat}, ${data.long}`);
-
-        // ── Clear previously selected address fields ──────────────────────
-        setSelectedAddress('');
-        setMasterAddress('');
-        setArea('');
-        setCity('');
-        setStateName('');
-        setCountry('');
-        setPincode('');
-
-        // ── Populate suggestions & open dropdown ──────────────────────────
-        // `data.suggestions` is the array of 4 formatted address strings
-        // returned by getCurrentGeoAddress. If present, show dropdown.
-        if (data?.suggestions && data.suggestions.length > 0) {
-          setAddressSuggestions(data.suggestions);
-          setShowAddressDropdown(true); // ✅ Auto-open dropdown after fetch
-          Common.showToast('Location fetched! Please select an address below.');
-        } else if (data?.address) {
-          // Fallback: if no suggestions array but a single address string
-          // exists, treat it as the only suggestion so the dropdown still
-          // shows and the user can confirm / pick it.
-          setAddressSuggestions([data.address]);
-          setShowAddressDropdown(true);
-          Common.showToast('Location fetched! Please select an address below.');
-        } else {
-          Common.showToast('Location fetched but no address found.');
-        }
-      } else {
-        Alert.alert('Error', 'Unable to fetch coordinates');
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e?.message || 'Failed to fetch location');
-    } finally {
-      setIsFetchingLocation(false);
-    }
-  };
-
-  // ── Toggle address dropdown (manual open/close) ────────────────────────────
-  const handleAddressDropdownToggle = () => {
-    if (addressSuggestions.length > 0) {
-      setShowAddressDropdown(prev => !prev);
-    } else {
-      Alert.alert('No Data', 'Please fetch location first');
-    }
-  };
-
-  // ── FIX: User selects one of the 4 formatted addresses from dropdown ───────
-  // After selection: fill masterAddress + parse into individual fields
-  // (area, city, state, country, pincode) using parseAddressComponents.
-  const handleAddressSelect = (addr: string) => {
-    // ✅ Set the selected full address string
-    setSelectedAddress(addr);
-    setMasterAddress(addr);
-
-    // ✅ Parse the formatted address into components and fill individual fields
-    const parsed = parseAddressComponents(addr);
-
-    console.log('[handleAddressSelect] addr:', addr);
-    console.log(
-      '[handleAddressSelect] parsed:',
-      JSON.stringify(parsed, null, 2),
-    );
-
-    // Only overwrite if parser returned a value; preserves any manually typed
-    // content in case parseAddressComponents returns empty for a field.
-    if (parsed.area) setArea(parsed.area);
-    if (parsed.city) setCity(parsed.city);
-    if (parsed.state) setStateName(parsed.state);
-    if (parsed.country) setCountry(parsed.country);
-    if (parsed.pincode) setPincode(parsed.pincode);
-
-    // ✅ Close dropdown after selection
-    setShowAddressDropdown(false);
-
-    Common.showToast('Address selected ✅');
-  };
-
-  // ── ✅ Camera permission helper (Android only, iOS handled by launchCamera) ─
-  const requestCameraPermission = async (): Promise<boolean> => {
-    if (Platform.OS === 'ios') return true;
-
-    const permission = PERMISSIONS.ANDROID.CAMERA;
-    try {
-      const status = await check(permission);
-
-      if (status === RESULTS.GRANTED) return true;
-
-      if (status === RESULTS.DENIED) {
-        const result = await request(permission);
-        if (result === RESULTS.GRANTED) return true;
-        Alert.alert(
-          'Camera Permission Required',
-          'Please allow camera access to capture images.',
-          [{text: 'OK'}],
-        );
-        return false;
-      }
-
-      if (status === RESULTS.BLOCKED) {
-        Alert.alert(
-          'Camera Permission Blocked',
-          'Camera access is blocked. Please enable it from App Settings.',
-          [
-            {text: 'Cancel', style: 'cancel'},
-            {
-              text: 'Open Settings',
-              onPress: () => openSettings().catch(() => Linking.openSettings()),
-            },
-          ],
-        );
-        return false;
-      }
-
-      Alert.alert(
-        'Camera Not Available',
-        'Camera is not available on this device.',
-      );
-      return false;
-    } catch (err) {
-      console.warn('[Camera] Permission check error:', err);
-      return false;
-    }
-  };
-
-  // ── Camera ─────────────────────────────────────────────────────────────────
-  const openCameraForSlot = async (slot: 1 | 2) => {
-    const hasPermission = await requestCameraPermission();
-    if (!hasPermission) return;
-
-    const options: CameraOptions = {
-      mediaType: 'photo',
-      cameraType: 'back',
-      quality: 0.4,
-      maxWidth: 800,
-      maxHeight: 800,
-      saveToPhotos: false,
-    };
-    launchCamera(options, (res: ImagePickerResponse) => {
-      if (res.didCancel || res.errorCode || !res.assets?.length) return;
-      const uri = res.assets[0]?.uri;
-      if (!uri) return;
-      if (slot === 1) setImage1(uri);
-      else setImage2(uri);
+    // Step 3: Ola Maps API call (FREE - 5 Million calls/month तक)
+    const url = `${OLA_BASE}/reverse-geocode?latlng=${lat},${lon}&api_key=${OLA_MAP_API}`;
+    console.log('🔍 Fetching address from Ola Maps (FREE)...');
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
     });
-  };
+    console.log('fetchOlaReverseGeocode13', res);
+    // Step 4: Response check करें
+    if (!res.ok) {
+      console.error('❌ Ola API Error:', res.status, res.statusText);
+      const errorText = await res.text();
+      console.error('Error details:', errorText);
+      return {address: 'API request failed', lat, long: lon};
+    }
+    console.log('fetchOlaReverseGeocode16', res);
 
-  const handleOpenCameraForModal = (slot: 1 | 2) => {
-    const hasImage = slot === 1 ? !!image1 : !!image2;
-    if (hasImage) {
-      Alert.alert('Replace Image', `Replace Image ${slot}?`, [
-        {text: 'Cancel', style: 'cancel'},
-        {text: 'Replace', onPress: () => openCameraForSlot(slot)},
-      ]);
-      return;
-    }
-    openCameraForSlot(slot);
-  };
-
-  // ── Submit new master ──────────────────────────────────────────────────────
-  const handleAddAndSelect = async () => {
-    if (!selectedType) {
-      Alert.alert('Error', 'Please select a master type');
-      return;
-    }
-    if (!masterName.trim()) {
-      Alert.alert('Error', 'Master Name is required');
-      return;
-    }
-    if (!latLngText.trim()) {
-      Alert.alert('Error', 'Lat/Lng is required. Tap the GPS icon first.');
-      return;
-    }
-    if (!masterAddress.trim()) {
-      Alert.alert('Error', 'Address is required');
-      return;
-    }
-    if (!landmark.trim()) {
-      Alert.alert('Error', 'Landmark is required');
-      return;
+    const json = await res.json();
+    console.log(
+      '✅ Ola Maps response received:',
+      JSON.stringify(json, null, 2),
+    );
+    // Handle different response structures
+    const results = json?.results || json?.geocodingResults || [];
+    if (!results.length) {
+      return {addressList: [], lat, long: lon};
     }
 
-    setIsSubmitting(true);
-    try {
-      const payload: any = {
-        Id: 0,
-        Name: masterName.trim(),
-        MasterType: selectedType.value,
-        Address: masterAddress.trim(),
-        SelectedAddress: selectedAddress.trim() || masterAddress.trim(),
-        City: city.trim(),
-        State: stateName.trim(),
-        Country: country.trim(),
-        Area: area.trim(),
-        PinCode: pincode.trim(),
-        Landmark: landmark.trim(),
-        LatLng: latLngText.trim(),
-      };
-      if (extra1.trim()) payload.Extra1 = extra1.trim();
-      if (extra2.trim()) payload.Extra2 = extra2.trim();
-      if (image1) {
-        payload.ImageFile1 = {
-          uri: image1,
-          type: 'image/jpeg',
-          fileName: 'master_image_1.jpg',
-        };
-      }
-      if (image2) {
-        payload.ImageFile2 = {
-          uri: image2,
-          type: 'image/jpeg',
-          fileName: 'master_image_2.jpg',
-        };
-      }
+    // ✅ Sirf formatted_address nikaal ke array bana
+    const addressList = results
+      .map((item: any) => item?.formatted_address)
+      .filter((addr: string) => !!addr); // empty/null remove
 
-      console.log(
-        '📤 [AddMaster] → UpdateMasterAPI payload:',
-        JSON.stringify(payload, null, 2),
+    console.log('✅ Saved Address List:', addressList);
+
+    // Build formatted address from components
+    // const components = [
+    //   addr.house_number || addr.houseNumber,
+    //   addr.road || addr.street,
+    //   addr.neighbourhood || addr.neighborhood,
+    //   addr.suburb,
+    //   addr.city || addr.locality,
+    //   addr.state || addr.state_district,
+    //   addr.postcode || addr.postalCode,
+    //   addr.country,
+    // ].filter(Boolean);
+    // console.log('components:',components);
+    // const formattedAddress = components.join(", ");
+
+    // const result = {
+    //   address: formattedAddress ||
+    //     raw.formatted_address ||
+    //     raw.formattedAddress ||
+    //     raw.display_name ||
+    //     raw.displayName ||
+    //     "Address Not Found",
+
+    //   houseNumber: addr.house_number || addr.houseNumber || "",
+    //   street: addr.road || addr.street || "",
+    //   area: addr.neighbourhood || addr.neighborhood || addr.suburb || "",
+    //   city: addr.city || addr.locality || "",
+    //   district: addr.county || addr.district || "",
+    //   state: addr.state || addr.state_district || "",
+    //   pincode: addr.postcode || addr.postalCode || "",
+    //   country: addr.country || "",
+    //   lat,
+    //   long: lon,
+    // };
+
+    // console.log('✅ Parsed address:', raw2);
+    // return raw2;
+    return {
+      addressList,
+      lat,
+      long: lon,
+    };
+  } catch (e: any) {
+    console.error('❌ fetchOlaReverseGeocode error:', e);
+    error('Reverse geocode error: ' + e?.message);
+    return {address: 'Error fetching address', lat, long: lon};
+  }
+};
+
+/* ======================================================
+   🆓 OLA FORWARD GEOCODE - 100% FREE
+   🔍 Address Search: Address → Lat/Long में convert करता है
+   💡 Use Case: User जो address type करे, उसका location ढूंढना
+========================================================= */
+export const fetchOlaForwardGeocode = async (query: string) => {
+  try {
+    if (!query || query.trim() === '') {
+      console.warn('⚠️ Empty search query');
+      return [];
+    }
+
+    if (!OLA_MAP_API) {
+      console.error('❌ OLA_MAP_API key missing');
+      return [];
+    }
+
+    // Ola Maps FREE Geocode API
+    const url = `${OLA_BASE}/geocode?address=${encodeURIComponent(
+      query,
+    )}&api_key=${OLA_MAP_API}`;
+
+    console.log('🔍 Searching address with Ola Maps (FREE):', query);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error('❌ Forward geocode error:', response.status);
+      return [];
+    }
+
+    const json = await response.json();
+    console.log('✅ Found locations:', json?.results?.length || 0);
+
+    return json?.results || json?.geocodingResults || [];
+  } catch (err: any) {
+    console.error('❌ fetchOlaForwardGeocode error:', err);
+    error('Forward geocode error: ' + err?.message);
+    return [];
+  }
+};
+
+/* ======================================================
+   INIT GEO
+========================================================= */
+export const initializeConfig = async () => {
+  Geolocation.setRNConfiguration({
+    skipPermissionRequests: false,
+    authorizationLevel: 'always',
+    enableBackgroundLocationUpdates: true,
+    locationProvider: 'auto',
+  });
+  console.log('✅ Geolocation configuration initialized');
+};
+
+/* ======================================================
+   📱 IMPROVED GEOLOCATION - बिल्कुल FREE
+   🎯 Phone के GPS से current location लेता है
+   🔧 FIXES: Timeout, Cold Start, Indoor issues
+   💰 Cost: ₹0 (Device feature है, कोई API नहीं)
+========================================================= */
+export const getGeoLocation = async (
+  useLastKnown: boolean = true,
+): Promise<GeolocationResponse> => {
+  return new Promise((resolve, reject) => {
+    console.log('📍 Getting current location from device GPS (FREE)...');
+
+    // Strategy 1: Try to get last known position first (fast fallback)
+    if (useLastKnown) {
+      Geolocation.getCurrentPosition(
+        info => {
+          console.log(
+            '✅ Got last known position:',
+            info.coords.latitude,
+            info.coords.longitude,
+          );
+
+          // Save it
+          setData('LAST_GEO_ADDRESS', {
+            lat: info.coords.latitude,
+            long: info.coords.longitude,
+          });
+
+          resolve(info);
+        },
+        err => {
+          console.warn(
+            '⚠️ Last known position failed, trying fresh location...',
+          );
+          // If last known fails, try fresh location
+          getFreshLocation(resolve, reject);
+        },
+        {
+          enableHighAccuracy: false, // Fast but less accurate (uses network/wifi)
+          timeout: 5000, // Quick timeout for cached location
+          maximumAge: 300000, // Accept location up to 5 minutes old
+        },
       );
-      await dispatch(UpdateMasterAPI(payload)).unwrap();
-      console.log('✅ Master added');
-
-      Common.showToast(`${selectedType.label} added successfully! ✅`);
-      resetForm();
-      setMasterFormVisible(false);
-
-      fetchMasterList(selectedType.value);
-      // ✅ Refresh top location bar after submit — no param needed
-      getAddressLocation();
-    } catch (error: any) {
-      console.log('❌ Error:', JSON.stringify(error, null, 2));
-      const msg =
-        error?.message ??
-        error?.messege ??
-        error?.data?.message ??
-        error?.data?.messege ??
-        error?.response?.data?.message ??
-        error?.error ??
-        'Failed to add master. Please try again.';
-      Alert.alert('Error', String(msg));
-    } finally {
-      setIsSubmitting(false);
+    } else {
+      // Strategy 2: Get fresh high-accuracy location
+      getFreshLocation(resolve, reject);
     }
-  };
+  });
+};
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  return (
-    <Screen
-      statusBgColor={COLORS.PRIMARY}
-      statusBarStyle="light"
-      loading={isLocationLoading}>
-      <BackHeader title="Add Master" onBackPress={() => navigation.goBack()} />
+// Helper function for fresh GPS location
+const getFreshLocation = (resolve: any, reject: any) => {
+  console.log('🎯 Getting fresh GPS location...');
 
-      {/* ── Current Location Bar ── */}
-      {address ? (
-        <View style={localStyles.locationBar}>
-          <Image
-            source={IMAGES.mapLocation}
-            style={localStyles.locationIcon}
-            resizeMode="contain"
-          />
-          <Text style={localStyles.locationText} numberOfLines={2}>
-            {address}
-          </Text>
-        </View>
-      ) : isLocationLoading ? (
-        <View style={localStyles.locationBar}>
-          <ActivityIndicator
-            size="small"
-            color={COLORS.colorMediumslateblue}
-            style={{marginRight: SIZE.MS(8)}}
-          />
-          <Text style={localStyles.locationFetching}>Fetching location...</Text>
-        </View>
-      ) : null}
+  Geolocation.getCurrentPosition(
+    info => {
+      console.log(
+        '✅ Fresh location obtained:',
+        info.coords.latitude,
+        info.coords.longitude,
+      );
 
-      <ScrollView
-        style={localStyles.container}
-        contentContainerStyle={localStyles.scrollContent}
-        showsVerticalScrollIndicator={false}>
-        {/* ── Section title ── */}
-        <Text style={localStyles.sectionTitle}>Select Master Type</Text>
+      // Save fresh location
+      setData('LAST_GEO_ADDRESS', {
+        lat: info.coords.latitude,
+        long: info.coords.longitude,
+      });
 
-        {/* ── Master Type Selection ── */}
-        <View style={localStyles.typeList}>
-          {PICKER_DATA.map((item, index) => {
-            const isSelected = selectedType?.value === item.value;
-            const isLast = index === PICKER_DATA.length - 1;
-            return (
-              <TouchableOpacity
-                key={item.value}
-                style={[
-                  localStyles.typeItem,
-                  !isLast && localStyles.typeItemBorder,
-                ]}
-                activeOpacity={0.7}
-                onPress={() => handleCheckboxSelect(item)}>
-                <View
-                  style={[
-                    localStyles.radio,
-                    isSelected && localStyles.radioSelected,
-                  ]}>
-                  {isSelected && <View style={localStyles.radioInner} />}
-                </View>
-                <Image
-                  source={item.icon}
-                  style={localStyles.typeIcon}
-                  resizeMode="contain"
-                />
-                <Text
-                  style={[
-                    localStyles.typeLabel,
-                    isSelected && localStyles.typeLabelSelected,
-                  ]}>
-                  {item.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+      resolve(info);
+    },
+    err => {
+      console.error('❌ Fresh location error:', err.message);
 
-        {/* ── Loading masters ── */}
-        {isLoadingMasters && (
-          <View style={localStyles.loadingRow}>
-            <ActivityIndicator
-              size="small"
-              color={COLORS.colorMediumslateblue}
-            />
-            <Text style={localStyles.loadingText}>Loading...</Text>
-          </View>
-        )}
+      // Final fallback: use last saved location
+      const last = getData('LAST_GEO_ADDRESS');
 
-        {/* ── Found count ── */}
-        {!isLoadingMasters && selectedType && masterList.length > 0 && (
-          <Text style={localStyles.countText}>
-            ✅ Found {masterList.length} {selectedType.label}(s)
-          </Text>
-        )}
-
-        {/* ── Action Buttons ── */}
-        {selectedType && !isLoadingMasters && (
-          <View style={localStyles.actionRow}>
-            {/* Add New */}
-            <TouchableOpacity
-              style={localStyles.actionBtn}
-              activeOpacity={0.85}
-              onPress={handleOpenMasterForm}>
-              <LinearGradient
-                colors={[COLORS.colorMediumslateblue, '#6036c4']}
-                style={localStyles.gradient}
-                start={{x: 0.5, y: 0}}
-                end={{x: 0.5, y: 1}}>
-                <Text style={localStyles.actionBtnText}>
-                  + Add New {selectedType.label}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* ══ Existing Masters Modal ══════════════════════════════════════════ */}
-      <Modal visible={existingVisible} transparent animationType="slide">
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.sheet}>
-            <View style={modalStyles.header}>
-              <Text style={modalStyles.headerText}>
-                Choose {selectedType?.label || 'Master'}
-              </Text>
-              <TouchableOpacity onPress={() => setExistingVisible(false)}>
-                <Text style={modalStyles.closeX}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {isLoadingMasters ? (
-              <View style={modalStyles.loadingBox}>
-                <ActivityIndicator
-                  size="large"
-                  color={COLORS.colorMediumslateblue}
-                />
-                <Text style={modalStyles.loadingText}>Loading...</Text>
-              </View>
-            ) : masterList.length > 0 ? (
-              <ScrollView
-                style={modalStyles.listScroll}
-                showsVerticalScrollIndicator={false}>
-                {masterList.map((master, index) => {
-                  const fullAddress = [
-                    master.address,
-                    master.area,
-                    master.city,
-                    master.state,
-                    master.pincode,
-                  ]
-                    .filter(Boolean)
-                    .join(', ');
-                  return (
-                    <TouchableOpacity
-                      key={index}
-                      activeOpacity={0.7}
-                      onPress={() => {
-                        setExistingVisible(false);
-                        Common.showToast(`${master.name} selected`);
-                      }}
-                      style={modalStyles.masterRow}>
-                      <View style={{flex: 1}}>
-                        <Text style={modalStyles.masterName}>
-                          {master.name}
-                          {master.landmark ? ` (${master.landmark})` : ''}
-                        </Text>
-                        <Text
-                          style={modalStyles.masterAddress}
-                          numberOfLines={2}>
-                          {fullAddress}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            ) : (
-              <View style={modalStyles.emptyBox}>
-                <Text style={modalStyles.emptyText}>
-                  No {selectedType?.label || 'data'} available
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setExistingVisible(false)}
-                  style={modalStyles.closeBtn}>
-                  <Text style={modalStyles.closeBtnText}>Close</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      {/* ══ Add New Master Form Modal ═══════════════════════════════════════ */}
-      <MasterFormModal
-        visible={masterFormVisible}
-        selectedType={selectedType}
-        masterName={masterName}
-        latLngText={latLngText}
-        selectedAddress={selectedAddress}
-        masterAddress={masterAddress}
-        landmark={landmark}
-        onLandmarkChange={setLandmark}
-        area={area}
-        city={city}
-        stateName={stateName}
-        country={country}
-        pincode={pincode}
-        extra1={extra1}
-        extra2={extra2}
-        image1={image1}
-        image2={image2}
-        addressSuggestions={addressSuggestions}
-        showAddressDropdown={showAddressDropdown}
-        isFetchingLocation={isFetchingLocation}
-        isSubmitting={isSubmitting}
-        onClose={() => {
-          if (!isSubmitting) setMasterFormVisible(false);
-        }}
-        onMasterNameChange={setMasterName}
-        onLatLngChange={setLatLngText}
-        onSelectedAddressChange={setSelectedAddress}
-        onMasterAddressChange={setMasterAddress}
-        onAreaChange={setArea}
-        onCityChange={setCity}
-        onStateChange={setStateName}
-        onCountryChange={setCountry}
-        onPincodeChange={setPincode}
-        onExtra1Change={setExtra1}
-        onExtra2Change={setExtra2}
-        onFetchLocation={handleFetchLocation}
-        onAddressDropdownToggle={handleAddressDropdownToggle}
-        onAddressSelect={handleAddressSelect}
-        onOpenCamera={handleOpenCameraForModal}
-        onImagePreview={setPreviewImage}
-        onSubmit={handleAddAndSelect}
-      />
-
-      {/* ══ Image Preview Modal ══════════════════════════════════════════════ */}
-      <Modal
-        visible={!!previewImage}
-        transparent
-        onRequestClose={() => setPreviewImage(null)}>
-        <TouchableOpacity
-          style={previewStyles.overlay}
-          activeOpacity={1}
-          onPress={() => setPreviewImage(null)}>
-          <View style={previewStyles.content}>
-            <Image
-              source={{uri: previewImage!}}
-              style={previewStyles.image}
-              resizeMode="contain"
-            />
-            <TouchableOpacity
-              style={previewStyles.closeBtn}
-              onPress={() => setPreviewImage(null)}>
-              <Text style={previewStyles.closeBtnText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    </Screen>
+      if (last && last.lat && last.long) {
+        console.log('⚠️ Using last saved location:', last);
+        resolve({
+          coords: {
+            latitude: last.lat,
+            longitude: last.long,
+            accuracy: 1,
+            altitude: 0,
+            heading: 0,
+            speed: 0,
+            altitudeAccuracy: 0,
+          },
+          timestamp: Date.now(),
+        } as GeolocationResponse);
+      } else {
+        // Absolutely no location available
+        console.error('❌ No location available at all');
+        reject(new Error('Unable to get location. Please check GPS settings.'));
+      }
+    },
+    {
+      enableHighAccuracy: true, // Use GPS for accuracy
+      timeout: 30000, // Increased to 30 seconds for GPS cold start
+      maximumAge: 10000, // Accept location up to 10 seconds old
+    },
   );
 };
 
-export default AddMaster;
+/* ======================================================
+   GET ADDRESS FROM CURRENT LOCATION - IMPROVED VERSION
+========================================================= */
+export const getAddressFromLatLong = async (forceRefresh: boolean = false) => {
+  try {
+    console.log('🔄 Getting current location and address...');
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-const localStyles = StyleSheet.create({
-  locationBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.WHITE,
-    paddingHorizontal: SIZE.MS(14),
-    paddingVertical: SIZE.MS(10),
-    borderBottomWidth: 1,
-    borderBottomColor: '#EFEFEF',
-  },
-  locationIcon: {
-    width: SIZE.MS(16),
-    height: SIZE.MS(16),
-    marginRight: SIZE.MS(8),
-    tintColor: COLORS.colorMediumslateblue,
-  },
-  locationText: {
-    flex: 1,
-    fontSize: SIZE.MS(12),
-    fontFamily: FONTS.MEDIUM,
-    color: COLORS.colorDarkslategray,
-    lineHeight: SIZE.MS(17),
-  },
-  locationFetching: {
-    fontSize: SIZE.MS(12),
-    fontFamily: FONTS.MEDIUM,
-    color: '#999',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.BACKGROUND_DEFAULT,
-  },
-  scrollContent: {
-    paddingHorizontal: SIZE.MS(16),
-    paddingTop: SIZE.MS(20),
-    paddingBottom: SIZE.MS(40),
-  },
-  sectionTitle: {
-    fontSize: SIZE.MS(13),
-    fontFamily: FONTS.SEMI_BOLD,
-    color: COLORS.colorDarkslategray,
-    marginBottom: SIZE.MS(12),
-    letterSpacing: 0.3,
-  },
-  typeList: {
-    backgroundColor: COLORS.WHITE,
-    borderRadius: SIZE.MS(14),
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-  },
-  typeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: SIZE.MS(13),
-    paddingHorizontal: SIZE.MS(16),
-  },
-  typeItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  radio: {
-    width: SIZE.MS(20),
-    height: SIZE.MS(20),
-    borderRadius: SIZE.MS(10),
-    borderWidth: 2,
-    borderColor: '#CCC',
-    marginRight: SIZE.MS(10),
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioSelected: {
-    borderColor: COLORS.colorMediumslateblue,
-  },
-  radioInner: {
-    width: SIZE.MS(10),
-    height: SIZE.MS(10),
-    borderRadius: SIZE.MS(5),
-    backgroundColor: COLORS.colorMediumslateblue,
-  },
-  typeIcon: {
-    width: SIZE.MS(22),
-    height: SIZE.MS(22),
-    marginRight: SIZE.MS(10),
-  },
-  typeLabel: {
-    fontSize: SIZE.MS(14),
-    fontFamily: FONTS.MEDIUM,
-    color: '#333',
-  },
-  typeLabelSelected: {
-    color: COLORS.colorMediumslateblue,
-    fontFamily: FONTS.SEMI_BOLD,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: SIZE.MS(14),
-    gap: SIZE.MS(8),
-  },
-  loadingText: {
-    fontSize: SIZE.MS(12),
-    color: '#666',
-    fontFamily: FONTS.MEDIUM,
-  },
-  countText: {
-    fontSize: SIZE.MS(12),
-    color: '#4CAF50',
-    fontFamily: FONTS.MEDIUM,
-    marginTop: SIZE.MS(12),
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: SIZE.MS(12),
-    marginTop: SIZE.MS(20),
-  },
-  actionBtn: {
-    flex: 1,
-    borderRadius: SIZE.MS(25),
-    overflow: 'hidden',
-    elevation: 3,
-  },
-  gradient: {
-    paddingVertical: SIZE.MS(13),
-    alignItems: 'center',
-    borderRadius: SIZE.MS(25),
-  },
-  actionBtnText: {
-    fontSize: SIZE.MS(14),
-    fontFamily: FONTS.SEMI_BOLD,
-    color: COLORS.WHITE,
-    letterSpacing: 0.3,
-  },
-});
+    // Check permissions first
+    const permStatus = await checkPermission();
+    if (
+      permStatus !== 'granted' &&
+      permStatus['android.permission.ACCESS_FINE_LOCATION'] !== 'granted'
+    ) {
+      console.error('❌ Location permission not granted');
+      return {
+        address: 'Location permission denied. Please enable in settings.',
+        lat: 0,
+        long: 0,
+      };
+    }
 
-const modalStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: COLORS.WHITE,
-    borderTopLeftRadius: SIZE.MS(20),
-    borderTopRightRadius: SIZE.MS(20),
-    maxHeight: '80%',
-    paddingBottom: SIZE.MS(24),
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SIZE.MS(20),
-    paddingVertical: SIZE.MS(16),
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  headerText: {
-    fontSize: SIZE.MS(16),
-    fontFamily: FONTS.BOLD,
-    color: COLORS.colorDarkslategray,
-  },
-  closeX: {
-    fontSize: SIZE.MS(18),
-    color: '#666',
-    paddingHorizontal: SIZE.MS(4),
-  },
-  loadingBox: {
-    paddingVertical: SIZE.MS(40),
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: SIZE.MS(10),
-    fontSize: SIZE.MS(13),
-    color: '#666',
-    fontFamily: FONTS.MEDIUM,
-  },
-  listScroll: {
-    paddingHorizontal: SIZE.MS(16),
-  },
-  masterRow: {
-    paddingVertical: SIZE.MS(14),
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5F5F5',
-  },
-  masterName: {
-    fontSize: SIZE.MS(14),
-    fontWeight: '600',
-    color: '#6C4DFF',
-    fontFamily: FONTS.SEMI_BOLD,
-  },
-  masterAddress: {
-    fontSize: SIZE.MS(12),
-    color: '#555',
-    marginTop: SIZE.MS(4),
-    fontFamily: FONTS.MEDIUM,
-    lineHeight: SIZE.MS(17),
-  },
-  emptyBox: {
-    paddingVertical: SIZE.MS(40),
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: SIZE.MS(14),
-    color: '#888',
-    fontFamily: FONTS.MEDIUM,
-  },
-  closeBtn: {
-    marginTop: SIZE.MS(16),
-    backgroundColor: '#E5E5E5',
-    paddingVertical: SIZE.MS(10),
-    paddingHorizontal: SIZE.MS(30),
-    borderRadius: SIZE.MS(20),
-  },
-  closeBtnText: {
-    fontSize: SIZE.MS(13),
-    color: '#333',
-    fontFamily: FONTS.MEDIUM,
-  },
-});
+    // Check if GPS is enabled
+    const gpsEnabled = await checkGps();
+    if (!gpsEnabled) {
+      console.error('❌ GPS not enabled');
+      return {
+        address: 'GPS is disabled. Please enable location services.',
+        lat: 0,
+        long: 0,
+      };
+    }
 
-const previewStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  content: {
-    width: '90%',
-    height: '70%',
-    position: 'relative',
-  },
-  image: {
-    width: '100%',
-    height: '100%',
-    borderRadius: SIZE.MS(12),
-  },
-  closeBtn: {
-    position: 'absolute',
-    top: -SIZE.MS(40),
-    right: 0,
-    width: SIZE.MS(36),
-    height: SIZE.MS(36),
-    borderRadius: SIZE.MS(18),
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeBtnText: {
-    color: COLORS.WHITE,
-    fontSize: SIZE.MS(20),
-    fontFamily: FONTS.BOLD,
-  },
-});
+    // Get location (will use last known if GPS is slow)
+    const info = await getGeoLocation(!forceRefresh);
+
+    if (!info || !info.coords) {
+      console.warn('⚠️ No location info available');
+      return {address: 'Location unavailable', lat: 0, long: 0};
+    }
+
+    console.log(
+      '✅ Got location:',
+      info.coords.latitude,
+      info.coords.longitude,
+    );
+
+    //Get address from coordinates
+    const addressData = await fetchOlaReverseGeocode(
+      info.coords.latitude,
+      info.coords.longitude,
+    );
+
+    // Save the full address data
+    // if (addressData && addressData.address !== "Address Not Found") {
+    //   setData("LAST_FULL_ADDRESS", addressData);
+    // }
+    // Save the full address data (FIXED)
+    if (addressData) {
+      let finalAddress = '';
+
+      if (addressData.addressList && addressData.addressList.length > 0) {
+        finalAddress = addressData.addressList[0];
+      } else if (addressData.address) {
+        finalAddress = addressData.address;
+      }
+
+      if (finalAddress) {
+        const payload = {
+          address: finalAddress,
+          lat: addressData.lat,
+          long: addressData.long,
+        };
+        // ✅ FIX
+        Preferences.setData(
+          Preferences.KEY.LAST_GEO_ADDRESS,
+          JSON.stringify(payload),
+        );
+
+        Preferences.setData(
+          Preferences.KEY.LAST_FULL_ADDRESS,
+          JSON.stringify(payload),
+        );
+        console.log('✅ Saved LAST_GEO_ADDRESS:', payload);
+      }
+    }
+    return addressData;
+  } catch (e: any) {
+    console.error('❌ getAddressFromLatLong error:', e);
+
+    // Try to return last saved address
+    const lastAddress = getData('LAST_FULL_ADDRESS');
+    if (lastAddress) {
+      console.log('⚠️ Returning last saved address');
+      return lastAddress;
+    }
+
+    return {
+      address: 'Error: ' + (e?.message || 'Unable to get location'),
+      lat: 0,
+      long: 0,
+    };
+  }
+};
+
+/* ======================================================
+   GET ADDRESS FROM SPECIFIC LAT/LONG
+========================================================= */
+export const getAddressWithLatLong = async (lat: number, lon: number) => {
+  try {
+    if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
+      console.warn('❌ Invalid coordinates provided:', {lat, lon});
+      return {
+        address: 'Invalid coordinates',
+        lat: 0,
+        long: 0,
+      };
+    }
+
+    console.log('🔍 Getting address for coordinates:', lat, lon);
+    // return await fetchOlaReverseGeocode(lat, lon);
+  } catch (e: any) {
+    console.error('❌ getAddressWithLatLong error:', e);
+    return {
+      address: 'Error fetching address',
+      lat,
+      long: lon,
+    };
+  }
+};
+
+/* ======================================================
+   WATCH LOCATION
+========================================================= */
+export const watchGeoLocation = async (
+  callback: (res: GeolocationResponse) => void,
+) => {
+  console.log('👀 Starting location watch...');
+
+  return Geolocation.watchPosition(
+    res => {
+      console.log('📍 Watch position update:', res.coords);
+      setData('LAST_GEO_ADDRESS', {
+        lat: res.coords.latitude,
+        long: res.coords.longitude,
+      });
+      callback(res);
+    },
+    err => {
+      console.error('❌ Watch position error:', err);
+      error('Watch Error: ' + err?.message);
+    },
+    {
+      enableHighAccuracy: true,
+      distanceFilter: 10,
+      interval: 8000,
+      fastestInterval: 5000,
+      timeout: 20000, // Added timeout
+      maximumAge: 10000, // Added maximumAge
+    },
+  );
+};
+
+/* ======================================================
+   DISTANCE CALCULATION
+========================================================= */
+export const calculateDistance = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+  unit: 'km' | 'mi' | 'm' = 'm',
+): number => {
+  if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = unit === 'km' ? 6371 : unit === 'mi' ? 3958.8 : 6371000;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const dist = R * c;
+
+  return unit === 'm' ? Math.round(dist) : Number(dist.toFixed(2));
+};
+
+/* ======================================================
+   FIND NEAREST CHAMBER
+========================================================= */
+export const findNearestChamber = (
+  currentLat: number,
+  currentLon: number,
+  chambers: Array<any>,
+  minDistance: number,
+) => {
+  let nearest = null;
+  let minDist = Infinity;
+
+  for (const c of chambers) {
+    const lat = parseFloat(c.chamber_latitude);
+    const lon = parseFloat(c.chamber_longitude);
+
+    if (isNaN(lat) || isNaN(lon)) continue;
+
+    const dist = calculateDistance(currentLat, currentLon, lat, lon);
+
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = {chamber: c, distance: dist};
+    }
+
+    if (dist <= minDistance) return nearest;
+  }
+
+  return minDist <= minDistance ? nearest : null;
+};
+
+/* ======================================================
+   PERMISSION HANDLING - IMPROVED
+========================================================= */
+export const checkGps = async () => {
+  try {
+    // Android only - iOS doesn't have this API
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    const enabled = await isLocationEnabled();
+    console.log('📍 GPS enabled:', enabled);
+
+    if (!enabled) {
+      console.log('⚠️ GPS disabled, prompting user...');
+      try {
+        const res = await promptForEnableLocationIfNeeded();
+        console.log('✅ GPS prompt result:', res);
+        return res === 'enabled' || res === 'already-enabled';
+      } catch (e) {
+        console.error('❌ GPS prompt error:', e);
+        return false;
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('❌ checkGps error:', e);
+    return Platform.OS === 'ios'; // iOS doesn't need this check
+  }
+};
+
+export const checkPermission = async () => {
+  try {
+    // First check GPS
+    const gps = await checkGps();
+    if (!gps) {
+      console.log('❌ GPS not enabled');
+      return 'denied';
+    }
+
+    if (Platform.OS === 'android') {
+      const perm = await checkMultiple([
+        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+        PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION,
+      ]);
+
+      console.log('📱 Android permissions:', perm);
+
+      const fineLocation = perm['android.permission.ACCESS_FINE_LOCATION'];
+
+      if (fineLocation === RESULTS.GRANTED) {
+        return 'granted';
+      } else if (fineLocation === RESULTS.DENIED) {
+        // Permission not asked yet, request it
+        return await requestPermission();
+      } else if (fineLocation === RESULTS.BLOCKED) {
+        // User denied permanently
+        console.warn('⚠️ Location permission blocked, need to open settings');
+        return 'blocked';
+      }
+
+      return fineLocation;
+    }
+
+    // iOS
+    const iosPermission = await check(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+    console.log('📱 iOS permission:', iosPermission);
+
+    if (iosPermission === RESULTS.DENIED) {
+      return await requestPermission();
+    }
+
+    return iosPermission;
+  } catch (e) {
+    console.error('❌ checkPermission error:', e);
+    return 'denied';
+  }
+};
+
+export const requestPermission = async () => {
+  try {
+    if (Platform.OS === 'android') {
+      const result = await requestMultiple([
+        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+        PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION,
+      ]);
+      console.log('📱 Android permission request result:', result);
+
+      const fineLocation = result['android.permission.ACCESS_FINE_LOCATION'];
+      return fineLocation === RESULTS.GRANTED ? 'granted' : fineLocation;
+    }
+
+    const result = await request(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+    console.log('📱 iOS permission request result:', result);
+    return result;
+  } catch (e) {
+    console.error('❌ requestPermission error:', e);
+    return 'denied';
+  }
+};
+
+/* ======================================================
+   LOCATION SETTINGS
+========================================================= */
+export const openLocationSetting = () => {
+  if (Platform.OS === 'android') {
+    Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS').catch(() =>
+      openSettings(),
+    );
+  } else {
+    openSettings();
+  }
+};
+
+//
+import {OLA_MAP_API} from '@env';
+import Geolocation, {
+  GeolocationResponse,
+} from '@react-native-community/geolocation';
+import {DataType} from '@types';
+import {Linking, Platform} from 'react-native';
+import {
+  isLocationEnabled,
+  promptForEnableLocationIfNeeded,
+} from 'react-native-android-location-enabler';
+import {
+  check,
+  checkMultiple,
+  openSettings,
+  PERMISSIONS,
+  request,
+  requestMultiple,
+  RESULTS,
+} from 'react-native-permissions';
+import {alert, error, log} from './common';
+import {getData, setData} from './preferences';
+import {Preferences} from '@utils';
+const OLA_BASE = 'https://api.olamaps.io/places/v1';
+/* ======================================================
+    🆓 केवल OLA MAPS - 100% FREE (5 Million calls/month)
+    ⚡ Reverse Geocode: Lat/Long → Address में convert करता है
+    📍 Ola Maps India के लिए बेस्ट है और बिल्कुल मुफ्त!
+  ========================================================= */
+export const fetchOlaReverseGeocode = async (lat: number, lon: number) => {
+  console.log('fetchOlaReverseGeocode11');
+  try {
+    console.log('fetchOlaReverseGeocode12');
+    // Step 1: Coordinates को validate करें
+    if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
+      console.log('fetchOlaReverseGeocode13');
+
+      console.warn('❌ Invalid coordinates:', {lat, lon});
+      return {address: 'Invalid coordinates', lat: 0, long: 0};
+    }
+    console.log('olaMapAPI11', OLA_MAP_API);
+    // Step 2: API Key check करें (.env file में होनी चाहिए)
+    if (!OLA_MAP_API) {
+      console.error('❌ OLA_MAP_API key missing in .env file');
+      return {address: 'API key missing', lat, long: lon};
+    }
+    console.log('fetchOlaReverseGeocode12', OLA_MAP_API);
+
+    // Step 3: Ola Maps API call (FREE - 5 Million calls/month तक)
+    const url = `${OLA_BASE}/reverse-geocode?latlng=${lat},${lon}&api_key=${OLA_MAP_API}`;
+    console.log('🔍 Fetching address from Ola Maps (FREE)...');
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    });
+    console.log('fetchOlaReverseGeocode13', res);
+    // Step 4: Response check करें
+    if (!res.ok) {
+      console.error('❌ Ola API Error:', res.status, res.statusText);
+      const errorText = await res.text();
+      console.error('Error details:', errorText);
+      return {address: 'API request failed', lat, long: lon};
+    }
+    console.log('fetchOlaReverseGeocode16', res);
+
+    const json = await res.json();
+    console.log(
+      '✅ Ola Maps response received:',
+      JSON.stringify(json, null, 2),
+    );
+    // Handle different response structures
+    const results = json?.results || json?.geocodingResults || [];
+    if (!results.length) {
+      return {addressList: [], lat, long: lon};
+    }
+
+    // ✅ Sirf formatted_address nikaal ke array bana
+    const addressList = results
+      .map((item: any) => item?.formatted_address)
+      .filter((addr: string) => !!addr); // empty/null remove
+
+    console.log('✅ Saved Address List:', addressList);
+
+    // Build formatted address from components
+    // const components = [
+    //   addr.house_number || addr.houseNumber,
+    //   addr.road || addr.street,
+    //   addr.neighbourhood || addr.neighborhood,
+    //   addr.suburb,
+    //   addr.city || addr.locality,
+    //   addr.state || addr.state_district,
+    //   addr.postcode || addr.postalCode,
+    //   addr.country,
+    // ].filter(Boolean);
+    // console.log('components:',components);
+    // const formattedAddress = components.join(", ");
+
+    // const result = {
+    //   address: formattedAddress ||
+    //     raw.formatted_address ||
+    //     raw.formattedAddress ||
+    //     raw.display_name ||
+    //     raw.displayName ||
+    //     "Address Not Found",
+
+    //   houseNumber: addr.house_number || addr.houseNumber || "",
+    //   street: addr.road || addr.street || "",
+    //   area: addr.neighbourhood || addr.neighborhood || addr.suburb || "",
+    //   city: addr.city || addr.locality || "",
+    //   district: addr.county || addr.district || "",
+    //   state: addr.state || addr.state_district || "",
+    //   pincode: addr.postcode || addr.postalCode || "",
+    //   country: addr.country || "",
+    //   lat,
+    //   long: lon,
+    // };
+
+    // console.log('✅ Parsed address:', raw2);
+    // return raw2;
+    return {
+      addressList,
+      lat,
+      long: lon,
+    };
+  } catch (e: any) {
+    console.error('❌ fetchOlaReverseGeocode error:', e);
+    error('Reverse geocode error: ' + e?.message);
+    return {address: 'Error fetching address', lat, long: lon};
+  }
+};
+
+/* ======================================================
+   🆓 OLA FORWARD GEOCODE - 100% FREE
+   🔍 Address Search: Address → Lat/Long में convert करता है
+   💡 Use Case: User जो address type करे, उसका location ढूंढना
+========================================================= */
+export const fetchOlaForwardGeocode = async (query: string) => {
+  try {
+    if (!query || query.trim() === '') {
+      console.warn('⚠️ Empty search query');
+      return [];
+    }
+
+    if (!OLA_MAP_API) {
+      console.error('❌ OLA_MAP_API key missing');
+      return [];
+    }
+
+    // Ola Maps FREE Geocode API
+    const url = `${OLA_BASE}/geocode?address=${encodeURIComponent(
+      query,
+    )}&api_key=${OLA_MAP_API}`;
+
+    console.log('🔍 Searching address with Ola Maps (FREE):', query);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error('❌ Forward geocode error:', response.status);
+      return [];
+    }
+
+    const json = await response.json();
+    console.log('✅ Found locations:', json?.results?.length || 0);
+
+    return json?.results || json?.geocodingResults || [];
+  } catch (err: any) {
+    console.error('❌ fetchOlaForwardGeocode error:', err);
+    error('Forward geocode error: ' + err?.message);
+    return [];
+  }
+};
+
+/* ======================================================
+   INIT GEO
+========================================================= */
+export const initializeConfig = async () => {
+  Geolocation.setRNConfiguration({
+    skipPermissionRequests: false,
+    authorizationLevel: 'always',
+    enableBackgroundLocationUpdates: true,
+    locationProvider: 'auto',
+  });
+  console.log('✅ Geolocation configuration initialized');
+};
+
+/* ======================================================
+   📱 IMPROVED GEOLOCATION - बिल्कुल FREE
+   🎯 Phone के GPS से current location लेता है
+   🔧 FIXES: Timeout, Cold Start, Indoor issues
+   💰 Cost: ₹0 (Device feature है, कोई API नहीं)
+========================================================= */
+export const getGeoLocation = async (
+  useLastKnown: boolean = true,
+): Promise<GeolocationResponse> => {
+  return new Promise((resolve, reject) => {
+    console.log('📍 Getting current location from device GPS (FREE)...');
+
+    // Strategy 1: Try to get last known position first (fast fallback)
+    if (useLastKnown) {
+      Geolocation.getCurrentPosition(
+        info => {
+          console.log(
+            '✅ Got last known position:',
+            info.coords.latitude,
+            info.coords.longitude,
+          );
+
+          // Save it
+          setData('LAST_GEO_ADDRESS', {
+            lat: info.coords.latitude,
+            long: info.coords.longitude,
+          });
+
+          resolve(info);
+        },
+        err => {
+          console.warn(
+            '⚠️ Last known position failed, trying fresh location...',
+          );
+          // If last known fails, try fresh location
+          getFreshLocation(resolve, reject);
+        },
+        {
+          enableHighAccuracy: false, // Fast but less accurate (uses network/wifi)
+          timeout: 5000, // Quick timeout for cached location
+          maximumAge: 300000, // Accept location up to 5 minutes old
+        },
+      );
+    } else {
+      // Strategy 2: Get fresh high-accuracy location
+      getFreshLocation(resolve, reject);
+    }
+  });
+};
+
+// Helper function for fresh GPS location
+const getFreshLocation = (resolve: any, reject: any) => {
+  console.log('🎯 Getting fresh GPS location...');
+
+  Geolocation.getCurrentPosition(
+    info => {
+      console.log(
+        '✅ Fresh location obtained:',
+        info.coords.latitude,
+        info.coords.longitude,
+      );
+
+      // Save fresh location
+      setData('LAST_GEO_ADDRESS', {
+        lat: info.coords.latitude,
+        long: info.coords.longitude,
+      });
+
+      resolve(info);
+    },
+    err => {
+      console.error('❌ Fresh location error:', err.message);
+
+      // Final fallback: use last saved location
+      const last = getData('LAST_GEO_ADDRESS');
+
+      if (last && last.lat && last.long) {
+        console.log('⚠️ Using last saved location:', last);
+        resolve({
+          coords: {
+            latitude: last.lat,
+            longitude: last.long,
+            accuracy: 1,
+            altitude: 0,
+            heading: 0,
+            speed: 0,
+            altitudeAccuracy: 0,
+          },
+          timestamp: Date.now(),
+        } as GeolocationResponse);
+      } else {
+        // Absolutely no location available
+        console.error('❌ No location available at all');
+        reject(new Error('Unable to get location. Please check GPS settings.'));
+      }
+    },
+    {
+      enableHighAccuracy: true, // Use GPS for accuracy
+      timeout: 30000, // Increased to 30 seconds for GPS cold start
+      maximumAge: 10000, // Accept location up to 10 seconds old
+    },
+  );
+};
+
+/* ======================================================
+   GET ADDRESS FROM CURRENT LOCATION - IMPROVED VERSION
+========================================================= */
+export const getAddressFromLatLong = async (forceRefresh: boolean = false) => {
+  try {
+    console.log('🔄 Getting current location and address...');
+
+    // Check permissions first
+    const permStatus = await checkPermission();
+    if (
+      permStatus !== 'granted' &&
+      permStatus['android.permission.ACCESS_FINE_LOCATION'] !== 'granted'
+    ) {
+      console.error('❌ Location permission not granted');
+      return {
+        address: 'Location permission denied. Please enable in settings.',
+        lat: 0,
+        long: 0,
+      };
+    }
+
+    // Check if GPS is enabled
+    const gpsEnabled = await checkGps();
+    if (!gpsEnabled) {
+      console.error('❌ GPS not enabled');
+      return {
+        address: 'GPS is disabled. Please enable location services.',
+        lat: 0,
+        long: 0,
+      };
+    }
+
+    // Get location (will use last known if GPS is slow)
+    const info = await getGeoLocation(!forceRefresh);
+
+    if (!info || !info.coords) {
+      console.warn('⚠️ No location info available');
+      return {address: 'Location unavailable', lat: 0, long: 0};
+    }
+
+    console.log(
+      '✅ Got location:',
+      info.coords.latitude,
+      info.coords.longitude,
+    );
+
+    //Get address from coordinates
+    const addressData = await fetchOlaReverseGeocode(
+      info.coords.latitude,
+      info.coords.longitude,
+    );
+
+    // Save the full address data
+    // if (addressData && addressData.address !== "Address Not Found") {
+    //   setData("LAST_FULL_ADDRESS", addressData);
+    // }
+    // Save the full address data (FIXED)
+    if (addressData) {
+      let finalAddress = '';
+
+      if (addressData.addressList && addressData.addressList.length > 0) {
+        finalAddress = addressData.addressList[0];
+      } else if (addressData.address) {
+        finalAddress = addressData.address;
+      }
+
+      if (finalAddress) {
+        const payload = {
+          address: finalAddress,
+          lat: addressData.lat,
+          long: addressData.long,
+        };
+        // ✅ FIX
+        Preferences.setData(
+          Preferences.KEY.LAST_GEO_ADDRESS,
+          JSON.stringify(payload),
+        );
+
+        Preferences.setData(
+          Preferences.KEY.LAST_FULL_ADDRESS,
+          JSON.stringify(payload),
+        );
+        console.log('✅ Saved LAST_GEO_ADDRESS:', payload);
+      }
+    }
+    return addressData;
+  } catch (e: any) {
+    console.error('❌ getAddressFromLatLong error:', e);
+
+    // Try to return last saved address
+    const lastAddress = getData('LAST_FULL_ADDRESS');
+    if (lastAddress) {
+      console.log('⚠️ Returning last saved address');
+      return lastAddress;
+    }
+
+    return {
+      address: 'Error: ' + (e?.message || 'Unable to get location'),
+      lat: 0,
+      long: 0,
+    };
+  }
+};
+
+/* ======================================================
+   GET ADDRESS FROM SPECIFIC LAT/LONG
+========================================================= */
+export const getAddressWithLatLong = async (lat: number, lon: number) => {
+  try {
+    if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
+      console.warn('❌ Invalid coordinates provided:', {lat, lon});
+      return {
+        address: 'Invalid coordinates',
+        lat: 0,
+        long: 0,
+      };
+    }
+
+    console.log('🔍 Getting address for coordinates:', lat, lon);
+    // return await fetchOlaReverseGeocode(lat, lon);
+  } catch (e: any) {
+    console.error('❌ getAddressWithLatLong error:', e);
+    return {
+      address: 'Error fetching address',
+      lat,
+      long: lon,
+    };
+  }
+};
+
+/* ======================================================
+   WATCH LOCATION
+========================================================= */
+export const watchGeoLocation = async (
+  callback: (res: GeolocationResponse) => void,
+) => {
+  console.log('👀 Starting location watch...');
+
+  return Geolocation.watchPosition(
+    res => {
+      console.log('📍 Watch position update:', res.coords);
+      setData('LAST_GEO_ADDRESS', {
+        lat: res.coords.latitude,
+        long: res.coords.longitude,
+      });
+      callback(res);
+    },
+    err => {
+      console.error('❌ Watch position error:', err);
+      error('Watch Error: ' + err?.message);
+    },
+    {
+      enableHighAccuracy: true,
+      distanceFilter: 10,
+      interval: 8000,
+      fastestInterval: 5000,
+      timeout: 20000, // Added timeout
+      maximumAge: 10000, // Added maximumAge
+    },
+  );
+};
+
+/* ======================================================
+   DISTANCE CALCULATION
+========================================================= */
+export const calculateDistance = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+  unit: 'km' | 'mi' | 'm' = 'm',
+): number => {
+  if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = unit === 'km' ? 6371 : unit === 'mi' ? 3958.8 : 6371000;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const dist = R * c;
+
+  return unit === 'm' ? Math.round(dist) : Number(dist.toFixed(2));
+};
+
+/* ======================================================
+   FIND NEAREST CHAMBER
+========================================================= */
+export const findNearestChamber = (
+  currentLat: number,
+  currentLon: number,
+  chambers: Array<any>,
+  minDistance: number,
+) => {
+  let nearest = null;
+  let minDist = Infinity;
+
+  for (const c of chambers) {
+    const lat = parseFloat(c.chamber_latitude);
+    const lon = parseFloat(c.chamber_longitude);
+
+    if (isNaN(lat) || isNaN(lon)) continue;
+
+    const dist = calculateDistance(currentLat, currentLon, lat, lon);
+
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = {chamber: c, distance: dist};
+    }
+
+    if (dist <= minDistance) return nearest;
+  }
+
+  return minDist <= minDistance ? nearest : null;
+};
+
+/* ======================================================
+   PERMISSION HANDLING - IMPROVED
+========================================================= */
+export const checkGps = async () => {
+  try {
+    // Android only - iOS doesn't have this API
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    const enabled = await isLocationEnabled();
+    console.log('📍 GPS enabled:', enabled);
+
+    if (!enabled) {
+      console.log('⚠️ GPS disabled, prompting user...');
+      try {
+        const res = await promptForEnableLocationIfNeeded();
+        console.log('✅ GPS prompt result:', res);
+        return res === 'enabled' || res === 'already-enabled';
+      } catch (e) {
+        console.error('❌ GPS prompt error:', e);
+        return false;
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('❌ checkGps error:', e);
+    return Platform.OS === 'ios'; // iOS doesn't need this check
+  }
+};
+
+export const checkPermission = async () => {
+  try {
+    // First check GPS
+    const gps = await checkGps();
+    if (!gps) {
+      console.log('❌ GPS not enabled');
+      return 'denied';
+    }
+
+    if (Platform.OS === 'android') {
+      const perm = await checkMultiple([
+        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+        PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION,
+      ]);
+
+      console.log('📱 Android permissions:', perm);
+
+      const fineLocation = perm['android.permission.ACCESS_FINE_LOCATION'];
+
+      if (fineLocation === RESULTS.GRANTED) {
+        return 'granted';
+      } else if (fineLocation === RESULTS.DENIED) {
+        // Permission not asked yet, request it
+        return await requestPermission();
+      } else if (fineLocation === RESULTS.BLOCKED) {
+        // User denied permanently
+        console.warn('⚠️ Location permission blocked, need to open settings');
+        return 'blocked';
+      }
+
+      return fineLocation;
+    }
+
+    // iOS
+    const iosPermission = await check(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+    console.log('📱 iOS permission:', iosPermission);
+
+    if (iosPermission === RESULTS.DENIED) {
+      return await requestPermission();
+    }
+
+    return iosPermission;
+  } catch (e) {
+    console.error('❌ checkPermission error:', e);
+    return 'denied';
+  }
+};
+
+export const requestPermission = async () => {
+  try {
+    if (Platform.OS === 'android') {
+      const result = await requestMultiple([
+        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+        PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION,
+      ]);
+      console.log('📱 Android permission request result:', result);
+
+      const fineLocation = result['android.permission.ACCESS_FINE_LOCATION'];
+      return fineLocation === RESULTS.GRANTED ? 'granted' : fineLocation;
+    }
+
+    const result = await request(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+    console.log('📱 iOS permission request result:', result);
+    return result;
+  } catch (e) {
+    console.error('❌ requestPermission error:', e);
+    return 'denied';
+  }
+};
+
+/* ======================================================
+   LOCATION SETTINGS
+========================================================= */
+export const openLocationSetting = () => {
+  if (Platform.OS === 'android') {
+    Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS').catch(() =>
+      openSettings(),
+    );
+  } else {
+    openSettings();
+  }
+};
