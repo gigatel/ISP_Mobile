@@ -1134,11 +1134,21 @@ const Home: FC<ScreenProps.Home> = ({
   );
 };
 
+// const MapStateToProps = (state: RootState) => ({
+//   loading: state.attendance.onBehalfLoading === 'pending', // ← dashboard.loading removed
+//   dashboardList: state.dashboard.dashboardList,
+// });
+// export default connect(MapStateToProps)(Home);
 const MapStateToProps = (state: RootState) => ({
-  loading: state.attendance.onBehalfLoading === 'pending', // ← dashboard.loading removed
+  loading: state.attendance.onBehalfLoading === 'pending',
   dashboardList: state.dashboard.dashboardList,
 });
-export default connect(MapStateToProps)(Home);
+
+const ConnectedHome = connect(MapStateToProps)(Home);
+
+// ✅ Wrapper absorbs navigation/route from Tab.Screen and passes to Redux-connected component
+const HomeScreen: React.FC<any> = props => <ConnectedHome {...props} />;
+export default HomeScreen;
 
 // ====== STYLES ======
 const styles = StyleSheet.create({

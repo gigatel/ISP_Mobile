@@ -86,10 +86,10 @@ android {
          keyPassword 'gtpl@2025'
         }
         release {
-             storeFile file('gtpl.keystore')
-             storePassword 'gtpl@2025'
-             keyAlias 'gtpl'
-             keyPassword 'gtpl@2025'
+             storeFile file('my-upload-key.keystore')
+             storePassword '123456'
+             keyAlias 'my-key-alias'
+             keyPassword '123456'
         }
 }
     buildTypes {

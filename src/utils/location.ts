@@ -1,10 +1,8 @@
-//geocoding versosn
-// @utils/location.ts  (UPDATED)
+// @utils/location.ts
 import Geolocation, { GeolocationResponse } from '@react-native-community/geolocation';
 import { DataType } from '@types';
 import { Linking, Platform } from 'react-native';
 import { isLocationEnabled, promptForEnableLocationIfNeeded } from 'react-native-android-location-enabler';
-import { useState,useEffect } from 'react';
 import {
   check,
   checkMultiple,
@@ -17,13 +15,15 @@ import { alert, error, log } from './common';
 import { getData, setData } from './preferences';
 import { postNowWithCoords } from '../../src/services/LocationPosterCore';
 import { OLA_MAP_API } from '@env';
-// init geocoder once
+
 let watchId: number | null = null;
-// ✅ added missing lastFix declaration
 let lastFix: { lat: number; long: number; ts: number } | null = null;
-let lastKnownAddress: string = ''; // ✅ Track previous address
+let lastKnownAddress: string = '';
+
 const OLA_REVERSE_GEOCODE_URL = 'https://api.olamaps.io/places/v1/reverse-geocode';
-const OLA_API_KEY = OLA_MAP_API; // same env use kar raha tu
+const OLA_API_KEY = OLA_MAP_API;
+
+// ─────────────────────────────────────────────────────────────────────────────
 export const initializeConfig = async () => {
   try {
     Geolocation.setRNConfiguration({
@@ -36,99 +36,78 @@ export const initializeConfig = async () => {
     __DEV__ && console.warn('initializeConfig error', e);
   }
 };
-const olaReverseGeocode = async (
-  lat: number,
-  long: number,
-): Promise<string[]> => {
-  console.log('📍 olaReverseGeocode called with:', { lat, long });
 
-  try {
-    // ✅ Step 1: Validate coordinates
+// ─────────────────────────────────────────────────────────────────────────────
+// XHR-based reverse geocode — more reliable than fetch() in Android 16 bg
+// ─────────────────────────────────────────────────────────────────────────────
+const olaReverseGeocode = (lat: number, long: number): Promise<string[]> => {
+  return new Promise(resolve => {
+    console.log('📍 olaReverseGeocode called:', { lat, long });
+
     if (!lat || !long || isNaN(lat) || isNaN(long)) {
-      console.warn('❌ Invalid coordinates:', { lat, long });
-      return [];
+      console.warn('❌ Invalid coordinates');
+      return resolve([]);
     }
-
-    // ✅ Step 2: API Key check
     if (!OLA_API_KEY) {
       console.error('❌ OLA_API_KEY missing');
-      return [];
+      return resolve([]);
     }
 
-    // ✅ Step 3: Prepare URL
     const url = `${OLA_REVERSE_GEOCODE_URL}?latlng=${lat},${long}&api_key=${OLA_API_KEY}`;
-    console.log('🌐 API URL:', url);
+    console.log('🌐 Ola URL:', url);
 
-    // ✅ Step 4: API call
-    console.log('🚀 Calling Ola Reverse Geocode API...');
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
-    });
+    // Use XHR instead of fetch — survives Android 16 background suspension
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.timeout = 10000;
 
-    console.log('📡 Response Status:', res.status, res.statusText);
+    xhr.onload = () => {
+      try {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          console.error('❌ Ola API error:', xhr.status, xhr.responseText);
+          return resolve([]);
+        }
+        const json = JSON.parse(xhr.responseText);
+        const results = json?.results || json?.geocodingResults || [];
+        const addressList: string[] = results
+          .map((item: any) => item?.formatted_address || item?.formattedAddress || '')
+          .filter((a: string) => !!a)
+          .slice(0, 5);
+        console.log('✅ Ola address list:', addressList);
+        resolve(addressList);
+      } catch (e) {
+        console.error('❌ Ola parse error:', e);
+        resolve([]);
+      }
+    };
 
-    // ✅ Step 5: Response check
-    if (!res.ok) {
-      console.error('❌ Ola API Error:', res.status, res.statusText);
-      const errorText = await res.text();
-      console.error('❌ Error Body:', errorText);
-      return [];
-    }
+    xhr.onerror = () => {
+      console.error('❌ Ola XHR network error');
+      resolve([]);
+    };
 
-    // ✅ Step 6: Parse JSON
-    const json = await res.json();
-    console.log('📦 Raw API Response:', JSON.stringify(json, null, 2));
+    xhr.ontimeout = () => {
+      console.error('❌ Ola XHR timeout');
+      resolve([]);
+    };
 
-    // ✅ Step 7: Extract results safely
-    const results = json?.results || json?.geocodingResults || [];
-    console.log('📊 Results length:', results.length);
-
-    if (!results.length) {
-      console.warn('⚠️ No results found');
-      return [];
-    }
-
-    // ✅ Step 8: Extract multiple formatted_address (max 5)
-    const addressList = results
-      .map((item: any, index: number) => {
-        const addr =
-          item?.formatted_address ||
-          item?.formattedAddress ||
-          '';
-
-        console.log(`📌 Address ${index + 1}:`, addr);
-        return addr;
-      })
-      .filter((addr: string) => !!addr)
-      .slice(0, 5);
-
-    console.log('✅ Final Address List:', addressList);
-
-    return addressList;
-
-  } catch (e: any) {
-    console.error('❌ olaReverseGeocode Exception:', e?.message || e);
-    return [];
-  }
+    xhr.send();
+  });
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public address helpers
+// ─────────────────────────────────────────────────────────────────────────────
 export const getAddressFromLatLong = async (): Promise<DataType.GeoAddress> => {
   try {
     const info = (await getGeoLocation()) as DataType.GeoLocation;
-
-    if (!info) {
-      return { address: 'Address Not Found', addressList: [], lat: 0, long: 0 };
-    }
-
+    if (!info) return { address: 'Address Not Found', addressList: [], lat: 0, long: 0 };
     const { latitude: lat, longitude: long } = info?.coords;
-
     const addressList = await olaReverseGeocode(lat, long);
-
     return {
       address: addressList?.[0] || 'Address Not Found',
-      addressList: addressList || [], // ⭐ MAIN FIX
+      addressList: addressList || [],
       lat,
       long,
     };
@@ -136,14 +115,19 @@ export const getAddressFromLatLong = async (): Promise<DataType.GeoAddress> => {
     return { address: 'Address Not Found', addressList: [], lat: 0, long: 0 };
   }
 };
-export const getAddressWithLatLong = async (lat: number, long: number): Promise<DataType.GeoAddress> => {
+
+export const getAddressWithLatLong = async (
+  lat: number,
+  long: number,
+): Promise<DataType.GeoAddress> => {
   try {
     if (typeof lat !== 'number' || typeof long !== 'number') {
       return { address: '', lat: lat ?? 0, long: long ?? 0 };
     }
-    const address = await olaReverseGeocode(lat, long);
-    const addressComponent = {
-      address: address || '',
+    const addressList = await olaReverseGeocode(lat, long);
+    const addressComponent: DataType.GeoAddress = {
+      address: addressList[0] || '',
+      addressList,
       lat,
       long,
     };
@@ -155,75 +139,105 @@ export const getAddressWithLatLong = async (lat: number, long: number): Promise<
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// startLocationWatch — Android 13 + Android 16 compatible
+//
+// ANDROID 16 KEY POINTS:
+// 1. olaReverseGeocode now uses XHR (not fetch) — survives bg thread suspension
+// 2. postNowWithCoords uses XHR internally when dispatchRef is null
+// 3. watchPosition callback errors are fully isolated — one failure never
+//    kills the watcher
+// 4. distanceFilter=10 prevents Android 16 location rate-limiter from
+//    throttling our updates
+// ─────────────────────────────────────────────────────────────────────────────
 export const startLocationWatch = () => {
-  if (watchId !== null) return;
-  console.log('startLocationWatch');
+  if (watchId !== null) {
+    __DEV__ && console.log('[LocationWatch] already running — skip');
+    return;
+  }
+
+  console.log('[LocationWatch] starting…');
+
   watchId = Geolocation.watchPosition(
     async pos => {
       const lat = pos?.coords?.latitude;
       const long = pos?.coords?.longitude;
+
+      console.log('[LocationWatch] position received:', { lat, long });
+
       if (typeof lat !== 'number' || typeof long !== 'number') return;
-      // Keep a fresh in-memory fix
+
+      // Update in-memory fix
       lastFix = { lat, long, ts: Date.now() };
 
-      // Mirror to Preferences for backward compatibility
+      // Mirror to Preferences (best-effort)
       try {
         const prev = (getData('LAST_GEO_ADDRESS') ?? {}) as any;
         setData('LAST_GEO_ADDRESS', { ...prev, lat, long });
       } catch (e) {
-        __DEV__ && console.warn('setData LAST_GEO_ADDRESS failed', e);
+        __DEV__ && console.warn('[LocationWatch] setData failed', e);
       }
-      // Reverse geocode (best-effort; tolerate failures)
-      let address = '';
+
+      // Reverse geocode — XHR based, survives Android 16 background
+      let addressList: string[] = [];
       try {
-      if (OLA_API_KEY) {
-        address = await olaReverseGeocode(lat, long);
-      }
+        if (OLA_API_KEY) {
+          addressList = await olaReverseGeocode(lat, long);
+        }
       } catch (e) {
-        // ignore geocode failures, still post lat/long
-        __DEV__ && console.warn('reverse geocode failed', e);
+        __DEV__ && console.warn('[LocationWatch] geocode failed', e);
       }
-      // ✅ NEW: Log when address changes
+
+      const address = addressList[0] ?? '';
+
       if (address && address !== lastKnownAddress) {
         console.log('📍 Address changed:', address);
         lastKnownAddress = address;
+        try {
+          setData('LAST_GEO_ADDRESS', { lat, long, address });
+        } catch (_) {}
       }
 
-      // Immediately post (throttled in PosterCore)
+      // Post — throttled internally by MIN_GAP_MS
+      // Passes full addressList so PosterCore picks [0] cleanly
+      console.log('[LocationWatch] calling postNowWithCoords…');
       try {
-        void postNowWithCoords(lat, long, 'bg', undefined, address);
+        await postNowWithCoords(lat, long, 'bg', undefined, addressList);
       } catch (e) {
-        __DEV__ && console.warn('postNowWithCoords error', e);
+        __DEV__ && console.warn('[LocationWatch] postNowWithCoords error', e);
       }
     },
     err => {
-      if (__DEV__) console.warn('[watchPosition] error:', err?.message);
+      // Must never throw — keeps the watcher alive
+      console.warn('[LocationWatch] watchPosition error:', err?.message);
     },
     {
       enableHighAccuracy: true,
-      distanceFilter: 10, // post on real movement; tune as needed
-      interval: 10000, // Android polling interval
-      fastestInterval: 5000, // Android min interval
+      distanceFilter: 10,
+      interval: 10000,
+      fastestInterval: 5000,
       timeout: 20000,
       maximumAge: 0,
       useSignificantChanges: false,
-      // showsBackgroundLocationIndicator exists only on iOS. cast to any to avoid TS error on android builds.
-      // showsBackgroundLocationIndicator: true as any,
     },
   );
+
+  console.log('[LocationWatch] started, watchId:', watchId);
 };
 
 export const stopLocationWatch = () => {
   if (watchId !== null) {
     try {
       Geolocation.clearWatch(watchId);
+      console.log('[LocationWatch] stopped');
     } catch (e) {
-      __DEV__ && console.warn('clearWatch failed', e);
+      __DEV__ && console.warn('[LocationWatch] clearWatch failed', e);
     }
     watchId = null;
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
 export const getGeoLocation = async (): Promise<GeolocationResponse> => {
   return new Promise((resolve, reject) => {
     try {
@@ -237,26 +251,18 @@ export const getGeoLocation = async (): Promise<GeolocationResponse> => {
               long: info.coords.longitude,
             });
           } catch (e) {
-            __DEV__ && console.warn('setData LAST_GEO_ADDRESS fail in getCurrentPosition', e);
+            __DEV__ && console.warn('setData LAST_GEO_ADDRESS fail', e);
           }
           resolve(info);
         },
         err => {
           error('Error fetching address: ', err?.message ?? '');
           const loc = getData('LAST_GEO_ADDRESS');
-          // Reject with an object shaped like a GeolocationResponse coords fallback
           reject({
-            coords: {
-              latitude: loc?.lat ?? 0,
-              longitude: loc?.long ?? 0,
-            },
+            coords: { latitude: loc?.lat ?? 0, longitude: loc?.long ?? 0 },
           });
         },
-        {
-          timeout: 10000,
-          maximumAge: 0,
-          enableHighAccuracy: false,
-        },
+        { timeout: 10000, maximumAge: 0, enableHighAccuracy: false },
       );
     } catch (e) {
       reject(e);
@@ -264,16 +270,11 @@ export const getGeoLocation = async (): Promise<GeolocationResponse> => {
   });
 };
 
-/**
- * watchGeoLocation: returns an active watchId and a function to unsubscribe.
- * Previous implementation returned a Promise that resolved on first fix (not very useful).
- */
 export const watchGeoLocation = (): { id: number | null; stop: () => void } => {
   let localId: number | null = null;
   try {
     localId = Geolocation.watchPosition(
       res => {
-        // update lastFix mirror
         const lat = res?.coords?.latitude;
         const long = res?.coords?.longitude;
         if (typeof lat === 'number' && typeof long === 'number') {
@@ -284,9 +285,7 @@ export const watchGeoLocation = (): { id: number | null; stop: () => void } => {
           } catch {}
         }
       },
-      err => {
-        if (__DEV__) console.warn('watchGeoLocation error', err?.message);
-      },
+      err => { if (__DEV__) console.warn('watchGeoLocation error', err?.message); },
       {
         interval: 10000,
         timeout: 15000,
@@ -299,16 +298,11 @@ export const watchGeoLocation = (): { id: number | null; stop: () => void } => {
   } catch (e) {
     __DEV__ && console.warn('watchGeoLocation start failed', e);
   }
-
   return {
     id: localId,
     stop: () => {
       if (localId !== null) {
-        try {
-          Geolocation.clearWatch(localId);
-        } catch (e) {
-          __DEV__ && console.warn('watchGeoLocation clear failed', e);
-        }
+        try { Geolocation.clearWatch(localId); } catch (e) {}
       }
     },
   };
@@ -316,28 +310,23 @@ export const watchGeoLocation = (): { id: number | null; stop: () => void } => {
 
 export const getLastFix = () => lastFix;
 
+// ─────────────────────────────────────────────────────────────────────────────
 export const calculateDistance = (
-  lat1: number,
-  lon1: number,
-  lat2: number,
-  lon2: number,
+  lat1: number, lon1: number,
+  lat2: number, lon2: number,
   unit: 'km' | 'mi' | 'm' = 'm',
 ): number => {
   if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
-    console.warn('Invalid coordinates:', { lat1, lon1, lat2, lon2 });
     return Number.POSITIVE_INFINITY;
   }
-  const toRad = (value: number): number => (value * Math.PI) / 180;
+  const toRad = (v: number) => (v * Math.PI) / 180;
   const R = unit === 'km' ? 6371 : unit === 'mi' ? 3958.8 : 6371000;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const lat1Rad = toRad(lat1);
-  const lat2Rad = toRad(lat2);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.sin(dLon / 2) ** 2 * Math.cos(lat1Rad) * Math.cos(lat2Rad);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const distance = R * c;
+    Math.sin(dLon / 2) ** 2 * Math.cos(toRad(lat1)) * Math.cos(toRad(lat2));
+  const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return unit === 'm' ? Math.round(distance) : Number(distance.toFixed(2));
 };
 
@@ -358,35 +347,30 @@ export const findNearestChamber = (
   for (const chamber of chambers) {
     const chamberLat = parseFloat(chamber.chamber_latitude);
     const chamberLon = parseFloat(chamber.chamber_longitude);
-    if (isNaN(chamberLat) || isNaN(chamberLon)) {
-      console.warn(`Invalid coordinates for chamber ${chamber.chamber_id}`);
-      continue;
-    }
+    if (isNaN(chamberLat) || isNaN(chamberLon)) continue;
     const distance = calculateDistance(currentLat, currentLon, chamberLat, chamberLon);
     if (distance < minDistanceFound) {
       minDistanceFound = distance;
       nearestChamber = { chamber, distance };
     }
-    if (distance <= minDistance) {
-      return nearestChamber;
-    }
+    if (distance <= minDistance) return nearestChamber;
   }
   return minDistanceFound <= minDistance ? nearestChamber : null;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Permissions
+// ─────────────────────────────────────────────────────────────────────────────
 export const checkGps = async () => {
   try {
-    const checkEnabled: boolean = await isLocationEnabled();
+    const checkEnabled = await isLocationEnabled();
     if (!checkEnabled) {
       try {
         const enableResult = await promptForEnableLocationIfNeeded();
         log('GPS Result::', enableResult);
         return enableResult === 'already-enabled' || enableResult === 'enabled';
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          error('Error in on GPS::', err);
-          return false;
-        }
+        if (err instanceof Error) { error('Error in GPS::', err); return false; }
       }
     }
     return true;
@@ -416,9 +400,7 @@ export const checkPermission = async () => {
       }
     } else {
       permission = await check(PERMISSIONS.IOS.LOCATION_ALWAYS);
-      if (permission === 'denied') {
-        permission = await requestPermission();
-      }
+      if (permission === 'denied') permission = await requestPermission();
     }
     return permission;
   } catch (err) {
@@ -437,19 +419,14 @@ export const requestPermission = async () => {
     if (perm['android.permission.ACCESS_BACKGROUND_LOCATION'] !== 'granted') {
       alert({
         title: 'Background Location',
-        msg:
-          'Please enable background location to navigating\nPermissions > Location > "Allow all the time" to continue',
-        onPress: () => {
-          openLocationSetting();
-        },
+        msg: 'Please enable background location\nPermissions > Location > "Allow all the time"',
+        onPress: () => openLocationSetting(),
       });
     } else if (perm['android.permission.ACCESS_FINE_LOCATION'] !== 'granted') {
       alert({
         title: 'Location',
         msg: 'Please enable location permission to continue',
-        onPress: () => {
-          openLocationSetting();
-        },
+        onPress: () => openLocationSetting(),
       });
     }
     permission = perm;
@@ -461,20 +438,14 @@ export const requestPermission = async () => {
 
 const openLocationSetting = () => {
   if (Platform.OS === 'android') {
-    // Prefer using sendIntent on Android if available
     try {
       Linking.sendIntent('android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS')
-        .then(() => log('Location settings opened successfully'))
-        .catch((err) => {
-          openSettings();
-          error('An error occurred', err);
-        });
+        .then(() => log('Location settings opened'))
+        .catch(err => { openSettings(); error('Settings error', err); });
     } catch (e) {
-      // fallback
       openSettings();
     }
   } else {
-    // iOS fallback: open app settings
     openSettings();
   }
 };

@@ -4,7 +4,7 @@ import DeviceInfo from 'react-native-device-info';
 import { Preferences, Common, Location } from '@utils';
 import { PostLocationApi } from '@slices/attendance.slice';
 import type { StoreDispatch } from '@reducers';
-import { log } from './common';
+import { API_BASE_URL } from '@env'; // ⚠️ set in your .env
 
 let dispatchRef: StoreDispatch | null = null;
 
@@ -12,34 +12,114 @@ export function attachPosterDispatch(d: StoreDispatch) {
   dispatchRef = d;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TIMEOUT WRAPPER
+// Android 16 background: NetInfo/DeviceInfo awaits can hang forever.
+// ─────────────────────────────────────────────────────────────────────────────
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// XHR POST — more reliable than fetch() in Android 16 background
+// ─────────────────────────────────────────────────────────────────────────────
+function xhrPost(url: string, body: Record<string, any>, token: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.timeout = 15000;
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        __DEV__ && console.log('[Poster] XHR ✅', xhr.status);
+        resolve();
+      } else {
+        reject(new Error(`[Poster] XHR HTTP ${xhr.status}: ${xhr.responseText}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('[Poster] XHR network error'));
+    xhr.ontimeout = () => reject(new Error('[Poster] XHR timeout'));
+    xhr.send(JSON.stringify(body));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+export function formatServerDateTimeIST(d: Date = new Date()) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
+  const ist = new Date(utcMs + 330 * 60000);
+  return `${pad(ist.getDate())}-${pad(ist.getMonth() + 1)}-${ist.getFullYear()} ${pad(ist.getHours())}:${pad(ist.getMinutes())}:${pad(ist.getSeconds())}`;
+}
+
+function resolveAddress(address?: string | string[]): string {
+  if (!address) return '';
+  if (Array.isArray(address)) return address[0] ?? '';
+  return address;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE SEND
+// ─────────────────────────────────────────────────────────────────────────────
 async function sendLocationToServer({
-  lat, long, address = '',
-  source = 'bg' as 'fg'|'bg',
+  lat,
+  long,
+  address = '',
+  source = 'bg',
   forceDispatch,
 }: {
-  lat: number; long: number; address?: string;
-  source?: 'fg' | 'bg'; forceDispatch?: StoreDispatch;
+  lat: number;
+  long: number;
+  address?: string | string[];
+  source?: 'fg' | 'bg';
+  forceDispatch?: StoreDispatch;
 }) {
-  const net = await NetInfo.fetch();
-  const online = (net.isConnected ?? false) && (net.isInternetReachable ?? true);
-  if (!online) return;
+  console.log(`[Poster:${source}] sendLocationToServer START`, { lat, long });
 
-  const power = await DeviceInfo.getPowerState().catch(() => null as any);
+  // Network check (timeout 3s)
+  const net = await withTimeout(NetInfo.fetch(), 3000, {
+    isConnected: true,
+    isInternetReachable: true,
+  } as any);
+
+  const online = (net.isConnected ?? true) && (net.isInternetReachable ?? true);
+  if (!online) {
+    console.log(`[Poster:${source}] offline — skip`);
+    return;
+  }
+
+  // Battery (timeout 2s, non-critical)
+  const power = await withTimeout(
+    DeviceInfo.getPowerState(),
+    2000,
+    { batteryLevel: 0 } as any,
+  );
   const batteryNum = Math.round(((power?.batteryLevel ?? 0) as number) * 100);
   const batteryStatus = `${batteryNum}%`;
 
-  const token: string = String(Preferences.getData(Preferences.KEY.API_AUTH_TOKEN) ?? '');
+  // Auth
+  const token = String(Preferences.getData(Preferences.KEY.API_AUTH_TOKEN) ?? '');
   const employeeID = Number(Preferences.getData(Preferences.KEY.EMPLOYEE_ID) ?? 0);
   const companyId = Number(Preferences.getData(Preferences.KEY.COMPANY_ID) ?? 11) || 11;
   const OrganizationCode = String(Preferences.getData(Preferences.KEY.ORGANIZATION_CODE) ?? '');
 
-  if (!token || !employeeID || !companyId) return;
-  console.log('address_on_LOcationPOsterCore:',address[0]);
-  
+  if (!token || !employeeID || !companyId) {
+    console.warn(`[Poster:${source}] Missing auth — skip`);
+    return;
+  }
+
+  const resolvedAddr = resolveAddress(address);
+  console.log(`[Poster:${source}] address: "${resolvedAddr}"`);
+
   const body = {
     token,
     employeeID,
-    address: address[0] ?? '',
+    address: resolvedAddr,
     batteryStatus,
     delay: '0',
     dateTime: formatServerDateTimeIST(),
@@ -51,198 +131,181 @@ async function sendLocationToServer({
     OrganizationCode,
   };
 
+  console.log(`[Poster:${source}] posting...`, body);
+
   const dispatchToUse = forceDispatch ?? dispatchRef;
-  if (!dispatchToUse) return;
-  console.log('postLocationAPI1',body)
-  const action = PostLocationApi({ body });
-  const result: any = dispatchToUse(action);
-  if (result && typeof result.unwrap === 'function') {
-    await result.unwrap();
+
+  if (dispatchToUse) {
+    // Foreground: Redux dispatch
+    console.log(`[Poster:${source}] via Redux dispatch`);
+    const action = PostLocationApi({ body });
+    const result: any = dispatchToUse(action);
+    if (result && typeof result.unwrap === 'function') {
+      await result.unwrap();
+    } else {
+      await result;
+    }
   } else {
-    await result;
+    // Background (Android 16): XHR direct
+    console.log(`[Poster:${source}] dispatchRef null → XHR`);
+    if (!API_BASE_URL) {
+      console.warn(`[Poster:${source}] API_BASE_URL not set in .env`);
+      return;
+    }
+    // ⚠️ Replace with your actual endpoint path
+    await xhrPost(`${API_BASE_URL}/attendance/postLocation`, body, token);
   }
+
   Preferences.setData(Preferences.KEY.LAST_POST_TS, Date.now());
-  __DEV__ && console.log(`[Poster:${source}] ✅ posted @ ${body.dateTime}`, { lat, long, address });
+  console.log(`[Poster:${source}] ✅ SUCCESS @ ${body.dateTime}`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC API
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Separate throttle trackers ───────────────────────────────────────────────
+// postNowWithCoords (bg watchPosition) — 25s gap
+const BG_MIN_GAP_MS = 25_000;
+let bgLastTs = 0;
+let bgPosting = false;
+
+// postOnceIfDue (fg interval) — 25s gap
+const FG_MIN_GAP_MS = 25_000;
+let fgPosting = false;
+
+/**
+ * postNowWithCoords — called from watchPosition (background)
+ *
+ * FIX: Uses its OWN timestamp tracker (bgLastTs) instead of
+ * reading LAST_POST_TS from Preferences. This prevents the
+ * "too soon" skip that was happening because the foreground
+ * poster had already set LAST_POST_TS recently.
+ */
 export async function postNowWithCoords(
   lat: number,
   long: number,
   source: 'fg' | 'bg' = 'bg',
   forceDispatch?: StoreDispatch,
-  address?: string,
+  address?: string | string[],
 ) {
-  const lastTs: number = Number(Preferences.getData(Preferences.KEY.LAST_POST_TS) ?? 0);
-  if (posting || Date.now() - lastTs < MIN_GAP_MS) return;
+  const now = Date.now();
+  const gap = now - bgLastTs;
+
+  console.log(`[Poster:${source}] postNowWithCoords called`, { lat, long, bgPosting, gap });
+
+  if (bgPosting) {
+    console.log(`[Poster:${source}] already posting — skip`);
+    return;
+  }
+  if (bgLastTs > 0 && gap < BG_MIN_GAP_MS) {
+    console.log(`[Poster:${source}] too soon (${gap}ms < ${BG_MIN_GAP_MS}ms) — skip`);
+    return;
+  }
 
   try {
-    posting = true;
+    bgPosting = true;
+    bgLastTs = now; // set immediately to prevent double-fire
     await sendLocationToServer({ lat, long, address, source, forceDispatch });
-  } catch (e) {
-    Common?.warn?.(`[Poster:${source}] ❌ failed`, e);
+  } catch (e: any) {
+    console.error(`[Poster:${source}] ❌ FAILED:`, e?.message ?? e);
+    bgLastTs = 0; // reset so next attempt is not blocked on failure
   } finally {
-    posting = false;
+    bgPosting = false;
   }
 }
 
-export function formatServerDateTimeIST(d: Date = new Date()) {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
-  const ist = new Date(utcMs + 330 * 60000);
-  const YYYY = ist.getFullYear();
-  const MM = pad(ist.getMonth() + 1);
-  const DD = pad(ist.getDate());
-  const HH = pad(ist.getHours());
-  const mm = pad(ist.getMinutes());
-  const ss = pad(ist.getSeconds());
-  return `${DD}-${MM}-${YYYY} ${HH}:${mm}:${ss}`;
-}
-
-const MIN_GAP_MS = 25_000;//change to 25_0000
-let posting = false;
-let lastLat: number | null = null;
-let lastLong: number | null = null;
-let lastAddress: string | null = null;
-
+/**
+ * postOnceIfDue — called from foreground (app active / resume)
+ */
 export async function postOnceIfDue(
   source: 'fg' | 'bg' = 'fg',
   forceDispatch?: StoreDispatch,
 ) {
-  console.log('DATA',source)
-  if (posting) return;
+  console.log(`[Poster:${source}] postOnceIfDue called`);
 
-  const lastTs: number = Number(
-    Preferences.getData(Preferences.KEY.LAST_POST_TS) ?? 0,
-  );
-  if (Date.now() - lastTs < MIN_GAP_MS) return;
+  if (fgPosting) {
+    console.log(`[Poster:${source}] already posting — skip`);
+    return;
+  }
+
+  const lastTs = Number(Preferences.getData(Preferences.KEY.LAST_POST_TS) ?? 0);
+  if (Date.now() - lastTs < FG_MIN_GAP_MS) {
+    console.log(`[Poster:${source}] too soon — skip`);
+    return;
+  }
 
   try {
-    posting = true;
-    const net = await NetInfo.fetch();
-    const online =
-      (net.isConnected ?? false) && (net.isInternetReachable ?? true);
+    fgPosting = true;
+
+    const net = await withTimeout(NetInfo.fetch(), 3000, {
+      isConnected: true,
+      isInternetReachable: true,
+    } as any);
+
+    const online = (net.isConnected ?? true) && (net.isInternetReachable ?? true);
     if (!online) {
-      __DEV__ && console.log(`[Poster:${source}] skipped (offline)`);
+      console.log(`[Poster:${source}] offline — skip`);
       return;
     }
 
-    const last = (Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS) ??
-      {}) as { address?: string; lat?: number; long?: number };
+    // Get current coords
+    let lat: number | null = null;
+    let long: number | null = null;
 
-    let lat = last?.lat;
-    let long = last?.long;
-    let address: string = typeof last?.address === 'string' ? last.address : '';
+    await withTimeout(
+      new Promise<void>(resolve => {
+        Geolocation.getCurrentPosition(
+          pos => {
+            lat = pos?.coords?.latitude ?? null;
+            long = pos?.coords?.longitude ?? null;
+            resolve();
+          },
+          _err => resolve(),
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 },
+        );
+      }),
+      6000,
+      undefined,
+    );
 
-    // 🟢 Always get current coordinates
-    await new Promise<void>(resolve => {
-      Geolocation.getCurrentPosition(
-        pos => {
-          lat = pos?.coords?.latitude;
-          long = pos?.coords?.longitude;
-          resolve();
-        },
-        _err => resolve(),
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 },
-      );
-    });
+    // Fallback to last saved
+    if (!lat || !long) {
+      const last = (Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS) ?? {}) as any;
+      lat = last?.lat ?? null;
+      long = last?.long ?? null;
+    }
 
     if (!lat || !long) {
-      __DEV__ && console.log(`[Poster:${source}] no lat/long; skip`);
+      console.log(`[Poster:${source}] no coords — skip`);
       return;
     }
 
-    // 🟢 Always get fresh address from live location
+    // Get fresh address
+    let address = 'NA';
     try {
-      const geo = await Location?.getAddressWithLatLong?.(lat, long);
-      if (geo?.address) {
-        address = geo.address;
-
-        // 🟢 If address changed → update Preferences
-        const prev = Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS);
+      const geo = await withTimeout(
+        Location?.getAddressWithLatLong?.(lat, long),
+        5000,
+        { address: '' } as any,
+      );
+      const resolved = resolveAddress(geo?.address);
+      if (resolved) {
+        address = resolved;
+        const prev = Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS) as any;
         if (!prev || prev?.address !== address) {
-          Preferences.setData(Preferences.KEY.LAST_GEO_ADDRESS, {
-            lat,
-            long,
-            address,
-          });
-          __DEV__ && console.log('[Poster] updated saved address:', address);
+          Preferences.setData(Preferences.KEY.LAST_GEO_ADDRESS, { lat, long, address });
         }
       }
-    } catch (err) {
-      __DEV__ && console.log('[Poster] address fetch failed', err);
+    } catch (e) {
+      console.log(`[Poster:${source}] address fetch failed — using NA`);
     }
-      if (!address) {
-        console.log(`[Poster:${source}] address empty, using fallback`);
-        address = 'NA';
-      }
-    const power = await DeviceInfo.getPowerState().catch(() => null as any);
-    const batteryNum = Math.round(((power?.batteryLevel ?? 0) as number) * 100);
-    const batteryStatus = `${batteryNum}%`;
 
-    const token: string = String(
-      Preferences.getData(Preferences.KEY.API_AUTH_TOKEN) ?? '',
-    );
-    const employeeID = Number(
-      Preferences.getData(Preferences.KEY.EMPLOYEE_ID) ?? 0,
-    );
-    const companyId =
-      Number(Preferences.getData(Preferences.KEY.COMPANY_ID) ?? 11) || 11;
-    const OrganizationCode = String(
-      Preferences.getData(Preferences.KEY.ORGANIZATION_CODE) ?? '',
-    );
-
-    if (!token || !employeeID || !companyId) {
-      __DEV__ &&
-        console.warn(`[Poster:${source}] Missing token/employeeID/companyId; skip`);
-      return;
-    }
-    console.log('locationproblem::',address[0]);
-    
-    const body = {
-      token,
-      employeeID,
-      address: address[0] ?? '',
-      batteryStatus,
-      delay: '0',
-      dateTime: formatServerDateTimeIST(),
-      distance: 0,
-      isActive: true,
-      latitude: String(lat),
-      longitude: String(long),
-      companyId,
-      OrganizationCode,
-    };
-
-    __DEV__ && console.log(`[Poster:${source}] sending @ ${body.dateTime}`, {
-      lat,
-      long,
-      address,
-      batteryStatus,
-    });
-
-      const dispatchToUse = forceDispatch ?? dispatchRef;
-      if (!dispatchToUse) {
-        console.warn(`[Poster:${source}] No dispatch → direct API call`);
-
-        await PostLocationApi({ body });
-
-      } else {
-        const action = PostLocationApi({ body });
-        const result: any = dispatchToUse(action);
-
-        if (result && typeof result.unwrap === 'function') {
-          await result.unwrap();
-        } else {
-          await result;
-        }
-      }
- 
-    Preferences.setData(Preferences.KEY.LAST_POST_TS, Date.now());
-    __DEV__ && console.log(`[Poster:${source}] ✅ success @ ${body.dateTime}`);
-  } catch (e) {
-    Common?.warn?.(`[Poster:${source}] ❌ failed`, e);
+    await sendLocationToServer({ lat, long, address, source, forceDispatch });
+  } catch (e: any) {
+    console.error(`[Poster:${source}] ❌ FAILED:`, e?.message ?? e);
   } finally {
-    posting = false;
+    fgPosting = false;
   }
 }
 
