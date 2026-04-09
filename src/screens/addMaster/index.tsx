@@ -606,20 +606,22 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         {selectedType && !isLoadingMasters && (
           <View style={localStyles.actionRow}>
             {/* Add New */}
-            <TouchableOpacity
-              style={localStyles.actionBtn}
-              activeOpacity={0.85}
-              onPress={handleOpenMasterForm}>
-              <LinearGradient
-                colors={[COLORS.colorMediumslateblue, '#6036c4']}
-                style={localStyles.gradient}
-                start={{x: 0.5, y: 0}}
-                end={{x: 0.5, y: 1}}>
-                <Text style={localStyles.actionBtnText}>
-                  + Add New {selectedType.label}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            <View style={localStyles.actionBtn}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleOpenMasterForm}
+                style={{width: '100%'}}>
+                <LinearGradient
+                  colors={[COLORS.colorMediumslateblue, '#6036c4']}
+                  style={localStyles.gradient}
+                  start={{x: 0.5, y: 0}}
+                  end={{x: 0.5, y: 1}}>
+                  <Text style={localStyles.actionBtnText} numberOfLines={1}>
+                    + Add New {selectedType.label}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
 
             {/* Existing */}
             {/* <TouchableOpacity
@@ -825,7 +827,7 @@ const localStyles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: SIZE.MS(16),
     paddingTop: SIZE.MS(20),
-    paddingBottom: SIZE.MS(40),
+    paddingBottom: Platform.OS === 'ios' ? 120 : 40, // ✅ IMPORTANT
   },
   sectionTitle: {
     fontSize: SIZE.MS(13),
@@ -908,26 +910,38 @@ const localStyles = StyleSheet.create({
     flexDirection: 'row',
     gap: SIZE.MS(12),
     marginTop: SIZE.MS(20),
+    alignItems: 'center', // ✅ ADD
   },
   actionBtn: {
     flex: 1,
     borderRadius: SIZE.MS(25),
-    overflow: 'hidden',
+    justifyContent: 'center',
+
+    // iOS shadow
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+
+    // Android
     elevation: 3,
   },
   gradient: {
-    paddingVertical: SIZE.MS(13),
+    height: 50, // ✅ FIXED HEIGHT (CRITICAL)
+    justifyContent: 'center',
     alignItems: 'center',
     borderRadius: SIZE.MS(25),
+    paddingHorizontal: 10, // ✅ prevents text cut
   },
   actionBtnText: {
     fontSize: SIZE.MS(14),
     fontFamily: FONTS.SEMI_BOLD,
     color: COLORS.WHITE,
     letterSpacing: 0.3,
+    includeFontPadding: false, // ✅ ANDROID SAFE
+    textAlignVertical: 'center', // ✅ iOS fix
   },
 });
-
 const modalStyles = StyleSheet.create({
   overlay: {
     flex: 1,

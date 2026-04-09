@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import {COLORS, FONTS, SIZE} from '@res';
 import {
@@ -453,7 +454,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: LetterSpacing.ls_0_1,
     textAlign: 'left',
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
     fontWeight: '500',
     alignSelf: 'stretch',
   },
@@ -475,7 +476,7 @@ const styles = StyleSheet.create({
     color: COLORS.colorDarkslategray100,
     fontSize: FontSize.fs_14,
     letterSpacing: LetterSpacing.ls_0_1,
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
     alignSelf: 'stretch',
   },
   controller: {
@@ -494,12 +495,12 @@ const styles = StyleSheet.create({
     color: COLORS.colorDarkslategray100,
     fontSize: FontSize.fs_14,
     letterSpacing: LetterSpacing.ls_0_1,
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
   },
   latlng: {
     fontSize: FontSize.fs_14,
     letterSpacing: LetterSpacing.ls_0_1,
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
     alignSelf: 'stretch',
   },
   text2: {
@@ -566,7 +567,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Padding.padding_12,
     height: 40,
     fontSize: FontSize.fs_14,
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
   },
   dropdownContainer: {
     position: 'absolute',
@@ -623,7 +624,7 @@ const styles = StyleSheet.create({
     color: COLORS.colorDarkslategray100,
     fontSize: FontSize.fs_14,
     letterSpacing: LetterSpacing.ls_0_1,
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
   },
   imagePreviewContainer: {
     flexDirection: 'row',
@@ -662,8 +663,9 @@ const styles = StyleSheet.create({
   selectMaster: {
     fontSize: FontSize.fs_12,
     textAlign: 'left',
-    fontFamily: FontFamily.switzer,
+    fontFamily: FONTS.SEMI_BOLD,
     color: COLORS.colorDarkslategray,
     fontWeight: '500',
+    paddingVertical: Platform.OS === 'ios' ? Padding.padding_5 : 0,
   },
 });

@@ -205,14 +205,15 @@ const ProfileScreen: FC<ScreenProps.ProfileScreen> = ({
           <Pressable
             onPress={() => getAddressLocation(false)}
             style={styles.buttonWrapper}>
-            <LinearGradient
+            <View
               style={[styles.button, styles.buttonBorder]}
-              locations={[0, 1]}
-              colors={['rgba(255, 255, 255, 0.12)', 'rgba(255, 255, 255, 0)']}
-              useAngle={true}
-              angle={180}>
+              // locations={[0, 1]}
+              // colors={['rgba(255, 255, 255, 0.12))']}
+              // useAngle={true}
+              // angle={180}
+            >
               <Text style={[styles.updateAddress]}>Update Address</Text>
-            </LinearGradient>
+            </View>
           </Pressable>
           <Text style={[styles.allChangesTake, styles.updateAddressTypo]}>
             All changes take effect immediately

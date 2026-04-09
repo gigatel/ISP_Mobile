@@ -76,8 +76,10 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.MEDIUM,
   },
   addButton: {
-    paddingVertical: 8,
-    // height: 36,
+    flexWrap: 'nowrap',
+    // paddingVertical: 8,
+    // paddingVertical: 8,
+    height: 30,
     width: 60,
     borderRadius: 50,
     justifyContent: 'center',

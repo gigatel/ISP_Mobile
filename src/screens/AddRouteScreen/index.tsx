@@ -1179,7 +1179,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       <View style={styles.container}>
         <MapView
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
+          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
           style={StyleSheet.absoluteFillObject}
           initialRegion={initialRegion}
           showsUserLocation={true}
