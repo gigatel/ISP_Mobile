@@ -26,6 +26,7 @@
 		C4D372512F335C3000D2428D /* Switzer-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C4D3724A2F335C3000D2428D /* Switzer-Black.ttf */; };
 		C4D372522F335C3000D2428D /* Switzer-Semibold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C4D3724B2F335C3000D2428D /* Switzer-Semibold.ttf */; };
 		C4E5BE812E8BE45600190BA7 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = C4E5BE802E8BE45600190BA7 /* GoogleService-Info.plist */; };
+		C4F473E32F87ACB7009E40F8 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F473E22F87ACAE009E40F8 /* LocationManager.swift */; };
 		DE767E03991D9F8095C926E5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		E117C39BF4EF4318BD3E7021 /* Roboto-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 8531CEA1F10E48C99CCD71AF /* Roboto-ExtraBold.ttf */; };
 /* End PBXBuildFile section */
@@ -55,6 +56,7 @@
 		C4D3724A2F335C3000D2428D /* Switzer-Black.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "Switzer-Black.ttf"; path = "../src/res/fonts/Switzer-Black.ttf"; sourceTree = "<group>"; };
 		C4D3724B2F335C3000D2428D /* Switzer-Semibold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "Switzer-Semibold.ttf"; path = "../src/res/fonts/Switzer-Semibold.ttf"; sourceTree = "<group>"; };
 		C4E5BE802E8BE45600190BA7 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		C4F473E22F87ACAE009E40F8 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		DBAE9D6B22B96BC01A9DC7B5 /* Pods-GTPL.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-GTPL.debug.xcconfig"; path = "Target Support Files/Pods-GTPL/Pods-GTPL.debug.xcconfig"; sourceTree = "<group>"; };
 		E2BCC84C2C9E486FB9D6A1C3 /* Roboto-Black.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Roboto-Black.ttf"; path = "../src/res/fonts/Roboto-Black.ttf"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -81,6 +83,7 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
+				C4F473E22F87ACAE009E40F8 /* LocationManager.swift */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
 			);
@@ -344,6 +347,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C4F473E32F87ACB7009E40F8 /* LocationManager.swift in Sources */,
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -371,7 +375,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.6;
+				MARKETING_VERSION = 2.7;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -410,7 +414,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.6;
+				MARKETING_VERSION = 2.7;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

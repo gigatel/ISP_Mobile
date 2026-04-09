@@ -5,6 +5,7 @@ import ReactAppDependencyProvider
 import Firebase
 @main
 class AppDelegate: RCTAppDelegate {
+  //let locationManager = CLLocationManager()   // ✅ ADD THIS
   override func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
     self.moduleName = "GTPL"
     self.dependencyProvider = RCTAppDependencyProvider()
@@ -13,6 +14,7 @@ class AppDelegate: RCTAppDelegate {
     // They will be passed down to the ViewController used by React Native.
     // FirebaseApp.configure()
     self.initialProps = [:]
+    LocationManager.shared.start()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

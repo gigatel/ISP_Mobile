@@ -81,8 +81,9 @@
 		<string>Switzer-SemiBold.ttf</string>
 	</array>
 	<key>UIBackgroundModes</key>
-	<array>
+  <array>
 		<string>location</string>
+    <string>fetch</string>
 		<string>remote-notification</string>
 	</array>
 	<key>UILaunchStoryboardName</key>

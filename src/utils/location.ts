@@ -213,12 +213,8 @@ export const startLocationWatch = () => {
     },
     {
       enableHighAccuracy: true,
-      distanceFilter: 10,
-      interval: 10000,
-      fastestInterval: 5000,
-      timeout: 20000,
-      maximumAge: 0,
-      useSignificantChanges: false,
+      distanceFilter: 0, // 🔥 IMPORTANT
+      useSignificantChanges: false, // 🔥 IMPORTANT
     },
   );
 
@@ -287,12 +283,15 @@ export const watchGeoLocation = (): { id: number | null; stop: () => void } => {
       },
       err => { if (__DEV__) console.warn('watchGeoLocation error', err?.message); },
       {
-        interval: 10000,
-        timeout: 15000,
-        maximumAge: 50000,
+        // interval: 10000,
+        // timeout: 15000,
+        // maximumAge: 50000,
+        // enableHighAccuracy: true,
+        // distanceFilter: 10,
+        // useSignificantChanges: true,
         enableHighAccuracy: true,
-        distanceFilter: 10,
-        useSignificantChanges: true,
+        distanceFilter: 0, // 🔥 IMPORTANT
+        useSignificantChanges: false, // 🔥 IMPORTANT
       },
     );
   } catch (e) {
