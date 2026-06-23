@@ -1,0 +1,31 @@
+diff --git a/node_modules/react-native-maps/android/src/main/java/com/facebook/react/uimanager/ViewManagerWithGeneratedInterface.java b/node_modules/react-native-maps/android/src/main/java/com/facebook/react/uimanager/ViewManagerWithGeneratedInterface.java
+new file mode 100644
+index 0000000..f32f752
+--- /dev/null
++++ b/node_modules/react-native-maps/android/src/main/java/com/facebook/react/uimanager/ViewManagerWithGeneratedInterface.java
+@@ -0,0 +1,7 @@
++package com.facebook.react.uimanager;
++
++/**
++ * Shim for older codegen outputs that still reference ViewManagerWithGeneratedInterface.
++ * React Native 0.77 no longer ships this marker interface.
++ */
++public interface ViewManagerWithGeneratedInterface {}
+diff --git a/node_modules/react-native-maps/android/src/main/jni/CMakeLists.txt b/node_modules/react-native-maps/android/src/main/jni/CMakeLists.txt
+index 3496730..e3d7c18 100644
+--- a/node_modules/react-native-maps/android/src/main/jni/CMakeLists.txt
++++ b/node_modules/react-native-maps/android/src/main/jni/CMakeLists.txt
+@@ -24,5 +24,11 @@ target_link_libraries(
+   # because we want to break a circular dependency between react_codegen_rncore and reactnative
+   reactnative
+ )
+-
+-target_compile_reactnative_options(react_codegen_RNMapsSpecs PRIVATE)
++
++target_compile_options(
++  react_codegen_RNMapsSpecs
++  PRIVATE
++  -std=c++20
++  -fexceptions
++  -frtti
++)

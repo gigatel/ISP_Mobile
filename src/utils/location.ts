@@ -439,7 +439,7 @@ export const requestPermission = async () => {
 const openLocationSetting = () => {
   if (Platform.OS === 'android') {
     try {
-      Linking.sendIntent('android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS')
+      Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS')
         .then(() => log('Location settings opened'))
         .catch(err => { openSettings(); error('Settings error', err); });
     } catch (e) {

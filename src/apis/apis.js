@@ -11,21 +11,24 @@ import {Alert} from 'react-native';
 import {resetStore} from '@reducers';
 import {store} from '../store/store';
 import {reset} from '@navigation/services';
-const TIMEOUT = 120000;
+const TIMEOUT = 20000;
 const axiosInstance = axios.create({
   timeout: TIMEOUT,
 });
-const STATIC_BEARER_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIiLCJlbWFpbCI6ImhlbHBkZXNrQGdpZ2F0ZWwuaW4iLCJqdGkiOiIwOGVkOGFlMy1hMDQ2LTQ3ODgtOWEyOS0xM2JhNmFhOWVmMzQiLCJVc2VySWQiOiIxNzQiLCJVc2VyRnVsbE5hbWUiOiJTaHViaGFtICBEb2JyaXlhbCIsIlVzZXJFbWFpbElkIjoiaGVscGRlc2tAZ2lnYXRlbC5pbiIsIlBob25lTnVtYmVyIjoiNzA2NTcwNDE0MSIsIkRlc2lnbmFpb25JZCI6IjMyNiIsIkRlc2lnbmFpb25OYW1lIjoiQXNzaXN0YW50IE1hbmFnZXIiLCJEZXBhcnRtZW50SWQiOiIwIiwiRGVwYXJ0bWVudE5hbWUiOiIiLCJPcmdhbml6YXRpb25JZCI6IjEiLCJPcmdhbml6YXRpb25OYW1lIjoiR2lnYXRlbCIsIkNvbXBhbnlJZCI6IjE2IiwiQ29tcGFueU5hbWUiOiJHaWdhdGVsIFRlY2hvbm9zb2Z0IFByaXZhdGUgTGltaXRlZCIsIlNlbGVjdGVkQ29tcGFueUlkIjoiMyIsIlNlbGVjdGVkQ29tcGFueU5hbWUiOiJHaWdhdGVsIFNvbHV0aW9ucyBQcml2YXRlIExpbWl0ZWQiLCJFbXBsb3llZUlkIjoiOTAyIiwiU2hpZnRUaW1lIjoiMDk6MzAtMTg6MzAiLCJTaGlmdElkIjoiNTMiLCJBcHBUeXBlIjoiV0VCIiwiUm9sZSI6IiIsImV4cCI6MTc3MDg3Nzg4NiwiaXNzIjoiVGVzdC5jb20iLCJhdWQiOiJUZXN0LmNvbSJ9.c056-ecpsDFoomMNGlncQfY9_c_yNMSry_pGxMrBJMw'; // Replace with your actual token
+const STATIC_BEARER_TOKEN =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIiLCJlbWFpbCI6ImhlbHBkZXNrQGdpZ2F0ZWwuaW4iLCJqdGkiOiIwOGVkOGFlMy1hMDQ2LTQ3ODgtOWEyOS0xM2JhNmFhOWVmMzQiLCJVc2VySWQiOiIxNzQiLCJVc2VyRnVsbE5hbWUiOiJTaHViaGFtICBEb2JyaXlhbCIsIlVzZXJFbWFpbElkIjoiaGVscGRlc2tAZ2lnYXRlbC5pbiIsIlBob25lTnVtYmVyIjoiNzA2NTcwNDE0MSIsIkRlc2lnbmFpb25JZCI6IjMyNiIsIkRlc2lnbmFpb25OYW1lIjoiQXNzaXN0YW50IE1hbmFnZXIiLCJEZXBhcnRtZW50SWQiOiIwIiwiRGVwYXJ0bWVudE5hbWUiOiIiLCJPcmdhbml6YXRpb25JZCI6IjEiLCJPcmdhbml6YXRpb25OYW1lIjoiR2lnYXRlbCIsIkNvbXBhbnlJZCI6IjE2IiwiQ29tcGFueU5hbWUiOiJHaWdhdGVsIFRlY2hvbm9zb2Z0IFByaXZhdGUgTGltaXRlZCIsIlNlbGVjdGVkQ29tcGFueUlkIjoiMyIsIlNlbGVjdGVkQ29tcGFueU5hbWUiOiJHaWdhdGVsIFNvbHV0aW9ucyBQcml2YXRlIExpbWl0ZWQiLCJFbXBsb3llZUlkIjoiOTAyIiwiU2hpZnRUaW1lIjoiMDk6MzAtMTg6MzAiLCJTaGlmdElkIjoiNTMiLCJBcHBUeXBlIjoiV0VCIiwiUm9sZSI6IiIsImV4cCI6MTc3MDg3Nzg4NiwiaXNzIjoiVGVzdC5jb20iLCJhdWQiOiJUZXN0LmNvbSJ9.c056-ecpsDFoomMNGlncQfY9_c_yNMSry_pGxMrBJMw'; // Replace with your actual token
 
-const toQueryString = (q) => {
-  if (!q) return '';1
+const toQueryString = q => {
+  if (!q) return '';
   if (typeof q === 'string') return q.startsWith('?') ? q : `?${q}`;
   const parts = [];
   Object.entries(q).forEach(([k, v]) => {
     if (v === undefined || v === null || v === '') return;
     if (Array.isArray(v)) {
-      v.forEach((item) => {
-        parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(item))}`);
+      v.forEach(item => {
+        parts.push(
+          `${encodeURIComponent(k)}=${encodeURIComponent(String(item))}`,
+        );
       });
     } else {
       parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
@@ -43,16 +46,30 @@ const standardizeError = (error, fallbackMessage = 'Request failed') => {
       cancelled: true,
     };
   }
-const status = error?.response?.status || error?.status || 500;
-  const message =
-    error?.response?.data?.message ||
-    error?.message ||
-    fallbackMessage;
-  return { message, status, success: false, data: null };
+
+  const isTimeout =
+    error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '');
+  const isNetworkError = error?.message === 'Network Error';
+  const status =
+    error?.response?.status ||
+    error?.status ||
+    (isTimeout ? 408 : isNetworkError ? 0 : 500);
+  const message = isTimeout
+    ? 'Server not reachable. Please check API port/VPN/mobile network.'
+    : isNetworkError
+    ? 'Network request failed. Please check API URL or mobile network.'
+    : error?.response?.data?.message || error?.message || fallbackMessage;
+  return {
+    message,
+    status,
+    success: false,
+    data: null,
+    code: error?.code,
+  };
 };
 const getAuthHeaders = async () => {
   const token = Preferences.getData('API_AUTH_TOKEN');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return token ? {Authorization: `Bearer ${token}`} : {};
 };
 export const logout = () => {
   Common.alert({
@@ -73,14 +90,14 @@ export const logout = () => {
 export const checkNetworkBeforeRequest = async () => {
   const netInfo = await NetInfo.fetch();
   if (!netInfo.isConnected || netInfo.isInternetReachable === false) {
-    Common.emit('NO_INTERNET');   // 🔥 Sirf signal
+    Common.emit('NO_INTERNET'); // 🔥 Sirf signal
     return false;
   }
   return true;
 };
 /** Optional: basic response handler for non-2xx conditions we still receive */
-const handleResponseSideEffects = (response) => {
-  const { status } = response || {};
+const handleResponseSideEffects = response => {
+  const {status} = response || {};
   if (status === 400) {
     Common.showToast('Something went wrong in API (400)');
   } else if (status === 401) {
@@ -95,7 +112,7 @@ export const getRequestWithQuery = async ({
   timeout = TIMEOUT,
 }) => {
   const canSend = await checkNetworkBeforeRequest(checkNetSpeed);
- if (!canSend) {
+  if (!canSend) {
     return Promise.reject({
       message: 'No Internet',
       status: 202,
@@ -110,14 +127,14 @@ export const getRequestWithQuery = async ({
   try {
     const headers = isAuth ? await getAuthHeaders() : {};
     console.log({headers});
-    
-    const response = await axiosInstance.get(url, { headers, timeout });
+
+    const response = await axiosInstance.get(url, {headers, timeout});
     Common.success(`GET | SUCCESS | ${path}`, response?.data);
     return response?.data;
   } catch (error) {
     Common.error('GET | ERROR', error?.message || error);
     // remove token on 401
-    if ((error?.response?.status === 401) && isAuth) {
+    if (error?.response?.status === 401 && isAuth) {
       await Preferences.removeData('API_AUTH_TOKEN');
     }
     throw standardizeError(error);
@@ -143,31 +160,31 @@ export const getRequestWithQueryStatic = async ({
 
   const url = `${path}${params}`;
   Common.log('GET | QUERY | STATIC |', url);
-  
+
   try {
     // ✅ Static bearer token headers
-    const headers = isAuth 
+    const headers = isAuth
       ? {
-          'Authorization': `Bearer ${STATIC_BEARER_TOKEN}`,
+          Authorization: `Bearer ${STATIC_BEARER_TOKEN}`,
           'Content-Type': 'application/json',
         }
       : {
           'Content-Type': 'application/json',
         };
-    
+
     console.log({headers});
-    const response = await axiosInstance.get(url, { headers, timeout });
+    const response = await axiosInstance.get(url, {headers, timeout});
     Common.success(`GET | SUCCESS | STATIC | ${path}`, response?.data);
     return response?.data;
   } catch (error) {
     Common.error('GET | ERROR | STATIC', error?.message || error);
-    
+
     // Don't remove token on 401 since we're using static token
     // Just log the error
-    if ((error?.response?.status === 401) && isAuth) {
+    if (error?.response?.status === 401 && isAuth) {
       console.log('Static token authentication failed - 401');
     }
-    
+
     throw standardizeError(error);
   }
 };
@@ -191,13 +208,13 @@ export const postRequestWithQuery = async ({
   Common.log('POST | QUERY |', url);
   try {
     const headers = isAuth ? await getAuthHeaders() : {};
-    const response = await axiosInstance.post(url, null, { headers, timeout });
+    const response = await axiosInstance.post(url, null, {headers, timeout});
     Common.success(`POST | QUERY | SUCCESS | ${path}`, response?.data);
     handleResponseSideEffects(response);
     return response?.data;
   } catch (error) {
     Common.error('POST | QUERY | ERROR', error?.message || error);
-    if ((error?.response?.status === 401) && isAuth) {
+    if (error?.response?.status === 401 && isAuth) {
       await Preferences.removeData('API_AUTH_TOKEN');
     }
     throw standardizeError(error);
@@ -227,15 +244,17 @@ export const postRequestWithFormData = async ({
         ...tokenHeaders,
       },
       timeout,
-      onUploadProgress: (progressEvent) => {
+      onUploadProgress: progressEvent => {
         if (typeof onUploadProgress === 'function') {
           onUploadProgress({
-            loaded: progressEvent && typeof progressEvent.loaded === 'number'
-              ? progressEvent.loaded
-              : 0,
-            total: progressEvent && typeof progressEvent.total === 'number'
-              ? progressEvent.total
-              : undefined,
+            loaded:
+              progressEvent && typeof progressEvent.loaded === 'number'
+                ? progressEvent.loaded
+                : 0,
+            total:
+              progressEvent && typeof progressEvent.total === 'number'
+                ? progressEvent.total
+                : undefined,
           });
         }
       },
@@ -253,7 +272,7 @@ export const postRequestWithFormData = async ({
       } catch {}
     }
     return standardizeError(error);
-    }
+  }
 };
 /**
  * POST JSON with query + body
@@ -268,7 +287,7 @@ export const postRequestWithFormData = async ({
 export const postRequestWithJsonWithBody = async ({
   path,
   query,
-  params = {},   // ✅ new param support
+  params = {}, // ✅ new param support
   body = {},
   isAuth = true,
   checkNetSpeed = false,
@@ -291,24 +310,28 @@ export const postRequestWithJsonWithBody = async ({
   try {
     const tokenHeaders = isAuth ? await getAuthHeaders() : {};
     const response = await axiosInstance.post(url, body, {
-      headers: { 'Content-Type': 'application/json', ...tokenHeaders },
-      params,   
+      headers: {'Content-Type': 'application/json', ...tokenHeaders},
+      params,
       timeout,
-      signal,  
+      signal,
     });
-    Common.success(`POST | JSON (query+body+params) | SUCCESS | ${path}`, response?.data);
+    Common.success(
+      `POST | JSON (query+body+params) | SUCCESS | ${path}`,
+      response?.data,
+    );
     handleResponseSideEffects(response);
     return response?.data;
   } catch (error) {
-    Common.error('POST | JSON (query+body+params) | ERROR', error?.message || error);
-    if ((error?.response?.status === 401) && isAuth) {
+    Common.error(
+      'POST | JSON (query+body+params) | ERROR',
+      error?.message || error,
+    );
+    if (error?.response?.status === 401 && isAuth) {
       Preferences.removeData('API_AUTH_TOKEN');
     }
     throw standardizeError(error);
   }
 };
-
-
 
 /**
  * Simple POST JSON (body only)
@@ -322,7 +345,7 @@ export const postRequestWithJson = ({
 }) => {
   return new Promise((resolve, reject) => {
     checkNetworkBeforeRequest(checkNetSpeed)
-      .then(async (canSend) => {
+      .then(async canSend => {
         if (!canSend) {
           reject({
             message: 'No Internet Connection!',
@@ -340,15 +363,15 @@ export const postRequestWithJson = ({
           const tokenHeaders = isAuth ? await getAuthHeaders() : {};
           axiosInstance
             .post(url, params, {
-              headers: { 'Content-Type': 'application/json', ...tokenHeaders },
+              headers: {'Content-Type': 'application/json', ...tokenHeaders},
               timeout,
             })
-            .then((response) => {
+            .then(response => {
               Common.success(`POST | JSON | SUCCESS | ${path}`, response?.data);
               handleResponseSideEffects(response);
               resolve(response?.data);
             })
-            .catch((error) => {
+            .catch(error => {
               Common.error('POST | JSON | ERROR', error?.message || error);
               if (error?.response?.status === 401 && isAuth) {
                 Preferences.removeData('API_AUTH_TOKEN');
@@ -365,7 +388,7 @@ export const postRequestWithJson = ({
           });
         }
       })
-      .catch((networkError) => {
+      .catch(networkError => {
         Common.error('NETWORK CHECK | ERROR', networkError);
         reject({
           message: 'Network check failed',
@@ -390,7 +413,11 @@ export const getAddressFromCoordinates = async (latitude, longitude) => {
       `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${CONSTANT.DIRECTION_API_KEY}`,
     );
     const json = await response.json();
-    if (json.status === 'OK' && Array.isArray(json.results) && json.results.length > 0) {
+    if (
+      json.status === 'OK' &&
+      Array.isArray(json.results) &&
+      json.results.length > 0
+    ) {
       return json.results[0].formatted_address;
     } else {
       Common.error('Address not found');

@@ -10,6 +10,7 @@
     "build": "react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res/",
     "dev_ipa": "react-native bundle --entry-file index.js --platform ios --dev false --bundle-output ios/main.jsbundle --assets-dest ios",
     "reset": "npx react-native start --reset-cache",
+    "postinstall": "patch-package && node scripts/postinstall-fixes.js",
     "start": "npx react-native start",
     "pod": "cd ios; pod install; cd ..",
     "client": "git push client main",
