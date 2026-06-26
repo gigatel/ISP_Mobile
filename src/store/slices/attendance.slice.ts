@@ -3,7 +3,6 @@ import { goBack } from '@navigation/services';
 import { createAsyncThunk, createEntityAdapter, createSlice } from '@reduxjs/toolkit';
 import { DataType } from '@types';
 import { Common, Preferences } from '@utils';
-import { clearChamberTaskData } from './task.slice';
 import { log } from 'src/utils/common';
 import { OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX, type PreferenceKey } from './../../utils/preferences';
 const ATTENDANCE = 'attendance';
@@ -125,7 +124,7 @@ export const getEmployeeListForContactApi = createAsyncThunk(
         const sorted = res?.data?.sort((a: DataType.EmployeeDetails, b: DataType.EmployeeDetails) => {
           const aFirst = a.firstName ?? '';
           const bFirst = b.firstName ?? '';
-          return aFirst.localeCompare(bFirst, undefinedAttendanceDashboard, { sensitivity: 'base' });
+          return aFirst.localeCompare(bFirst, undefined, { sensitivity: 'base' });
         });
         Preferences.setData('OFFLINE_EMPLOYEE_LIST_FOR_CONTACT', sorted);
         return sorted;
@@ -384,9 +383,6 @@ export const markAttendanceApi = createAsyncThunk(
           search: '',
         }));
         console.log('attendance1');
-        if (param?.direction === 'in') {
-          thunkApi.dispatch(clearChamberTaskData());
-        }
         Common.alert({
           title: 'Alert',
           msg: 'Attendance Marked Successfully',

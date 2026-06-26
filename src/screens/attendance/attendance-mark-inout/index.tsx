@@ -19,7 +19,6 @@ import DeviceInfo from 'react-native-device-info';
 import {connect, useDispatch} from 'react-redux';
 import {IconTitleRow} from '../components/icon-title-row';
 import {MarkInOutButton} from '../components/mark-inout-button';
-import {clearChamberTaskData} from '@slices/task.slice';
 import {log} from 'src/utils/common';
 const TimeText = ({title, value}: {title: string; value: string}) => {
   return (
@@ -191,9 +190,6 @@ const AttendanceInOut: FC<ScreenProps.AttendanceInOut> = ({
           behalfName: behalfOfData?.name,
           employeeCode: behalfOfData?.employeeCode,
         };
-        if (comeFrom === 'in') {
-          dispatch(clearChamberTaskData());
-        }
         if (prevAttData) {
           Preferences.setData('OFFLINE_ATTENDANCE', [
             ...prevAttData,

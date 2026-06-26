@@ -5,6 +5,29 @@ import { CONSTANT, STRINGS } from '@res';
 import { Common, Preferences, Security } from '@utils';
 const LOGIN = 'login';
 const otpAdapter = createEntityAdapter();
+const SELECT_COMPANY_PAYLOAD = {selectedCompanyId: 0};
+
+const getApiMessage = (res: any, fallback: string) =>
+  res?.message ?? res?.messege ?? res?.error ?? fallback;
+
+const getTokenFromSelectCompany = (selectRes: any) => {
+  if (typeof selectRes?.data === 'string') return selectRes.data;
+  return (
+    selectRes?.data?.token ??
+    selectRes?.data?.data ??
+    selectRes?.token ??
+    ''
+  );
+};
+
+let hasLoggedSelectCompanyUrl = false;
+
+const logSelectCompanyDev = (data?: any) => {
+  if (!__DEV__ || hasLoggedSelectCompanyUrl) return;
+  hasLoggedSelectCompanyUrl = true;
+  console.log('[Account/SelectCompany] updated URL:', URLs.selectCompany, data ?? {});
+};
+
 export const getOtpApi = createAsyncThunk(
   `${LOGIN}/getPublicKey`,
   async (params: any, thunkAPI) => {
@@ -79,55 +102,100 @@ export const verifyOtpApi = createAsyncThunk(
       const loginRes = await APIs.postRequestWithJson({
         path: URLs.verifyOtp,
         params: {
-          ...params,setImmediate,
+          ...params,
           otp: encOtp.data,
         },
         isAuth: false,
       });
       if (loginRes?.status === 200 && loginRes?.success) {
-        Preferences.setData('API_AUTH_TOKEN', loginRes?.token ?? '');
-        Preferences.setData('LOGIN_RESPONSE', loginRes?.loginUserInfo);
-        Preferences.setData('EMPLOYEE_ID', loginRes?.loginUserInfo?.employeeId);
-        Preferences.setData('COMPANY_ID', loginRes?.loginUserInfo?.companyId)
+        const loginUserInfo = loginRes?.loginUserInfo;
+        const loginToken = loginRes?.token ?? '';
+
+        Preferences.setData('API_AUTH_TOKEN', loginToken);
+        Preferences.setData('LOGIN_RESPONSE', loginUserInfo);
+        Preferences.setData('EMPLOYEE_ID', loginUserInfo?.employeeId);
+        Preferences.setData('COMPANY_ID', SELECT_COMPANY_PAYLOAD.selectedCompanyId);
+        Preferences.setData('ORGANIZATION_CODE', params?.organizationCode ?? '');
         // ✅ DIRECT USE KE LIYE
         // Preferences.setData('LOGIN_POLICIES', loginRes.loginUserInfo.policies);
-        thunkAPI.dispatch(selectCompanyApi({
-          selectedCompanyId: loginRes?.loginUserInfo?.companyId,
-        }));
+
+        const selectAction: any = await thunkAPI.dispatch(
+          selectCompanyApi(undefined),
+        );
+
+        if (selectCompanyApi.fulfilled.match(selectAction)) {
+          return loginRes;
+        }
+
+        const selectError = selectAction?.payload ?? selectAction?.error;
+        if (selectError?.status === 401) {
+          Common.showToast(getApiMessage(selectError, 'Unauthorized'));
+          return thunkAPI.rejectWithValue(selectError);
+        }
+
+        // Login already returned a valid token. Do not leave the user stuck on OTP
+        // if SelectCompany is temporarily unavailable.
+        Preferences.setData('API_AUTH_TOKEN', loginToken);
+        Common.showToast(getApiMessage(selectError, 'Login successful'));
+        reset('BottomTab');
+        return loginRes;
       } else
         if (loginRes?.status === 401) {
           Common.showToast(loginRes.message);
-          thunkAPI.rejectWithValue(loginRes);
+          return thunkAPI.rejectWithValue(loginRes);
         } else {
-
+          Common.showToast(getApiMessage(loginRes, 'OTP verification failed'));
+          return thunkAPI.rejectWithValue(loginRes);
         }
     } catch (error) {
-      thunkAPI.rejectWithValue(error);
+      return thunkAPI.rejectWithValue(error);
     }
   }
 );
 //! Select Comapny API
 export const selectCompanyApi = createAsyncThunk(
   `${LOGIN}/selectCompanyApi`,
-  async (params: any, thunkAPI) => {
+  async (_params: any = undefined, thunkAPI) => {
     try {
-      const selectRes = await APIs.postRequestWithJson({
-        path: URLs.selectCompany,
-        params,
-        isAuth: true,
+      const requestBody = SELECT_COMPANY_PAYLOAD;
+      let selectRes: any = null;
+      let firstError: any = null;
+      const appLoginToken = Preferences.getData('API_AUTH_TOKEN');
+
+      logSelectCompanyDev({
+        selectedCompanyId: requestBody.selectedCompanyId,
+        hasAppLoginToken: Boolean(appLoginToken),
       });
-     if (selectRes?.status === 200 && selectRes?.success) {
-        Preferences.setData('API_AUTH_TOKEN', selectRes?.data ?? '');
+
+      try {
+        selectRes = await APIs.postRequestWithJson({
+          path: URLs.selectCompany,
+          params: requestBody,
+          isAuth: true,
+        });
+      } catch (error) {
+        firstError = error;
+      }
+
+      if (selectRes?.status === 200 && selectRes?.success) {
+        const selectedToken = getTokenFromSelectCompany(selectRes);
+        if (selectedToken) {
+          Preferences.setData('API_AUTH_TOKEN', selectedToken);
+        }
+        Preferences.setData('COMPANY_ID', requestBody.selectedCompanyId);
         Common.showToast('Login Successfully');
         reset('BottomTab');
-      } else 
-        if (selectRes?.status === 401) {
-          Common.showToast(selectRes.message);
-          thunkAPI.rejectWithValue(selectRes);
-        } else {
-        }   
+        return selectRes;
+      }
+
+      const errorRes = selectRes ?? firstError;
+      Common.showToast(
+        getApiMessage(errorRes, 'Company selection failed'),
+      );
+      return thunkAPI.rejectWithValue(errorRes);
     } catch (error) {
-      thunkAPI.rejectWithValue(error);
+      Common.showToast(getApiMessage(error, 'Company selection failed'));
+      return thunkAPI.rejectWithValue(error);
     }
   }
 );

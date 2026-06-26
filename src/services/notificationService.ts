@@ -202,7 +202,7 @@ class NotificationService {
           notificationId: safe.notification_id,
         });
       } else if (entityType === 'team') {
-        NavigationService.navigate('Dashboard');
+        NavigationService.navigate('BottomTab', {screen: 'Home'});
       } else {
         // Unknown type -> no-op; avoids crashes
       }

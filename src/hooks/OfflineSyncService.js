@@ -25,26 +25,30 @@ const syncOfflineRequests = async () => {
   const attData = Preferences.getData('OFFLINE_ATTENDANCE');
 
   if (patrollerTaskData?.length > 0) {
-    isAlreadyRequested += 1;
-    try {
-      if (isAlreadyRequested <= 1) {
-        const taskRes = await APIs.postRequestWithJson({
-          path: URLs.submitDailyReport,
-          isAuth: true,
-          checkNetSpeed: true,
-          params: patrollerTaskData,
-        });
-        Common.success('Task Synced Successfully', taskRes);
-        if (taskRes?.status === 200 && taskRes?.success) {
-          Common.showToast('Task Synced Successfully');
-          Voice.speak('अपका ऑफलाइन सबमिट किया हुआ डेटा सिंक हो चुका है।');
-          Preferences.removeData('SUBMIT_TASK_DATA');
-          isAlreadyRequested = 0;
+    if (!URLs.submitDailyReport) {
+      Common.log('Task offline sync skipped: submitDailyReport URL is not configured');
+    } else {
+      isAlreadyRequested += 1;
+      try {
+        if (isAlreadyRequested <= 1) {
+          const taskRes = await APIs.postRequestWithJson({
+            path: URLs.submitDailyReport,
+            isAuth: true,
+            checkNetSpeed: true,
+            params: patrollerTaskData,
+          });
+          Common.success('Task Synced Successfully', taskRes);
+          if (taskRes?.status === 200 && taskRes?.success) {
+            Common.showToast('Task Synced Successfully');
+            Voice.speak('अपका ऑफलाइन सबमिट किया हुआ डेटा सिंक हो चुका है।');
+            Preferences.removeData('SUBMIT_TASK_DATA');
+            isAlreadyRequested = 0;
+          }
         }
+      } catch (error) {
+        isAlreadyRequested = 0;
+        Common.error('Error in Task Sync', error);
       }
-    } catch (error) {
-      isAlreadyRequested = 0;
-      Common.error('Error in Task Sync', error);
     }
   }
 

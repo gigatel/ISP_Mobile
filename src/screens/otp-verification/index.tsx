@@ -43,7 +43,6 @@ const ENABLE_AUTO_SMS = true;
 // Component
 // ─────────────────────────────────────────────
 const OtpVerification: FC<ScreenProps.OtpVerification> = ({
-  navigation,
   route,
   loading,
 }) => {
@@ -55,7 +54,7 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
   const appTypeRef = useRef<string>(params.appType ?? '');
   const organizationCodeRef = useRef<string>(params.organizationCode ?? '');
 
-  const [otpCode, setOtp] = useState('');
+  const [, setOtp] = useState('');
   const [resendDisabled, setResendDisabled] = useState(false);
   const [timerCount, setTimerCount] = useState(0);
   const [apnsStatus, setApnsStatus] = useState<'pending' | 'ok'>('pending');
@@ -469,7 +468,7 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
               }`}
             </Text>
           )}
-          {/* OTP Input — editable=false so user cannot type manually */}
+          {/* OTP Input */}
           <View style={styles.inputContainer}>
             <OtpInput
               ref={otpRef}
@@ -483,7 +482,6 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
               secureTextEntry={false}
               focusStickBlinkingDuration={500}
               onTextChange={text => {
-                // Display only — SMS auto-fill updates this via setValue
                 setOtp(text);
               }}
               onFilled={code => {
@@ -495,8 +493,6 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
                   smsFilledRef.current = false;
                   return;
                 }
-                // Should not be reached since field is read-only,
-                // kept as safety net
                 if (code?.length === 6) {
                   console.log('📝 onFilled — fallback');
                   verifyOtp(code, 'fallback_onFilled');
@@ -504,9 +500,9 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
               }}
               textInputProps={{
                 accessibilityLabel: 'One-Time Password',
-                editable: false, // ← USER CANNOT TYPE
-                showSoftInputOnFocus: false, // ← NO keyboard on tap
-                caretHidden: true,
+                editable: true,
+                showSoftInputOnFocus: true,
+                caretHidden: false,
                 keyboardType: 'number-pad',
                 returnKeyType: 'done',
                 blurOnSubmit: true,

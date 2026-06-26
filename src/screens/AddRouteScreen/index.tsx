@@ -66,6 +66,26 @@ type Coordinate = {
   longitude: number;
 };
 
+const isValidCoordinate = (coord?: Coordinate | null): coord is Coordinate =>
+  Number.isFinite(coord?.latitude) && Number.isFinite(coord?.longitude);
+
+const isSameCoordinate = (a: Coordinate, b: Coordinate) =>
+  a.latitude === b.latitude && a.longitude === b.longitude;
+
+const buildRoutePathLineString = (coords: Coordinate[]) => {
+  const validCoords = coords.filter(isValidCoordinate);
+  const routeCoords = validCoords.filter(
+    (coord, index) =>
+      index === 0 || !isSameCoordinate(coord, validCoords[index - 1]),
+  );
+
+  if (routeCoords.length < 2) return null;
+
+  return `LINESTRING(${routeCoords
+    .map(coord => `${coord.longitude} ${coord.latitude}`)
+    .join(',')})`;
+};
+
 type RouteSegment = {
   itemId: string;
   coords: Coordinate[];
@@ -1014,18 +1034,18 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
 
     if (!routeId) return;
 
-    if (!segmentCoords.length) return;
-
-    const lineStringCoords = segmentCoords
-      .map(coord => `${coord.longitude} ${coord.latitude}`)
-      .join(', ');
-
-    const routePath = `LINESTRING(${lineStringCoords})`;
+    const routePath = buildRoutePathLineString(segmentCoords);
+    if (!routePath) {
+      console.log('⚠️ Route path update skipped: need at least 2 valid coordinates');
+      return;
+    }
 
     const payload = {
       routeId,
       routePath,
     };
+
+    console.log('📤 UpdateRoutePathDetails Payload:', JSON.stringify(payload));
 
     await dispatch(updateRoutePathDetailsAPI(payload)).unwrap();
 
@@ -1035,6 +1055,17 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
   // ✅ FIXED handleStopItem: reads coords from ref synchronously before any state resets
   const handleStopItem = (id: string) => {
     const segmentCoordsSnapshot = [...livePolyCoordsRef.current];
+    const latestCoord = currentPosition ?? lastPositionRef.current;
+    const lastSnapshotCoord =
+      segmentCoordsSnapshot[segmentCoordsSnapshot.length - 1];
+
+    if (
+      isValidCoordinate(latestCoord) &&
+      (!lastSnapshotCoord || !isSameCoordinate(lastSnapshotCoord, latestCoord))
+    ) {
+      segmentCoordsSnapshot.push(latestCoord);
+    }
+
     const finalDistance = Math.round(travelledDistanceRef.current);
 
     console.log(
@@ -1048,7 +1079,10 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
 
     // ✅ ONLY route path update here
     if (segmentCoordsSnapshot.length > 0) {
-      callUpdateRoutePath(segmentCoordsSnapshot);
+      callUpdateRoutePath(segmentCoordsSnapshot).catch((error: any) => {
+        console.log('❌ Route Path Update Error:', error);
+        Alert.alert('Error', error?.message || 'Failed to update route path');
+      });
     }
 
     if (segmentCoordsSnapshot.length > 1) {

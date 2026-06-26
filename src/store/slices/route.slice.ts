@@ -1,38 +1,7 @@
 import {APIs, URLs} from '@apis';
-import {Platform} from 'react-native';
 import {createAsyncThunk, createSlice} from '@reduxjs/toolkit';
-import {MMKV} from 'react-native-mmkv';
 
 const ROUTE = 'route';
-const storage = new MMKV();
-
-// ✅ Reads ALL possible token keys — logs what it finds
-const getToken = (): string => {
-  const keys = [
-    'token',
-    'userToken',
-    'accessToken',
-    'authToken',
-    'Bearer',
-    'jwt',
-    'jwtToken',
-  ];
-  for (const key of keys) {
-    const val = storage.getString(key);
-    if (val) {
-      console.log(`🔑 Token found under MMKV key: "${key}"`);
-      return val;
-    }
-  }
-  try {
-    const allKeys = storage.getAllKeys();
-    console.log('🗝️ All MMKV keys available:', JSON.stringify(allKeys));
-  } catch (e) {
-    console.log('⚠️ Could not list MMKV keys');
-  }
-  console.log('❌ No token found in MMKV!');
-  return '';
-};
 
 /* =========================
    Types
@@ -231,7 +200,7 @@ export const createInitialRouteAPI = createAsyncThunk<
       console.log('startinitialrouteapi', {body});
 
       const res = await APIs.postRequestWithJsonWithBody({
-        path: 'http://prod.gigatel.me:7004/api/RouteMasterMob/InsertUpdateRouteInitialInfo',
+        path: URLs.InsertUPdateInitialInfoAPI,
         body,
         isAuth: true,
       });
@@ -262,7 +231,7 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
     const body = {...payload};
 
       const res = await APIs.postRequestWithJsonWithBody({
-        path: 'http://prod.gigatel.me:7004/api/RouteMasterMob/InsertUpdateRouteChamberMapping',
+        path: URLs.InsertUpdateRouteChamberMapping,
         body,
         isAuth: true,
       });
@@ -347,7 +316,7 @@ export const updateRoutePathDetailsAPI = createAsyncThunk<
 >(`${ROUTE}/updateRoutePathDetailsAPI`, async (payload, thunkApi) => {
     try {
       const res = await APIs.postRequestWithJsonWithBody({
-        path: 'http://prod.gigatel.me:7004/api/RouteMasterMob/UpdateRoutePathDetails',
+        path: URLs.UpadteChamberPathDetails,
         body: payload,
         isAuth: true,
       });
@@ -445,7 +414,7 @@ export const addRouteAPI = createAsyncThunk<
     }
       console.log('📤 Sending request to server...');
       const res = await APIs.postRequestWithFormData({
-        path: 'http://prod.gigatel.me:7004/api/RouteMasterMob/InsertUpdateRouteMasterMob',
+        path: URLs.updateRouteAPI,
         body: formData,
         isAuth: true,
         isFormData: true,
