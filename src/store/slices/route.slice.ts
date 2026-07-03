@@ -263,11 +263,13 @@ export const UpdateMasterAPI = createAsyncThunk<
     formData.append('SelectedAddress', payload.SelectedAddress);
     formData.append('City', payload.City);
     formData.append('State', payload.State);
-    formData.append('Country', payload.Country);
+    formData.append('Country', payload.Country || 'India');
     formData.append('Area', payload.Area);
     formData.append('PinCode', payload.PinCode);
     formData.append('Landmark', payload.Landmark);
     formData.append('LatLng', payload.LatLng);
+    formData.append('FiberDetailsReqVM[0].Id',0);
+    formData.append('FiberDetailsReqVM[0].RouteFiberId',0);
 
     if (payload.Extra1) formData.append('Extra1', payload.Extra1);
     if (payload.Extra2) formData.append('Extra2', payload.Extra2);

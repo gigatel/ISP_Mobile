@@ -11,6 +11,7 @@ import {
   Modal,
   Platform,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import {Screen} from '@organisms';
 import styles from './styles';
@@ -40,9 +41,19 @@ import {
   LineHeight,
   Height,
 } from '../../res/globalStyle';
-import {launchCamera, CameraOptions} from 'react-native-image-picker';
+import {
+  launchCamera,
+  CameraOptions,
+  ImagePickerResponse,
+} from 'react-native-image-picker';
 import {useDispatch} from 'react-redux';
-import {PERMISSIONS, check, request, RESULTS} from 'react-native-permissions';
+import {
+  PERMISSIONS,
+  check,
+  request,
+  RESULTS,
+  openSettings,
+} from 'react-native-permissions';
 
 type RouteItem = {
   id: string;
@@ -71,6 +82,39 @@ const isValidCoordinate = (coord?: Coordinate | null): coord is Coordinate =>
 
 const isSameCoordinate = (a: Coordinate, b: Coordinate) =>
   a.latitude === b.latitude && a.longitude === b.longitude;
+
+const parseLatLng = (latLng?: string | null): Coordinate | null => {
+  const [latText, lngText] = String(latLng ?? '').split(',');
+  const coordinate = {
+    latitude: Number(latText?.trim()),
+    longitude: Number(lngText?.trim()),
+  };
+
+  return isValidCoordinate(coordinate) ? coordinate : null;
+};
+
+const getMasterCoordinate = (master: any): Coordinate | null => {
+  const latLng =
+    master?.latLng ?? master?.LatLng ?? master?.latlng ?? master?.lat_lng;
+  const parsedLatLng = parseLatLng(latLng);
+
+  if (parsedLatLng) {
+    return parsedLatLng;
+  }
+
+  const coordinate = {
+    latitude: Number(master?.latitude ?? master?.Latitude ?? master?.lat),
+    longitude: Number(
+      master?.longitude ??
+        master?.Longitude ??
+        master?.lng ??
+        master?.lon ??
+        master?.long,
+    ),
+  };
+
+  return isValidCoordinate(coordinate) ? coordinate : null;
+};
 
 const buildRoutePathLineString = (coords: Coordinate[]) => {
   const validCoords = coords.filter(isValidCoordinate);
@@ -125,6 +169,9 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
   const [addedItems, setAddedItems] = useState<RouteItem[]>([]);
   const completedCount = addedItems.filter(item => item.completed).length;
   const [isTracking, setIsTracking] = useState(false);
+  const [pendingRouteActionItemId, setPendingRouteActionItemId] = useState<
+    string | null
+  >(null);
   const [currentPosition, setCurrentPosition] = useState<Coordinate | null>(
     null,
   );
@@ -155,6 +202,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
   const trackingIntervalRef = useRef<any>(null);
   const currentTrackingItemIdRef = useRef<string | null>(null);
   const lastSegmentEndCoordRef = useRef<Coordinate | null>(null);
+  const pendingRouteActionItemIdRef = useRef<string | null>(null);
 
   // Store the routeId returned from createInitialRouteAPI
   const initialRouteIdRef = useRef<number>(0);
@@ -419,6 +467,46 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
+
+  const getMasterDistanceInMeters = (master: any): number | null => {
+    const sourcePosition = currentPosition ?? lastPositionRef.current;
+    const masterCoordinate = getMasterCoordinate(master);
+
+    if (!isValidCoordinate(sourcePosition) || !masterCoordinate) {
+      return null;
+    }
+
+    return calculateDistance(sourcePosition, masterCoordinate);
+  };
+
+  const getMasterDistanceLabel = (master: any): string => {
+    const distance = getMasterDistanceInMeters(master);
+
+    if (distance === null) {
+      return '-- m';
+    }
+
+    return `${Math.round(distance)} m`;
+  };
+
+  const sortMastersByDistance = (masters: any[]) =>
+    masters
+      .map((master, index) => ({
+        master,
+        index,
+        distance: getMasterDistanceInMeters(master),
+      }))
+      .sort((a, b) => {
+        const distanceA = a.distance ?? Number.MAX_SAFE_INTEGER;
+        const distanceB = b.distance ?? Number.MAX_SAFE_INTEGER;
+
+        if (distanceA === distanceB) {
+          return a.index - b.index;
+        }
+
+        return distanceA - distanceB;
+      })
+      .map(({master}) => master);
   // ✅ Called on Start of EVERY item — creates/updates the route record and saves routeId
   const callCreateInitialRoute = async (item: RouteItem, orderNo: number) => {
     const masterLatLng = item.masterData?.latLng || '';
@@ -515,127 +603,166 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       `✅ Mapping Sent | ${previousItem.name} → ${currentItem.name} | Distance: ${segmentDistance}m`,
     );
   };
-  const startTracking = useCallback(async (itemId: string) => {
+  const appendLiveCoordinate = useCallback((coord?: Coordinate | null) => {
+    if (!isValidCoordinate(coord)) return;
+
+    const lastLiveCoord =
+      livePolyCoordsRef.current[livePolyCoordsRef.current.length - 1];
+
+    if (lastLiveCoord && isSameCoordinate(lastLiveCoord, coord)) return;
+
+    const updatedLiveCoords = [...livePolyCoordsRef.current, coord];
+    livePolyCoordsRef.current = updatedLiveCoords;
+    setLivePolylineCoords(updatedLiveCoords);
+
+    setPolylineCoords(prev => {
+      const lastPolylineCoord = prev[prev.length - 1];
+      if (lastPolylineCoord && isSameCoordinate(lastPolylineCoord, coord)) {
+        return prev;
+      }
+      return [...prev, coord];
+    });
+
+    setFullRouteCoords(prev => {
+      const lastFullRouteCoord = prev[prev.length - 1];
+      if (lastFullRouteCoord && isSameCoordinate(lastFullRouteCoord, coord)) {
+        return prev;
+      }
+      return [...prev, coord];
+    });
+  }, []);
+
+  const getTrackingPosition = useCallback((): Promise<Coordinate> => {
+    return new Promise((resolve, reject) => {
+      Geolocation.getCurrentPosition(
+        position =>
+          resolve({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          }),
+        () => {
+          Geolocation.getCurrentPosition(
+            position =>
+              resolve({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+              }),
+            err => reject(err),
+            {enableHighAccuracy: false, timeout: 20000, maximumAge: 5000},
+          );
+        },
+        {enableHighAccuracy: true, timeout: 15000, maximumAge: 1000},
+      );
+    });
+  }, []);
+
+  const refreshCurrentPositionForDistance = async () => {
+    try {
+      const hasPermission = await requestLocationPermission();
+      if (!hasPermission) return;
+
+      const coord = await getTrackingPosition();
+      setCurrentPosition(coord);
+    } catch (error) {
+      console.log('Unable to refresh current location for distance:', error);
+    }
+  };
+
+  const handleTrackingPosition = useCallback(
+    (newCoord: Coordinate) => {
+      setCurrentPosition(newCoord);
+
+      if (lastPositionRef.current) {
+        const distance = calculateDistance(lastPositionRef.current, newCoord);
+
+        if (distance >= 8) {
+          console.log('📏 Moved:', distance.toFixed(2), 'm');
+          travelledDistanceRef.current += distance;
+          setTravelledDistance(prev => {
+            const updated = prev + distance;
+            travelledDistanceRef.current = updated;
+            return updated;
+          });
+          appendLiveCoordinate(newCoord);
+          lastPositionRef.current = newCoord;
+        }
+      } else {
+        appendLiveCoordinate(newCoord);
+        lastPositionRef.current = newCoord;
+      }
+
+      mapRef.current?.animateToRegion(
+        {
+          latitude: newCoord.latitude,
+          longitude: newCoord.longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        },
+        300,
+      );
+    },
+    [appendLiveCoordinate],
+  );
+
+  const ensureTrackingStartPosition = useCallback(async () => {
+    const existingPosition = lastPositionRef.current;
+
+    if (isValidCoordinate(existingPosition)) {
+      return existingPosition;
+    }
+
+    const coord = await getTrackingPosition();
+    handleTrackingPosition(coord);
+    return coord;
+  }, [getTrackingPosition, handleTrackingPosition]);
+
+  const startTracking = useCallback(async (itemId: string, resume = false) => {
     if (trackingIntervalRef.current !== null) {
       console.log('⚠️ Already tracking');
-      return;
+      return true;
     }
     const hasPermission = await requestLocationPermission();
     if (!hasPermission) {
       Alert.alert('Permission Required', 'Location permission needed.');
-      return;
+      return false;
     }
-    console.log('🚀 Starting tracking for item:', itemId);
+    console.log(
+      resume ? '▶️ Resuming tracking for item:' : '🚀 Starting tracking for item:',
+      itemId,
+    );
     setIsTracking(true);
-    const prevEndCoord = lastSegmentEndCoordRef.current;
-    const initialLiveCoords = prevEndCoord ? [prevEndCoord] : [];
-    livePolyCoordsRef.current = initialLiveCoords;
-    setLivePolylineCoords(initialLiveCoords);
-    setPolylineCoords([]);
-    travelledDistanceRef.current = 0;
-    setTravelledDistance(0);
+
+    if (resume) {
+      setLivePolylineCoords(livePolyCoordsRef.current);
+      setPolylineCoords(livePolyCoordsRef.current);
+    } else {
+      const prevEndCoord = lastSegmentEndCoordRef.current;
+      const initialLiveCoords = prevEndCoord ? [prevEndCoord] : [];
+      livePolyCoordsRef.current = initialLiveCoords;
+      setLivePolylineCoords(initialLiveCoords);
+      setPolylineCoords([]);
+      travelledDistanceRef.current = 0;
+      setTravelledDistance(0);
+      lastPositionRef.current = null;
+    }
+
     currentTrackingItemIdRef.current = itemId;
-    const getPosition = (): Promise<Coordinate> => {
-      return new Promise((resolve, reject) => {
-        Geolocation.getCurrentPosition(
-          position =>
-            resolve({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            }),
-          () => {
-            Geolocation.getCurrentPosition(
-              position =>
-                resolve({
-                  latitude: position.coords.latitude,
-                  longitude: position.coords.longitude,
-                }),
-              err => reject(err),
-              {enableHighAccuracy: false, timeout: 20000, maximumAge: 5000},
-            );
-          },
-          {enableHighAccuracy: true, timeout: 15000, maximumAge: 1000},
-        );
-      });
+
+    const pollPosition = async () => {
+      try {
+        const newCoord = await getTrackingPosition();
+        handleTrackingPosition(newCoord);
+      } catch (error) {
+        console.log('⚠️ Position update failed, will retry...');
+      }
     };
 
-    try {
-      const initialCoord = await getPosition();
-      console.log('🎯 Tracking started at:', initialCoord);
-      setCurrentPosition(initialCoord);
-      lastPositionRef.current = initialCoord;
+    pollPosition();
+    trackingIntervalRef.current = setInterval(pollPosition, 3000);
 
-      // ✅ Update both state and ref together
-      livePolyCoordsRef.current = [...livePolyCoordsRef.current, initialCoord];
-      setLivePolylineCoords(prev => {
-        const updated = [...prev, initialCoord];
-        livePolyCoordsRef.current = updated;
-        return updated;
-      });
-      setPolylineCoords([initialCoord]);
-      setFullRouteCoords(prev => [...prev, initialCoord]);
-
-      mapRef.current?.animateToRegion(
-        {
-          latitude: initialCoord.latitude,
-          longitude: initialCoord.longitude,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
-        },
-        500,
-      );
-
-      trackingIntervalRef.current = setInterval(async () => {
-        try {
-          const newCoord = await getPosition();
-          setCurrentPosition(newCoord);
-          if (lastPositionRef.current) {
-            const distance = calculateDistance(
-              lastPositionRef.current,
-              newCoord,
-            );
-            if (distance >= 8) {
-              console.log('📏 Moved:', distance.toFixed(2), 'm');
-              travelledDistanceRef.current += distance;
-              setTravelledDistance(prev => {
-                const updated = prev + distance;
-                travelledDistanceRef.current = updated;
-                return updated;
-              });
-              // ✅ Update both state and ref together
-              setLivePolylineCoords(prev => {
-                const updated = [...prev, newCoord];
-                livePolyCoordsRef.current = updated;
-                return updated;
-              });
-              setPolylineCoords(prev => [...prev, newCoord]);
-              setFullRouteCoords(prev => [...prev, newCoord]);
-              lastPositionRef.current = newCoord;
-              mapRef.current?.animateToRegion(
-                {
-                  latitude: newCoord.latitude,
-                  longitude: newCoord.longitude,
-                  latitudeDelta: 0.005,
-                  longitudeDelta: 0.005,
-                },
-                300,
-              );
-            }
-          } else {
-            lastPositionRef.current = newCoord;
-          }
-        } catch (error) {
-          console.log('⚠️ Position update failed, will retry...');
-        }
-      }, 3000);
-
-      console.log('✅ Tracking interval started');
-    } catch (error: any) {
-      console.error('❌ Failed to start:', error);
-      setIsTracking(false);
-      Alert.alert('Unable to Start', 'Please ensure GPS is enabled.');
-    }
-  }, []);
+    console.log('✅ Tracking interval started');
+    return true;
+  }, [getTrackingPosition, handleTrackingPosition]);
 
   const stopTracking = useCallback(() => {
     console.log('🛑 Stopping tracking');
@@ -649,6 +776,17 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     }
     setIsTracking(false);
   }, []);
+
+  const pauseTracking = useCallback(() => {
+    const pauseCoord = currentPosition ?? lastPositionRef.current;
+
+    if (isValidCoordinate(pauseCoord)) {
+      appendLiveCoordinate(pauseCoord);
+      lastPositionRef.current = pauseCoord;
+    }
+
+    stopTracking();
+  }, [appendLiveCoordinate, currentPosition, stopTracking]);
 
   useEffect(() => {
     return () => {
@@ -734,6 +872,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     }
     try {
       setIsLoadingMasters(true);
+      void refreshCurrentPositionForDistance();
       const response = await dispatch(
         GetMasterByNameAPI({name: selectedType.value}),
       ).unwrap();
@@ -767,12 +906,9 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     ]
       .filter(Boolean)
       .join(', ');
-    let lat: number | undefined, lng: number | undefined;
-    if (master.latLng) {
-      const [latStr, lngStr] = master.latLng.split(',');
-      lat = parseFloat(latStr?.trim());
-      lng = parseFloat(lngStr?.trim());
-    }
+    const masterCoordinate = getMasterCoordinate(master);
+    const lat = masterCoordinate?.latitude;
+    const lng = masterCoordinate?.longitude;
     const newItem: RouteItem = {
       id: Date.now().toString(),
       label: selectedType.label,
@@ -792,12 +928,12 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     setExistingvisible(false);
     setAddMasterModalVisible(false);
     setSelectedType(null);
-    if (lat && lng) {
+    if (masterCoordinate) {
       setTimeout(() => {
         mapRef.current?.animateToRegion(
           {
-            latitude: lat,
-            longitude: lng,
+            latitude: masterCoordinate.latitude,
+            longitude: masterCoordinate.longitude,
             latitudeDelta: 0.005,
             longitudeDelta: 0.005,
           },
@@ -823,6 +959,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     setImage1('');
     setImage2('');
     setAddressSuggestions([]);
+    setShowAddressDropdown(false);
     setMastervisible(true);
   };
 
@@ -834,7 +971,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
         Alert.alert('Permission Required', 'Location permission needed.');
         return;
       }
-      const data: any = await Location.getAddressFromLatLong(true);
+      const data: any = await Location.getAddressFromLatLong();
       if (data?.lat && data?.long) {
         setLatLngText(`${data.lat}, ${data.long}`);
         setSelectedAddress('');
@@ -845,9 +982,23 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
         setCountry('');
         setPincode('');
 
-        if (data?.suggestions?.length) {
-          setAddressSuggestions(data.suggestions);
+        if (data?.addressList?.length) {
+          const formattedSuggestions = data.addressList.map(
+            (item: string, index: number) => ({
+              id: index,
+              label: item,
+              value: item,
+            }),
+          );
+          const firstAddress = data.addressList[0];
+
+          setAddressSuggestions(formattedSuggestions);
           setShowAddressDropdown(true);
+          setSelectedAddress(firstAddress);
+          setMasterAddress(firstAddress);
+        } else {
+          setAddressSuggestions([]);
+          setShowAddressDropdown(false);
         }
 
         Common.showToast('Location fetched! Please select address.');
@@ -862,11 +1013,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
   };
 
   const handleAddressDropdownToggle = () => {
-    if (addressSuggestions.length > 0) {
-      setShowAddressDropdown(prev => !prev);
-    } else {
-      Alert.alert('No Data', 'Please fetch location first');
-    }
+    setShowAddressDropdown(prev => !prev);
   };
 
   const handleAddressSelect = (addr: string) => {
@@ -881,6 +1028,52 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     if (parsed.pincode) setPincode(parsed.pincode);
 
     setShowAddressDropdown(false);
+  };
+
+  const requestCameraPermission = async (): Promise<boolean> => {
+    if (Platform.OS === 'ios') return true;
+
+    const permission = PERMISSIONS.ANDROID.CAMERA;
+    try {
+      const status = await check(permission);
+      if (status === RESULTS.GRANTED) return true;
+
+      if (status === RESULTS.DENIED) {
+        const result = await request(permission);
+        if (result === RESULTS.GRANTED) return true;
+
+        Alert.alert(
+          'Camera Permission Required',
+          'Please allow camera access to capture images.',
+          [{text: 'OK'}],
+        );
+        return false;
+      }
+
+      if (status === RESULTS.BLOCKED) {
+        Alert.alert(
+          'Camera Permission Blocked',
+          'Camera access is blocked. Please enable it from App Settings.',
+          [
+            {text: 'Cancel', style: 'cancel'},
+            {
+              text: 'Open Settings',
+              onPress: () => openSettings().catch(() => Linking.openSettings()),
+            },
+          ],
+        );
+        return false;
+      }
+
+      Alert.alert(
+        'Camera Not Available',
+        'Camera is not available on this device.',
+      );
+      return false;
+    } catch (err) {
+      console.warn('[Camera] Permission check error:', err);
+      return false;
+    }
   };
 
   const handleOpenCamera = (itemId: string) => {
@@ -914,17 +1107,22 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     openCameraForSlot(imageSlot);
   };
 
-  const openCameraForSlot = (imageSlot: 1 | 2) => {
+  const openCameraForSlot = async (imageSlot: 1 | 2) => {
+    const hasPermission = await requestCameraPermission();
+    if (!hasPermission) return;
+
     const options: CameraOptions = {
       mediaType: 'photo',
       cameraType: 'back',
-      quality: 0.7,
+      quality: 0.4,
+      maxWidth: 800,
+      maxHeight: 800,
       saveToPhotos: false,
     };
-    launchCamera(options, response => {
+    launchCamera(options, (response: ImagePickerResponse) => {
       if (response.didCancel || response.errorCode || !response.assets?.length)
         return;
-      const uri = response.assets[0].uri;
+      const uri = response.assets[0]?.uri;
       if (uri) {
         if (imageSlot === 1) setImage1(uri);
         else setImage2(uri);
@@ -939,15 +1137,72 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       ),
     );
   };
-  const updateItemStatus = async (id: string, status: RouteItem['status']) => {
-    if (status === 'started' && !isTracking) {
-      const itemIndex = addedItems.findIndex(item => item.id === id);
-      if (itemIndex === -1) return;
 
-      const currentItem = addedItems[itemIndex];
+  const setRouteActionPending = (itemId: string | null) => {
+    pendingRouteActionItemIdRef.current = itemId;
+    setPendingRouteActionItemId(itemId);
+  };
+
+  const updateRouteItem = (id: string, updates: Partial<RouteItem>) => {
+    setAddedItems(prev =>
+      prev.map(item => (item.id === id ? {...item, ...updates} : item)),
+    );
+  };
+
+  const resetActiveTrackingState = () => {
+    livePolyCoordsRef.current = [];
+    setLivePolylineCoords([]);
+    setPolylineCoords([]);
+    travelledDistanceRef.current = 0;
+    setTravelledDistance(0);
+    lastPositionRef.current = null;
+    currentTrackingItemIdRef.current = null;
+  };
+
+  const updateItemStatus = async (id: string, status: RouteItem['status']) => {
+    if (pendingRouteActionItemIdRef.current) return;
+
+    const itemIndex = addedItems.findIndex(item => item.id === id);
+    if (itemIndex === -1) return;
+
+    const currentItem = addedItems[itemIndex];
+
+    if (status === 'started') {
+      if (currentItem.status === 'paused') {
+        updateRouteItem(id, {status: 'started'});
+        setRouteActionPending(id);
+
+        try {
+          const resumed = await startTracking(id, true);
+          if (!resumed) {
+            updateRouteItem(id, {status: 'paused'});
+          }
+        } catch (error: any) {
+          updateRouteItem(id, {status: 'paused'});
+          Alert.alert('Error', error?.message || 'Failed to resume route');
+        } finally {
+          setRouteActionPending(null);
+        }
+        return;
+      }
+
+      if (isTracking) return;
+
       const orderNo = itemIndex + 1;
+      updateRouteItem(id, {status: 'started'});
+      setRouteActionPending(id);
+      let didStartTracking = false;
 
       try {
+        const started = await startTracking(id);
+        if (!started) {
+          updateRouteItem(id, {status: 'idle'});
+          return;
+        }
+        didStartTracking = true;
+        setRouteActionPending(null);
+        await ensureTrackingStartPosition();
+
         // 🟢 FIRST MASTER → create initial route
         if (itemIndex === 0) {
           await callCreateInitialRoute(currentItem, orderNo);
@@ -1007,24 +1262,28 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
           );
         }
 
-        // 🚀 Start tracking for current item
-        startTracking(id);
-
-        setAddedItems(prev =>
-          prev.map(item =>
-            item.id === id ? {...item, status: 'started'} : item,
-          ),
-        );
+        updateRouteItem(id, {status: 'started'});
       } catch (error: any) {
         console.log('❌ Start failed:', error);
+        if (didStartTracking) {
+          stopTracking();
+          resetActiveTrackingState();
+        }
+        updateRouteItem(id, {status: 'idle'});
         Alert.alert('Error', error?.message || 'Failed to start route');
+      } finally {
+        if (pendingRouteActionItemIdRef.current === id) {
+          setRouteActionPending(null);
+        }
       }
     }
 
     if (status === 'paused') {
-      setAddedItems(prev =>
-        prev.map(item => (item.id === id ? {...item, status: 'paused'} : item)),
-      );
+      updateRouteItem(id, {status: 'paused'});
+
+      if (currentItem.status === 'started') {
+        pauseTracking();
+      }
     }
   };
 
@@ -1054,6 +1313,8 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
 
   // ✅ FIXED handleStopItem: reads coords from ref synchronously before any state resets
   const handleStopItem = (id: string) => {
+    if (pendingRouteActionItemIdRef.current) return;
+
     const segmentCoordsSnapshot = [...livePolyCoordsRef.current];
     const latestCoord = currentPosition ?? lastPositionRef.current;
     const lastSnapshotCoord =
@@ -1076,6 +1337,11 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     );
 
     stopTracking();
+    updateRouteItem(id, {
+      status: 'idle',
+      completed: true,
+      distance: finalDistance,
+    });
 
     // ✅ ONLY route path update here
     if (segmentCoordsSnapshot.length > 0) {
@@ -1095,26 +1361,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       lastSegmentEndCoordRef.current = lastCoord;
     }
 
-    livePolyCoordsRef.current = [];
-    setLivePolylineCoords([]);
-    setPolylineCoords([]);
-    travelledDistanceRef.current = 0;
-    setTravelledDistance(0);
-    lastPositionRef.current = null;
-    currentTrackingItemIdRef.current = null;
-
-    setAddedItems(prev =>
-      prev.map(item =>
-        item.id === id
-          ? {
-              ...item,
-              status: 'idle',
-              completed: true,
-              distance: finalDistance,
-            }
-          : item,
-      ),
-    );
+    resetActiveTrackingState();
   };
 
   const handleAddMasterButtonClick = () => {
@@ -1194,6 +1441,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       setImage1('');
       setImage2('');
       setAddressSuggestions([]);
+      setShowAddressDropdown(false);
 
       // Close ONLY MasterFormModal
       setMastervisible(false);
@@ -1337,6 +1585,8 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
             {addedItems.map((item, index) => {
               const isLastItem = index === addedItems.length - 1;
               const showAddMasterButton = item.completed && isLastItem;
+              const isRouteActionPending =
+                pendingRouteActionItemId === item.id;
               return (
                 <View key={item.id}>
                   <View style={routeStyles.itemMainWrapper}>
@@ -1408,10 +1658,15 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                           )}
                           {item.status === 'idle' && (
                             <TouchableOpacity
+                              disabled={isRouteActionPending}
                               onPress={() =>
                                 updateItemStatus(item.id, 'started')
                               }
-                              style={routeStyles.startButton}>
+                              style={[
+                                routeStyles.startButton,
+                                isRouteActionPending &&
+                                  routeStyles.actionButtonDisabled,
+                              ]}>
                               <Image
                                 source={IMAGES.playIcon}
                                 style={routeStyles.buttonIcon}
@@ -1423,10 +1678,15 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                           )}
                           {item.status === 'started' && (
                             <TouchableOpacity
+                              disabled={isRouteActionPending}
                               onPress={() =>
                                 updateItemStatus(item.id, 'paused')
                               }
-                              style={routeStyles.pauseButton}>
+                              style={[
+                                routeStyles.pauseButton,
+                                isRouteActionPending &&
+                                  routeStyles.actionButtonDisabled,
+                              ]}>
                               <Image
                                 source={IMAGES.pauseIcon}
                                 style={routeStyles.buttonIcon}
@@ -1438,10 +1698,15 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                           )}
                           {item.status === 'paused' && (
                             <TouchableOpacity
+                              disabled={isRouteActionPending}
                               onPress={() =>
                                 updateItemStatus(item.id, 'started')
                               }
-                              style={routeStyles.resumeButton}>
+                              style={[
+                                routeStyles.resumeButton,
+                                isRouteActionPending &&
+                                  routeStyles.actionButtonDisabled,
+                              ]}>
                               <Image
                                 source={IMAGES.resumeIcon}
                                 style={routeStyles.buttonIcon}
@@ -1454,8 +1719,13 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                           {(item.status === 'started' ||
                             item.status === 'paused') && (
                             <TouchableOpacity
+                              disabled={isRouteActionPending}
                               onPress={() => handleStopItem(item.id)}
-                              style={routeStyles.stopButton}>
+                              style={[
+                                routeStyles.stopButton,
+                                isRouteActionPending &&
+                                  routeStyles.actionButtonDisabled,
+                              ]}>
                               <Image
                                 source={IMAGES.stopIcon}
                                 style={routeStyles.buttonIcon}
@@ -1708,7 +1978,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                       Choose {selectedType?.label || 'Master'}
                     </Text>
                   </View>
-                  <View style={[styles.modalBody, styles.liFlexBox]}>
+                  <View style={[styles.modalBody, {alignSelf: 'stretch'}]}>
                     {isLoadingMasters ? (
                       <View style={styles.loadingContainer}>
                         <ActivityIndicator
@@ -1718,90 +1988,98 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                         <Text style={styles.loadingText}>Loading...</Text>
                       </View>
                     ) : masterList && masterList.length > 0 ? (
-                      <ScrollView
-                        style={{maxHeight: 400}}
-                        showsVerticalScrollIndicator={false}>
-                        {masterList.map((master, index) => {
-                          const fullAddress = [
-                            master.address,
-                            master.area,
-                            master.city,
-                            master.state,
-                            master.pincode,
-                          ]
-                            .filter(Boolean)
-                            .join(', ');
-                          return (
-                            <TouchableOpacity
-                              key={index}
-                              activeOpacity={0.7}
-                              onPress={() => handleMasterSelect(master)}
-                              style={{
-                                paddingVertical: 14,
-                                paddingHorizontal: 12,
-                                borderColor: COLORS.BACKGROUND_DEFAULT,
-                                borderWidth: 1,
-                              }}>
-                              <View
-                                style={{
-                                  flexDirection: 'row',
-                                  alignItems: 'flex-start',
-                                }}>
-                                <View style={{flex: 1}}>
-                                  <Text
-                                    style={{
-                                      fontSize: 14,
-                                      fontWeight: '600',
-                                      color: '#6C4DFF',
-                                    }}>
-                                    {master.name}{' '}
-                                    {master.landmark
-                                      ? `(${master.landmark})`
-                                      : ''}
-                                  </Text>
-                                  <Text
-                                    style={{
-                                      fontSize: 13,
-                                      color: '#444',
-                                      marginTop: 6,
-                                    }}
-                                    numberOfLines={3}>
-                                    {fullAddress}
-                                  </Text>
-                                </View>
-                                <View
+                      <>
+                        <ScrollView
+                          style={{maxHeight: 400}}
+                          showsVerticalScrollIndicator={false}>
+                          {sortMastersByDistance(masterList).map(
+                            (master, index) => {
+                              const fullAddress = [
+                                master.address,
+                                master.area,
+                                master.city,
+                                master.state,
+                                master.pincode,
+                              ]
+                                .filter(Boolean)
+                                .join(', ');
+                              return (
+                                <TouchableOpacity
+                                  key={index}
+                                  activeOpacity={0.7}
+                                  onPress={() => handleMasterSelect(master)}
                                   style={{
-                                    backgroundColor: '#F1F1F1',
-                                    borderRadius: 8,
-                                    paddingHorizontal: 8,
-                                    paddingVertical: 4,
+                                    paddingVertical: 14,
+                                    paddingHorizontal: 12,
+                                    borderColor: COLORS.BACKGROUND_DEFAULT,
                                     borderWidth: 1,
-                                    borderColor: '#DDD',
-                                    marginLeft: 8,
                                   }}>
-                                  <Text
-                                    style={{fontSize: 13, color: '#6C4DFF'}}>
-                                    {'20 m'}
-                                  </Text>
-                                </View>
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                        <TouchableOpacity
-                          onPress={() => setExistingvisible(false)}
-                          style={{
-                            marginTop: 15,
-                            backgroundColor: '#E5E5E5',
-                            paddingVertical: 10,
-                            borderRadius: 20,
-                            alignItems: 'center',
-                          }}>
-                          <Text style={{fontSize: 13, color: '#333'}}>
-                            Close
-                          </Text>
-                        </TouchableOpacity>
-                      </ScrollView>
+                                  <View
+                                    style={{
+                                      flexDirection: 'row',
+                                      alignItems: 'flex-start',
+                                    }}>
+                                    <View style={{flex: 1}}>
+                                      <Text
+                                        style={{
+                                          fontSize: 14,
+                                          fontWeight: '600',
+                                          color: '#6C4DFF',
+                                        }}>
+                                        {master.name}{' '}
+                                        {master.landmark
+                                          ? `(${master.landmark})`
+                                          : ''}
+                                      </Text>
+                                      <Text
+                                        style={{
+                                          fontSize: 13,
+                                          color: '#444',
+                                          marginTop: 6,
+                                        }}
+                                        numberOfLines={3}>
+                                        {fullAddress}
+                                      </Text>
+                                    </View>
+                                    <View
+                                      style={{
+                                        backgroundColor: '#F1F1F1',
+                                        borderRadius: 8,
+                                        paddingHorizontal: 8,
+                                        paddingVertical: 4,
+                                        borderWidth: 1,
+                                        borderColor: '#DDD',
+                                        marginLeft: 8,
+                                      }}>
+                                      <Text
+                                        style={{
+                                          fontSize: 13,
+                                          color: '#6C4DFF',
+                                        }}>
+                                        {getMasterDistanceLabel(master)}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                </TouchableOpacity>
+                              );
+                            },
+                          )}
+                        </ScrollView>
+                        <View style={{alignSelf: 'stretch', paddingTop: 15}}>
+                          <TouchableOpacity
+                            onPress={() => setExistingvisible(false)}
+                            style={{
+                              backgroundColor: '#E5E5E5',
+                              paddingVertical: 10,
+                              borderRadius: 20,
+                              alignItems: 'center',
+                            }}>
+                            <Text style={{fontSize: 13, color: '#333'}}>
+                              Close
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </>
                     ) : (
                       <View style={styles.noDataContainer}>
                         <Text style={styles.noDataText}>
@@ -2049,6 +2327,9 @@ const routeStyles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 50,
     marginLeft: 6,
+  },
+  actionButtonDisabled: {
+    opacity: 0.55,
   },
   buttonIcon: {width: 9, height: 9, tintColor: COLORS.colorWhite},
   buttonIcon2: {width: 12, height: 12},
