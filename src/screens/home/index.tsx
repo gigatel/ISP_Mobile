@@ -54,6 +54,7 @@ import React, {
 import {
   AppState,
   Image,
+  ImageSourcePropType,
   ScrollView,
   StyleSheet,
   Text,
@@ -98,11 +99,18 @@ interface ModuleCardProps {
 const DUMMY_MODULES: {
   name: string;
   bg: string;
-  emoji: string;
-  screen: keyof RootStackParamList;
+  emoji?: string;
+  icon?: ImageSourcePropType;
+  screen: Extract<keyof RootStackParamList, string>;
 }[] = [
   {name: 'Add Master', bg: '#E6F1FB', emoji: '🗼', screen: 'addMaster'},
   {name: 'Add Route', bg: '#FCEBEB', emoji: '🛣️', screen: 'AddRouteScreen'},
+  // {
+  //   name: 'All Masters',
+  //   bg: '#EAF6EF',
+  //   icon: IMAGES.module,
+  //   screen: 'All-Masters',
+  // },
 ];
 
 let navigator: NativeStackNavigationProp<RootStackParamList>;
@@ -364,9 +372,10 @@ const ModuleCard: FC<ModuleCardProps> = ({title, image, onPress}) => (
 const DummyModuleTile: FC<{
   name: string;
   bg: string;
-  emoji: string;
+  emoji?: string;
+  icon?: ImageSourcePropType;
   onPress: () => void;
-}> = ({name, bg, emoji, onPress}) => {
+}> = ({name, bg, emoji, icon, onPress}) => {
   const cardWidth = (Common.width - 90) / 4;
   return (
     <Animiatable.View
@@ -377,7 +386,15 @@ const DummyModuleTile: FC<{
         activeOpacity={CONSTANT.BUTTON_OPACITY}
         onPress={onPress}>
         <View style={[styles.dummyIconContainer, {backgroundColor: bg}]}>
-          <Text style={styles.dummyEmoji}>{emoji}</Text>
+          {icon ? (
+            <Image
+              source={icon}
+              style={styles.dummyImageIcon}
+              resizeMode="contain"
+            />
+          ) : (
+            <Text style={styles.dummyEmoji}>{emoji}</Text>
+          )}
         </View>
       </TouchableOpacity>
       <Text style={styles.moduleCardTitleText}>{name}</Text>
@@ -465,6 +482,7 @@ const StatsDashboard: FC<{dashboardList?: any; employeeName: string}> = ({
           name={m.name}
           bg={m.bg}
           emoji={m.emoji}
+          icon={m.icon}
           onPress={() => {
             navigator?.getParent()?.navigate(m.screen);
           }}
@@ -1290,6 +1308,11 @@ const styles = StyleSheet.create({
   },
   dummyEmoji: {
     fontSize: SIZE.MS(18),
+  },
+  dummyImageIcon: {
+    width: SIZE.MS(24),
+    height: SIZE.MS(24),
+    tintColor: COLORS.colorMediumslateblue,
   },
 
   // ── Shared module grid ────────────────────────────────────────────────────────

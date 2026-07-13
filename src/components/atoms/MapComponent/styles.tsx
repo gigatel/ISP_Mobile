@@ -24,11 +24,6 @@ export default StyleSheet.create({
     width: SIZE.MS(46),
     marginTop: SIZE.MVS(42),
   },
-  cameraIcon: {
-    height: SIZE.MS(46),
-    width: SIZE.MS(46),
-    tintColor: COLORS.PRIMARY,
-  },
   fab: {
     width: SIZE.MS(44),
     height: SIZE.MS(44),

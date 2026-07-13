@@ -1,15 +1,18 @@
 diff --git a/node_modules/react-native-image-marker/android/src/main/java/com/jimmydaddy/imagemarker/base/MarkTextOptions.kt b/node_modules/react-native-image-marker/android/src/main/java/com/jimmydaddy/imagemarker/base/MarkTextOptions.kt
-index d89da7e..e3b4f33 100644
+index eef25b1..62d209f 100644
 --- a/node_modules/react-native-image-marker/android/src/main/java/com/jimmydaddy/imagemarker/base/MarkTextOptions.kt
 +++ b/node_modules/react-native-image-marker/android/src/main/java/com/jimmydaddy/imagemarker/base/MarkTextOptions.kt
-@@ -12,7 +12,9 @@ class MarkTextOptions(options: ReadableMap) : Options(options) {
+@@ -12,11 +12,9 @@ class MarkTextOptions(options: ReadableMap) : Options(options) {
        watermarkTexts = arrayOfNulls(waterMarkTextsMap.size())
        for (i in 0 until waterMarkTextsMap.size()) {
          val textMap = waterMarkTextsMap.getMap(i)
--        watermarkTexts[i] = TextOptions(textMap)
+-        textMap?.let {
+-          watermarkTexts[i] = TextOptions(it)
+-        } ?: run {
+-          throw MarkerError(ErrorCode.NULL_MAP, "watermarkTexts[$i] is null")
 +        if (textMap != null) {
 +          watermarkTexts[i] = TextOptions(textMap)
-+        }
+         }
        }
      }
    }

@@ -36,11 +36,9 @@ import {
   insertUpdateProjectPathByVendorApi,
   getprojectPathApi,
 } from '@slices/attendance.slice';
-import RNFS from 'react-native-fs';
 /** Events */
 export const TRACK_EVENT = 'DISTANCE_TRACK_EVENT';
 const EVENT_SHOW_PROJECT_POINTS = 'SHOW_PROJECT_POINTS';
-const EVENT_VIDEO_READY = 'VIDEO_READY_EVENT';
 const EVENT_REQUEST_PROJECT_PICK = 'REQUEST_PROJECT_PICK';
 /** sampling / smoothing / timing */
 const SMOOTH_ALPHA = 0.2;
@@ -208,13 +206,6 @@ const MapComponent: React.FC<{
   >([]);
   const [showTrackHistory, setShowTrackHistory] = useState(false);
   const [currentLocations, setCurrentLocations] = useState<string[]>([]);
-
-  /** pending video & upload state */
-  const [pendingVideo, setPendingVideo] = useState<{
-    uri: string;
-    sizeBytes?: number;
-    durationSec?: number;
-  } | null>(null);
 
   const [uploading, setUploading] = useState(false);
   const [uploadSent, setUploadSent] = useState(0);
@@ -638,39 +629,6 @@ const MapComponent: React.FC<{
     setTrackState('active');
   };
 
-  /** receive saved video from VideoRecorder */
-  useEffect(() => {
-    const sub = DeviceEventEmitter.addListener(
-      EVENT_VIDEO_READY,
-      (payload: {uri: string; sizeBytes?: number; durationSec?: number}) => {
-        setPendingVideo(payload);
-        Common.showToast('Video ready, tap END to upload.');
-      },
-    );
-    return () => sub.remove();
-  }, []);
-  /** open camera */
-  const openCamera = () => {
-    const surveyActive = trackState === 'active';
-    if (!surveyActive) {
-      Common.alert({
-        title: 'Start survey',
-        msg: 'You have not started the survey yet.',
-      });
-      return;
-    }
-    if (!selectedProjectId) {
-      Common.alert({
-        title: 'Select a project',
-        msg: 'First select a project from the list to start tracking.',
-      });
-      return;
-    }
-    navigation.navigate('VideoRecorder', {
-      projectId: selectedProjectId,
-    } as any);
-  };
-
   /** let user reselect project anytime */
   const pickProject = () => {
     const canNavigate = typeof (navigation as any)?.navigate === 'function';
@@ -685,7 +643,7 @@ const MapComponent: React.FC<{
     }
   };
 
-  /** END: stop tracking and UPLOAD here (with or without video) */
+  /** END: stop tracking and upload path */
   const onPressEnd = async () => {
     if (userSmoothRef.current) addPointToPathForce(userSmoothRef.current);
 
@@ -740,28 +698,12 @@ const MapComponent: React.FC<{
       return;
     }
 
-    // Optional: size guard ONLY if we have a video
-    if (pendingVideo?.uri) {
-      try {
-        const stat = await RNFS.stat(pendingVideo.uri.replace('file://', ''));
-        const size = Number(stat.size ?? 0);
-        if (size > 30 * 1024 * 1024) {
-          Common.alert({
-            title: 'Video too large',
-            msg: 'Please record a shorter video (max ~30MB).',
-          });
-          return;
-        }
-      } catch {}
-    }
-
     const wkt = toWktLineString(pathRef.current);
 
     setUploading(true);
     setUploadSent(0);
     setUploadTotal(null);
 
-    // Build payload: include video only if present
     const payload: any = {
       projectId: selectedProjectId,
       latLng: wkt,
@@ -771,13 +713,6 @@ const MapComponent: React.FC<{
         if (total && total > 0) setUploadTotal(total);
       },
     };
-    if (pendingVideo?.uri) {
-      payload.video = {
-        uri: pendingVideo.uri,
-        name: 'video.mp4',
-        type: 'video/mp4',
-      } as any;
-    }
     try {
       const action: any = await dispatch(
         insertUpdateProjectPathByVendorApi(payload) as any,
@@ -786,11 +721,8 @@ const MapComponent: React.FC<{
       if (action?.meta?.requestStatus === 'fulfilled') {
         Common.alert({
           title: 'Uploaded',
-          msg: pendingVideo?.uri
-            ? 'Video & path uploaded successfully.'
-            : 'Path uploaded successfully.',
+          msg: 'Path uploaded successfully.',
         });
-        if (pendingVideo?.uri) setPendingVideo(null);
       } else {
         const msg =
           (action?.payload && (action.payload.message || action.payload.msg)) ||
@@ -1106,40 +1038,12 @@ const MapComponent: React.FC<{
           )}
 
           <TouchableOpacity
-            onPress={openCamera}
-            accessibilityLabel="Open Camera">
-            <Image style={styles.cameraIcon} source={IMAGES.camera} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
             onPress={() => navigation.navigate('DistanceCovered' as never)}>
             <View style={styles.fab}>
               <Text style={{fontSize: 18}}>📊</Text>
             </View>
           </TouchableOpacity>
         </View>
-
-        {/* Pending video badge */}
-        {pendingVideo?.uri && (
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 160,
-              left: 12,
-              right: 12,
-              backgroundColor: 'rgba(0,0,0,0.6)',
-              padding: 8,
-              borderRadius: 8,
-            }}>
-            <Text style={{color: '#fff', textAlign: 'center'}}>
-              📹 Video attached
-              {pendingVideo.sizeBytes
-                ? ` • ${(pendingVideo.sizeBytes / 1024 / 1024).toFixed(1)} MB`
-                : ''}{' '}
-              • Tap END to upload
-            </Text>
-          </View>
-        )}
 
         {/* Upload progress */}
         {uploading && (

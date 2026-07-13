@@ -111,33 +111,28 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
   }, [navigation]);
 
   const pickerData = [
-    {label: 'Fiber Master', value: 'fiber', icon: IMAGES.TiffinIcon},
-    {label: 'Enclosure', value: 'enclosure', icon: IMAGES.jointEnclosure},
-    {label: 'Pop Master', value: 'pop', icon: IMAGES.TiffinIcon},
-    {
-      label: 'Third Party Module Provider',
-      value: 'thirdParty',
-      icon: IMAGES.TiffinIcon,
-    },
-    {
-      label: 'Data Center',
-      value: 'data',
-      icon: IMAGES.TiffinIcon,
-    },
     {
       label: 'Pole Master',
       value: 'pole',
       icon: IMAGES.PoleImage,
     },
     {
-      label: 'Rack Master',
-      value: 'rack',
-      icon: IMAGES.TiffinIcon,
-    },
-    {
       label: 'Tree Master',
       value: 'tree',
       icon: IMAGES.treeIcon,
+    },
+    {label: 'Pop Master', value: 'pop', icon: IMAGES.TiffinIcon},
+    {label: 'Enclosure', value: 'enclosure', icon: IMAGES.jointEnclosure},
+    {label: 'Fiber Master', value: 'fiber', icon: IMAGES.TiffinIcon},
+    {
+      label: 'Third Party Module Provider',
+      value: 'thirdParty',
+      icon: IMAGES.TiffinIcon,
+    },
+    {
+      label: 'Rack Master',
+      value: 'rack',
+      icon: IMAGES.TiffinIcon,
     },
     {
       label: 'FMS Master',

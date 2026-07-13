@@ -39,7 +39,6 @@ import MapViewScreen from '@screens/tickets/MapViewScreen';
 import {StartTicketScreen} from '@screens/tickets/StartTicketScreen';
 import RoadProjectSurvey from '@screens/road-project-survey';
 import DistanceCovered from '@screens/distance-covered';
-import VideoRecorder from '@screens/VideoRecording';
 import TubeCoreDetailsScreen from '@screens/tickets/TubeCoreDetailsScreen';
 import ChamberDetailsScreen from '@screens/tickets/ChamberDetailsScreen';
 import CustomerPickerScreen from '@screens/CustomerPickerScreen';
@@ -50,15 +49,54 @@ import ProfileScreen from '@screens/ProfileScreen';
 import AppModulesScreen from '@screens/AppModulesScreen';
 import PitInstallation from '@screens/PitInstallationScreen';
 import AddMaster from '@screens/addMaster';
-type VideoRecorderRouteParams = {
-  projectId: string;
-  latLng: string;
-  directionResult: string;
-};
+import AllMasters from '@screens/allMasters';
+import AddMasterForm from '@screens/addMasterForm';
+import AddAirMasterOnSupport from '@screens/addAirMasterOnSupport';
 export interface RootStackParamList {
   Splash: undefined;
   BottomTab: undefined;
   addMaster: undefined;
+  'Add-Master-Form':
+    | {
+        selectedMasterType?: string;
+        selectedMasterLabel?: string;
+        currentPosition?: {
+          latitude: number;
+          longitude: number;
+        };
+        currentAddress?: string;
+      }
+    | undefined;
+  'Add-Air-Master-On-Support': {
+    selectedMasterType: 'tiffin' | 'enclosure';
+    selectedMasterLabel: string;
+    supportMaster: any;
+    supportKey: string;
+    currentPosition?: {
+      latitude: number;
+      longitude: number;
+    };
+    currentAddress?: string;
+    localAttachedMasters?: any[];
+  };
+  'All-Masters':
+    | {
+        selectedMasterType?: string;
+        selectedMasterLabel?: string;
+        currentPosition?: {
+          latitude: number;
+          longitude: number;
+        };
+        currentAddress?: string;
+        initialMasters?: any[];
+        addedMaster?: any;
+        addedMasterKey?: string;
+        updatedSupportKey?: string;
+        updatedSupportCount?: number;
+        updatedSupportVersion?: string;
+        updatedSupportAddedMaster?: any;
+      }
+    | undefined;
   PrivacyPolicy: undefined;
   Login: undefined;
   ChamberReport: undefined;
@@ -150,7 +188,6 @@ export interface RootStackParamList {
   TubeCoreDetailsScreen: {issueTypeId: string; ticketId: string};
   MapViewScreen: {latitude: number; longitude: number; title: string};
   IRDetailsScreen: {irId: string; ticketId: string; irData: any};
-  VideoRecorder: VideoRecorderRouteParams;
   [key: string]: any;
 }
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -190,7 +227,6 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
       <Stack.Screen name="SalaryPaySlip" component={SalaryPaySlip} />
       <Stack.Screen name="HolidaysList" component={HolidaysList} />
       <Stack.Screen name="ContactsList" component={ContactsList} />
-      <Stack.Screen name="VideoRecorder" component={VideoRecorder} />
       <Stack.Screen name="PatrollerTask" component={PatrollerTask} />
       <Stack.Screen
         name="SubmitPatrollerTask"
@@ -212,6 +248,12 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
       <Stack.Screen name="PitInstallation" component={PitInstallation} />
       <Stack.Screen name="DeveloperPKPScreen" component={DeveloperPKPScreen} />
       <Stack.Screen name="addMaster" component={AddMaster} />
+      <Stack.Screen name="All-Masters" component={AllMasters} />
+      <Stack.Screen name="Add-Master-Form" component={AddMasterForm} />
+      <Stack.Screen
+        name="Add-Air-Master-On-Support"
+        component={AddAirMasterOnSupport}
+      />
       <Stack.Screen
         name="TicketsList"
         component={TicketsList}

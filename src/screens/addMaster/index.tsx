@@ -15,13 +15,18 @@ import {
 import {Screen} from '@organisms';
 import {BackHeader} from '@molecules';
 import {MasterFormModal} from '../../components/molecules/MasterFormModal';
+import CustomAlert from '../../components/molecules/CustomAlert';
 import {ScreenProps, DataType} from '@types';
 import {COLORS, IMAGES, FONTS, SIZE} from '@res';
 import LinearGradient from 'react-native-linear-gradient';
 import {Location, Common} from '@utils';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
 import {StoreDispatch} from '@reducers';
-import {UpdateMasterAPI, GetMasterByNameAPI} from '@slices/route.slice';
+import {
+  UpdateMasterAPI,
+  GetMasterByNameAPI,
+  GetNearestPoleTreeDDAPI,
+} from '@slices/route.slice';
 import {
   launchCamera,
   CameraOptions,
@@ -41,14 +46,298 @@ type PickerItem = {
   value: string;
   icon: any;
 };
+
+type Coordinate = {
+  latitude: number;
+  longitude: number;
+};
+
+type AddMasterAlertState = {
+  visible: boolean;
+  title: string;
+  message: string;
+  iconTint: string;
+  confirmAddAnyway: boolean;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PICKER_DATA: PickerItem[] = [
-  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
-  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
   {label: 'Pole', value: 'Pole', icon: IMAGES.PoleImage},
-  {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
+  {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
+  {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
+  {label: 'POP', value: 'POP', icon: IMAGES.FiberEnclosur},
+  {label: 'Splitter', value: 'Splitter', icon: IMAGES.enclosureIcon},
   {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
+  {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
 ];
+
+const AIR_PLACED_MASTER_TYPES = new Set(['pop', 'tiffin', 'enclosure']);
+
+const LOCATION_MATCH_TOLERANCE = 0.000001;
+
+const isValidCoordinate = (coord?: Coordinate | null): coord is Coordinate =>
+  Number.isFinite(coord?.latitude) && Number.isFinite(coord?.longitude);
+
+const isSameCoordinate = (first: Coordinate, second: Coordinate) =>
+  Math.abs(first.latitude - second.latitude) <= LOCATION_MATCH_TOLERANCE &&
+  Math.abs(first.longitude - second.longitude) <= LOCATION_MATCH_TOLERANCE;
+
+const parseLatLng = (latLng?: string | null): Coordinate | null => {
+  const [latText, lngText] = String(latLng ?? '').split(',');
+  const coordinate = {
+    latitude: Number(latText?.trim()),
+    longitude: Number(lngText?.trim()),
+  };
+
+  return isValidCoordinate(coordinate) ? coordinate : null;
+};
+
+const getMasterCoordinate = (master: any): Coordinate | null => {
+  const latLng =
+    master?.latLng ??
+    master?.LatLng ??
+    master?.latlng ??
+    master?.lat_lng ??
+    getValueByNormalizedKeys(master, [
+      'latLng',
+      'latLong',
+      'latLon',
+      'latitudeLongitude',
+      'masterLatLng',
+      'chamberLatLng',
+    ]);
+  const parsedLatLng = parseLatLng(latLng);
+
+  if (parsedLatLng) {
+    return parsedLatLng;
+  }
+
+  const coordinate = {
+    latitude: Number(
+      master?.latitude ??
+        master?.Latitude ??
+        master?.lat ??
+        getValueByNormalizedKeys(master, [
+          'latitude',
+          'lat',
+          'masterLatitude',
+          'lattitude',
+          'latitute',
+          'chamberLatitude',
+          'chamberLat',
+        ]),
+    ),
+    longitude: Number(
+      master?.longitude ??
+        master?.Longitude ??
+        master?.lng ??
+        master?.lon ??
+        master?.long ??
+        getValueByNormalizedKeys(master, [
+          'longitude',
+          'lng',
+          'lon',
+          'long',
+          'masterLongitude',
+          'longitute',
+          'chamberLongitude',
+          'chamberLong',
+        ]),
+    ),
+  };
+
+  return isValidCoordinate(coordinate) ? coordinate : null;
+};
+
+const normalizeAddressValue = (value?: string | null) =>
+  String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+const getUniqueStrings = (values: string[]) =>
+  values.filter((value, index, self) => value && self.indexOf(value) === index);
+
+const normalizeObjectKey = (key: string) =>
+  key.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const getValueByNormalizedKeys = (source: any, keys: string[]) => {
+  if (!source || typeof source !== 'object') {
+    return undefined;
+  }
+
+  const normalizedKeys = keys.map(normalizeObjectKey);
+  const entry = Object.entries(source).find(([key]) =>
+    normalizedKeys.includes(normalizeObjectKey(key)),
+  );
+
+  return entry?.[1];
+};
+
+const getMasterFullAddress = (master: any) =>
+  [
+    master?.address ?? master?.Address,
+    getValueByNormalizedKeys(master, [
+      'fullAddress',
+      'masterAddress',
+      'locationAddress',
+      'selectedAddress',
+      'address',
+    ]),
+    master?.area ?? master?.Area,
+    master?.city ?? master?.City,
+    master?.state ?? master?.State,
+    master?.pincode ?? master?.PinCode,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+const getMasterAddressCandidates = (master: any) =>
+  getUniqueStrings(
+    [
+      master?.selectedAddress,
+      master?.SelectedAddress,
+      master?.selected_address,
+      master?.address,
+      master?.Address,
+      getValueByNormalizedKeys(master, [
+        'selectedAddress',
+        'fullAddress',
+        'masterAddress',
+        'locationAddress',
+        'address',
+      ]),
+      getMasterFullAddress(master),
+    ]
+      .map(normalizeAddressValue)
+      .filter(Boolean),
+  );
+
+const isSameAddressValue = (first: string, second: string) => {
+  if (!first || !second) {
+    return false;
+  }
+
+  return (
+    first === second ||
+    (first.length >= 12 && second.includes(first)) ||
+    (second.length >= 12 && first.includes(second))
+  );
+};
+
+const normalizeComparableValue = (value?: string | null) =>
+  String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+const getMasterNameValue = (master: any) =>
+  normalizeComparableValue(
+    master?.name ??
+      master?.Name ??
+      master?.masterName ??
+      master?.MasterName ??
+      getValueByNormalizedKeys(master, ['name', 'masterName']),
+  );
+
+const getMasterDisplayName = (master: any, fallback = 'This master') => {
+  const name = String(
+    master?.name ??
+      master?.Name ??
+      master?.masterName ??
+      master?.MasterName ??
+      getValueByNormalizedKeys(master, ['name', 'masterName']) ??
+      fallback,
+  ).trim();
+
+  return name || fallback;
+};
+
+const formatMasterNameList = (masters: any[], fallback = 'This master') => {
+  const names = getUniqueStrings(
+    masters.map(master => getMasterDisplayName(master, '')).filter(Boolean),
+  );
+
+  if (names.length === 0) {
+    return fallback;
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+};
+
+const buildDuplicateNameMessage = (name: string) =>
+  `Existing master: ${name}\nReason: Same master name already exists.\nAction required: Use a unique master name.`;
+
+const buildDuplicateLocationMessage = (names: string) =>
+  `Existing master(s): ${names}\nReason: Same location or address already exists.\nAction required: Review the details before adding another record.`;
+
+const findDuplicateMasterName = (master: any, masters: any[]) => {
+  const candidateName = getMasterNameValue(master);
+
+  return masters.find(
+    existingMaster =>
+      !!candidateName && candidateName === getMasterNameValue(existingMaster),
+  );
+};
+
+const findDuplicateMasterLocations = (master: any, masters: any[]) => {
+  const candidateCoordinate = getMasterCoordinate(master);
+  const candidateAddresses = getMasterAddressCandidates(master);
+
+  return masters.filter(existingMaster => {
+    const existingCoordinate = getMasterCoordinate(existingMaster);
+    const hasSameCoordinate =
+      !!candidateCoordinate &&
+      !!existingCoordinate &&
+      isSameCoordinate(candidateCoordinate, existingCoordinate);
+    const existingAddresses = getMasterAddressCandidates(existingMaster);
+    const hasSameAddress =
+      candidateAddresses.length > 0 &&
+      existingAddresses.some(existingAddress =>
+        candidateAddresses.some(candidateAddress =>
+          isSameAddressValue(candidateAddress, existingAddress),
+        ),
+      );
+
+    return hasSameCoordinate || hasSameAddress;
+  });
+};
+
+const getMasterListFromResponse = (response: any): any[] => {
+  if (!response) {
+    return [];
+  }
+
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (response?.data && Array.isArray(response.data)) {
+    return response.data;
+  }
+
+  const nestedList =
+    response?.data?.data ??
+    response?.data?.result ??
+    response?.data?.items ??
+    response?.data?.records ??
+    response?.result ??
+    response?.items ??
+    response?.records ??
+    response?.list ??
+    response?.values;
+
+  if (Array.isArray(nestedList)) {
+    return nestedList;
+  }
+
+  return [];
+};
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   const dispatch = useDispatch<StoreDispatch>();
@@ -60,6 +349,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   // ── Master lists ───────────────────────────────────────────────────────────
   const [masterList, setMasterList] = useState<any[]>([]);
   const [isLoadingMasters, setIsLoadingMasters] = useState(false);
+  const [isOpeningAllMasters, setIsOpeningAllMasters] = useState(false);
   // ── Modals ─────────────────────────────────────────────────────────────────
   const [existingVisible, setExistingVisible] = useState(false);
   const [masterFormVisible, setMasterFormVisible] = useState(false);
@@ -83,22 +373,23 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  // ── ✅ Page load pe getAddressLocation call ────────────────────────────────
-  // useEffect(() => {
-  //   getAddressLocation(false);
-  // }, []);
-
+  const [addMasterAlert, setAddMasterAlert] = useState<AddMasterAlertState>({
+    visible: false,
+    title: '',
+    message: '',
+    iconTint: '#B7791F',
+    confirmAddAnyway: false,
+  });
   // ── Get current address ────────────────────────────────────────────────────
-  const getAddressLocation = async (forceRefresh = false) => {
+  const getAddressLocation = async () => {
     try {
       setIsLocationLoading(true);
       const permissionStatus = await Location.checkPermission();
       if (permissionStatus !== 'granted') {
         return;
       }
-      const data = (await Location.getAddressFromLatLong(
-        forceRefresh,
-      )) as DataType.GeoAddress;
+      const data =
+        (await Location.getAddressFromLatLong()) as DataType.GeoAddress;
       if (data?.address) {
         setAddress(data.address);
       }
@@ -107,6 +398,34 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
     } finally {
       setIsLocationLoading(false);
     }
+  };
+
+  useEffect(() => {
+    getAddressLocation();
+  }, []);
+
+  const showAddMasterAlert = ({
+    title,
+    message,
+    iconTint = '#B7791F',
+    confirmAddAnyway = false,
+  }: {
+    title: string;
+    message: string;
+    iconTint?: string;
+    confirmAddAnyway?: boolean;
+  }) => {
+    setAddMasterAlert({
+      visible: true,
+      title,
+      message,
+      iconTint,
+      confirmAddAnyway,
+    });
+  };
+
+  const closeAddMasterAlert = () => {
+    setAddMasterAlert(prev => ({...prev, visible: false}));
   };
 
   // ── Reset form ─────────────────────────────────────────────────────────────
@@ -127,6 +446,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
     setImage2('');
     setAddressSuggestions([]);
     setShowAddressDropdown(false);
+    closeAddMasterAlert();
   };
 
   // ── Fetch master list ──────────────────────────────────────────────────────
@@ -137,13 +457,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       const response = await dispatch(
         GetMasterByNameAPI({name: masterType}),
       ).unwrap();
-      if (response?.data && Array.isArray(response.data)) {
-        setMasterList(response.data);
-      } else if (Array.isArray(response)) {
-        setMasterList(response);
-      } else {
-        setMasterList([]);
-      }
+      setMasterList(getMasterListFromResponse(response));
     } catch (error) {
       console.error('❌ Error fetching masters:', error);
       setMasterList([]);
@@ -155,43 +469,84 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   // ── Select master type ─────────────────────────────────────────────────────
   const handleCheckboxSelect = (item: PickerItem) => {
     setSelectedType(item);
+    if (AIR_PLACED_MASTER_TYPES.has(item.value.toLowerCase())) {
+      setMasterList([]);
+      setIsLoadingMasters(false);
+      return;
+    }
     fetchMasterList(item.value);
   };
 
-  // ── Open "Existing" modal ──────────────────────────────────────────────────
-  const handleExistingClick = async () => {
+  // ── Open nearest masters list ──────────────────────────────────────────────
+  const handleOpenMasterForm = async () => {
+    // Previous add-new-master flow kept for reference.
+    // resetForm();
+    // setMasterFormVisible(true);
+
     if (!selectedType) {
-      Alert.alert('No Selection', 'Please select a master type first');
+      Alert.alert('Selection Required', 'Please select a master type first.');
       return;
     }
+
     try {
-      setIsLoadingMasters(true);
-      const response = await dispatch(
-        GetMasterByNameAPI({name: selectedType.value}),
-      ).unwrap();
-      const data =
-        response?.data && Array.isArray(response.data)
-          ? response.data
-          : Array.isArray(response)
-          ? response
-          : [];
-      if (data.length === 0) {
-        Alert.alert('No Data', `No ${selectedType.label} found`);
+      setIsOpeningAllMasters(true);
+
+      const permissionStatus = await Location.checkPermission();
+      if (permissionStatus !== 'granted') {
+        Alert.alert('Permission Required', 'Location permission needed.');
         return;
       }
-      setMasterList(data);
-      setExistingVisible(true);
-    } catch {
-      Alert.alert('Error', 'Failed to fetch data');
-    } finally {
-      setIsLoadingMasters(false);
-    }
-  };
 
-  // ── Open "Add New" form modal ──────────────────────────────────────────────
-  const handleOpenMasterForm = () => {
-    resetForm();
-    setMasterFormVisible(true);
+      const locationData = (await Location.getAddressFromLatLong()) as any;
+      const currentPosition = {
+        latitude: Number(locationData?.lat),
+        longitude: Number(locationData?.long),
+      };
+
+      if (!isValidCoordinate(currentPosition)) {
+        Alert.alert('Location', 'Unable to fetch your current location.');
+        return;
+      }
+
+      const selectedMasterType = selectedType.value.toLowerCase();
+      const currentAddress =
+        locationData?.address || locationData?.addressList?.[0] || '';
+      if (AIR_PLACED_MASTER_TYPES.has(selectedMasterType)) {
+        navigation.navigate('All-Masters', {
+          selectedMasterType,
+          selectedMasterLabel: selectedType.label,
+          currentPosition,
+          currentAddress,
+          initialMasters: [],
+        });
+        return;
+      }
+
+      const response = await dispatch(
+        GetNearestPoleTreeDDAPI({
+          latLng: `${currentPosition.latitude}, ${currentPosition.longitude}`,
+          labelType: selectedMasterType,
+          range: 200,
+          type: 'master',
+          status: true,
+        }),
+      ).unwrap();
+
+      navigation.navigate('All-Masters', {
+        selectedMasterType,
+        selectedMasterLabel: selectedType.label,
+        currentPosition,
+        currentAddress,
+        initialMasters: getMasterListFromResponse(response),
+      });
+    } catch (error: any) {
+      Alert.alert(
+        'All Masters',
+        error?.message || 'Unable to load nearest masters.',
+      );
+    } finally {
+      setIsOpeningAllMasters(false);
+    }
   };
 
   // ── Location inside modal (GPS button) ────────────────────────────────────
@@ -427,7 +782,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   };
 
   // ── Submit new master ──────────────────────────────────────────────────────
-  const handleAddAndSelect = async () => {
+  const handleAddAndSelect = async (allowDuplicateLocation = false) => {
     if (!selectedType) {
       Alert.alert('Error', 'Please select a master type');
       return;
@@ -449,8 +804,59 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       return;
     }
 
+    const draftMaster = {
+      name: masterName.trim(),
+      latLng: latLngText.trim(),
+      address: masterAddress.trim(),
+      selectedAddress: selectedAddress.trim() || masterAddress.trim(),
+      landmark: landmark.trim(),
+    };
+
     setIsSubmitting(true);
     try {
+      const latestMasterResponse = await dispatch(
+        GetMasterByNameAPI({name: selectedType.value}),
+      ).unwrap();
+      const latestMasters = getMasterListFromResponse(latestMasterResponse);
+      setMasterList(latestMasters);
+
+      const duplicateName = findDuplicateMasterName(draftMaster, latestMasters);
+
+      if (duplicateName) {
+        const duplicateNameText = getMasterDisplayName(
+          duplicateName,
+          masterName.trim(),
+        );
+        setIsSubmitting(false);
+        showAddMasterAlert({
+          title: 'Master Name Already Exists',
+          message: buildDuplicateNameMessage(duplicateNameText),
+          iconTint: COLORS.ERROR,
+          confirmAddAnyway: false,
+        });
+        return;
+      }
+
+      if (!allowDuplicateLocation) {
+        const duplicateLocations = findDuplicateMasterLocations(
+          draftMaster,
+          latestMasters,
+        );
+
+        if (duplicateLocations.length > 0) {
+          const duplicateLocationNames =
+            formatMasterNameList(duplicateLocations);
+          setIsSubmitting(false);
+          showAddMasterAlert({
+            title: 'Location Already Exists',
+            message: buildDuplicateLocationMessage(duplicateLocationNames),
+            iconTint: '#B7791F',
+            confirmAddAnyway: true,
+          });
+          return;
+        }
+      }
+
       const payload: any = {
         Id: 0,
         Name: masterName.trim(),
@@ -491,7 +897,6 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       setMasterFormVisible(false);
 
       fetchMasterList(selectedType.value);
-      //getAddressLocation(true);
     } catch (error: any) {
       console.log('❌ Error:', JSON.stringify(error, null, 2));
       const msg =
@@ -502,7 +907,21 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         error?.response?.data?.message ??
         error?.error ??
         'Failed to add master. Please try again.';
-      Alert.alert('Error', String(msg));
+      const messageText = String(msg);
+      const duplicateServerMessage =
+        /name/i.test(messageText) &&
+        /exist|duplicate|already/i.test(messageText);
+
+      showAddMasterAlert({
+        title: duplicateServerMessage
+          ? 'Master Name Already Exists'
+          : 'Unable To Add Master',
+        message: duplicateServerMessage
+          ? buildDuplicateNameMessage(masterName.trim())
+          : String(msg),
+        iconTint: COLORS.ERROR,
+        confirmAddAnyway: false,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -511,6 +930,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Screen
+      preset="fixed"
       statusBgColor={COLORS.PRIMARY}
       statusBarStyle="light"
       loading={isLocationLoading}>
@@ -596,11 +1016,11 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         )}
 
         {/* ── Found count ── */}
-        {!isLoadingMasters && selectedType && masterList.length > 0 && (
+        {/* {!isLoadingMasters && selectedType && masterList.length > 0 && (
           <Text style={localStyles.countText}>
             ✅ Found {masterList.length} {selectedType.label}(s)
           </Text>
-        )}
+        )} */}
 
         {/* ── Action Buttons ── */}
         {selectedType && !isLoadingMasters && (
@@ -609,15 +1029,20 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
             <TouchableOpacity
               style={localStyles.actionBtn}
               activeOpacity={0.85}
+              disabled={isOpeningAllMasters}
               onPress={handleOpenMasterForm}>
               <LinearGradient
                 colors={[COLORS.colorMediumslateblue, '#6036c4']}
                 style={localStyles.gradient}
                 start={{x: 0.5, y: 0}}
                 end={{x: 0.5, y: 1}}>
-                <Text style={localStyles.actionBtnText}>
-                  + Add New {selectedType.label}
-                </Text>
+                {isOpeningAllMasters ? (
+                  <ActivityIndicator size="small" color={COLORS.WHITE} />
+                ) : (
+                  <Text style={localStyles.actionBtnText}>
+                    + Add {selectedType.label}
+                  </Text>
+                )}
               </LinearGradient>
             </TouchableOpacity>
 
@@ -758,6 +1183,34 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         onOpenCamera={handleOpenCameraForModal}
         onImagePreview={setPreviewImage}
         onSubmit={handleAddAndSelect}
+      />
+
+      <CustomAlert
+        visible={addMasterAlert.visible}
+        icon={IMAGES.warning}
+        iconTint={addMasterAlert.iconTint}
+        title={addMasterAlert.title}
+        subTitle={addMasterAlert.message}
+        leftBtnText={addMasterAlert.confirmAddAnyway ? 'Review' : 'Close'}
+        leftBtnTextColor={COLORS.colorDarkslategray}
+        leftBtnBg="#F0F0F3"
+        onLeftPress={closeAddMasterAlert}
+        rightBtnText={addMasterAlert.confirmAddAnyway ? 'Add Anyway' : 'OK'}
+        rightBtnTextColor={COLORS.WHITE}
+        rightBtnBg={
+          addMasterAlert.confirmAddAnyway
+            ? COLORS.colorMediumslateblue
+            : COLORS.ERROR
+        }
+        onRightPress={() => {
+          if (addMasterAlert.confirmAddAnyway) {
+            closeAddMasterAlert();
+            void handleAddAndSelect(true);
+            return;
+          }
+
+          closeAddMasterAlert();
+        }}
       />
 
       {/* ══ Image Preview Modal ══════════════════════════════════════════════ */}

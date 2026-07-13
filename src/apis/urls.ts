@@ -1,7 +1,9 @@
 // Base URL Dev
-export const BASE_URL = 'http://mob.gigatel.me:7003/api/';//hrms_ios
-export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/';//isp
-export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/';//locationISP
+export const BASE_URL = 'http://mob.gigatel.me:7003/api/'; //hrms_ios
+export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/'; //isp
+export const BASE_URL_4 = 'http://mob.gigatel.me:7004/api/'; //isp-local
+export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/'; //locationISP
+const apiBase = (url: string) => url.replace(/api\/?.*$/i, 'api/');
 //Base URL PROD
 // export const BASE_URL = 'http://isp.gigatel.me:7003/api/';
 // export const BASE_URL_2 = 'http://isp.gigatel.me:7004/api/';
@@ -20,41 +22,60 @@ export const dashboardList = BASE_URL + 'AppDashboard/DashboardList2';
 export const getAppModules = BASE_URL + 'Policy/GetUserModuleAppModules?';
 //! Attendance
 export const viewAttendance = BASE_URL + 'Attendance/ViewAttendance';
-export const viewAttendanceInOutReport = BASE_URL + 'Attendance/ViewInOutReport';
+export const viewAttendanceInOutReport =
+  BASE_URL + 'Attendance/ViewInOutReport';
 export const todayAttendance = BASE_URL + 'Attendance/TodayAttendance';
-export const getTodayWorkingOnBehalf = BASE_URL + 'Attendance/GetTodayWorkingOnBehalf';
+export const getTodayWorkingOnBehalf =
+  BASE_URL + 'Attendance/GetTodayWorkingOnBehalf';
 export const getEmpZoneChambers = BASE_URL + 'Zone/GetEmpZoneChambers';
 export const getEmpOfficeBranches = BASE_URL + 'Branch/GetEmpBranches';
 export const markAttendance = BASE_URL + 'Attendance/MarkAttendance';
-export const syncOfflineAttendance = BASE_URL + 'Attendance/SyncOfflineAttendance';
+export const syncOfflineAttendance =
+  BASE_URL + 'Attendance/SyncOfflineAttendance';
 //! Payroll₹
 export const monthlyEmpSalary = BASE_URL + 'EmpSalary/MonthalyEmpSalary';
 export const apiURLS = BASE_URL + '';
 //! Holidays | Contacts
 export const getHolidayList = BASE_URL + 'Holiday/GetEmpOptionalHoliday';
-export const insertUpdateEmpHolidayRequest = BASE_URL + 'Holiday/InsertUpdateEmpHolidayRequest';
-export const getEmployeeListContact = BASE_URL + 'Employee/GetEmployeeListForContact';
+export const insertUpdateEmpHolidayRequest =
+  BASE_URL + 'Holiday/InsertUpdateEmpHolidayRequest';
+export const getEmployeeListContact =
+  BASE_URL + 'Employee/GetEmployeeListForContact';
 //! Leave
 export const leaveStatus = BASE_URL + 'LeaveMaster/LeaveStatus';
 export const getEmpBalanceLeaves = BASE_URL + 'LeaveType/GetEmpBalanceLeaves';
-export const getEmployeeLeaveRequestPaggi = BASE_URL + 'LeaveType/GetEmployeeLeaveRequestPaggi';
-export const insertUpdateEmpLeaveRequest = BASE_URL + 'LeaveType/InsertUpdateEmpLeaveRequest';
-export const getEmployeeLeaveTyepDd = BASE_URL + 'LeaveType/GetEmployeeLeaveTyepDd';
+export const getEmployeeLeaveRequestPaggi =
+  BASE_URL + 'LeaveType/GetEmployeeLeaveRequestPaggi';
+export const insertUpdateEmpLeaveRequest =
+  BASE_URL + 'LeaveType/InsertUpdateEmpLeaveRequest';
+export const getEmployeeLeaveTyepDd =
+  BASE_URL + 'LeaveType/GetEmployeeLeaveTyepDd';
 //! Employee
-export const getEmployeeListForContact = BASE_URL + 'Employee/GetEmployeeListForContact';
+export const getEmployeeListForContact =
+  BASE_URL + 'Employee/GetEmployeeListForContact';
 export const updateMobileAddress = BASE_URL + 'Employee/UpdateMobileAddress';
-//! Patroller Task        
-export const getISPMasterListByname = BASE_URL_2 + 'ISPMaster/GetMasterByNameDDISP';
-export const getDataCenterList = BASE_URL_2 + 'DataCenterMaster/GetDataCenterMasterDDISP';
+//! Patroller Task
+export const getISPMasterListByname =
+  BASE_URL_2 + 'ISPMaster/GetMasterByNameDDISP';
+export const getNearestPoleTreeDD =
+  apiBase(BASE_URL_4) + 'ISPMaster/GetNearestPoleTreeDD';
+export const getDataCenterList =
+  BASE_URL_2 + 'DataCenterMaster/GetDataCenterMasterDDISP';
 export const getRackMasterList = BASE_URL_2 + 'RackMaster/GetRackMasterDDISP';
 export const getFmsMasterList = BASE_URL_2 + 'FMSMaster/GetFmsMasterDDISP';
 export const getLcoMasterList = BASE_URL_2 + 'LcoMaster/GetLcoMasterDDISP';
 //update master
-export const updateMasterAPI = BASE_URL_2 + 'ISPMaster/InsertUpdateISPMasterISP';
-export const updateRouteAPI = BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteMasterMob';
-export const InsertUPdateInitialInfoAPI = BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteInitialInfo';
-export const InsertUpdateRouteChamberMapping = BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteChamberMapping';
-export const UpadteChamberPathDetails = BASE_URL_2 + 'RouteMasterMob/UpdateRoutePathDetails';
+export const updateMasterAPI =
+  BASE_URL_2 + 'ISPMaster/InsertUpdateISPMasterISP';
+export const updateRouteAPI =
+  BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteMasterMob';
+export const InsertUPdateInitialInfoAPI =
+  BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteInitialInfo';
+export const InsertUpdateRouteChamberMapping =
+  BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteChamberMapping';
+export const UpadteChamberPathDetails =
+  BASE_URL_2 + 'RouteMasterMob/UpdateRoutePathDetails';
 //
 export const postLocationAPI = BASE_URL_3 + 'Location/PostLocation';
-export const UpdateMobileLocation = BASE_URL_3 + 'Location/UpdateMobileLocation';
+export const UpdateMobileLocation =
+  BASE_URL_3 + 'Location/UpdateMobileLocation';

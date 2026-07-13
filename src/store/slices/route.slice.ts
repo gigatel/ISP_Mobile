@@ -57,6 +57,13 @@ export interface InsertUpdateRouteChamberMappingArgs {
 export interface GetMasterByNameArgs {
   name?: string;
 }
+export interface GetNearestPoleTreeDDArgs {
+  latLng: string;
+  labelType: string;
+  range: number;
+  type: string;
+  status: boolean;
+}
 export interface UpdateMasterArgs {
   Id?: number;
   Name: string;
@@ -149,6 +156,24 @@ export const GetMasterByNameAPI = createAsyncThunk<
     const res = await APIs.getRequestWithQuery({
       path: URLs.getISPMasterListByname,
       params: queryParams,
+      isAuth: true,
+    });
+    if (res?.status === 200 && res?.success) return res?.data;
+    return thunkApi.rejectWithValue(res);
+  } catch (error: any) {
+    return thunkApi.rejectWithValue(error);
+  }
+});
+
+export const GetNearestPoleTreeDDAPI = createAsyncThunk<
+  any,
+  GetNearestPoleTreeDDArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetNearestPoleTreeDD`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.postRequestWithJson({
+      path: URLs.getNearestPoleTreeDD,
+      params: payload,
       isAuth: true,
     });
     if (res?.status === 200 && res?.success) return res?.data;
@@ -529,6 +554,10 @@ const routeSlice = createSlice({
       .addCase(GetMasterByNameAPI.pending, handlePending)
       .addCase(GetMasterByNameAPI.fulfilled, handleFulfilled)
       .addCase(GetMasterByNameAPI.rejected, handleRejected)
+
+      .addCase(GetNearestPoleTreeDDAPI.pending, handlePending)
+      .addCase(GetNearestPoleTreeDDAPI.fulfilled, handleFulfilled)
+      .addCase(GetNearestPoleTreeDDAPI.rejected, handleRejected)
 
       .addCase(GetDataCenterListAPI.pending, handlePending)
       .addCase(GetDataCenterListAPI.fulfilled, handleFulfilled)

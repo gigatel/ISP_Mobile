@@ -2,7 +2,13 @@ pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
 plugins { id("com.facebook.react.settings") }
 include ':react-native-image-marker'
 project(':react-native-image-marker').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-image-marker/android')
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+def nvmNode20 = new File(System.properties['user.home'], ".nvm/versions/node/v20.20.2/bin/node")
+def reactNativeNode = System.getenv("NODE_BINARY") ?: (nvmNode20.exists() ? nvmNode20.absolutePath : "node")
+extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
+    ex.autolinkLibrariesFromCommand(
+        [reactNativeNode, "node_modules/@react-native-community/cli/build/bin.js", "config"]
+    )
+}
 rootProject.name = 'GTPL'
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')

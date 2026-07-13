@@ -23,7 +23,9 @@ react {
     // debuggableVariants = ["liteDebug", "prodDebug"]      
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
-    // nodeExecutableAndArgs = ["node"]
+    def nvmNode20 = file("${System.properties['user.home']}/.nvm/versions/node/v20.20.2/bin/node")
+    def reactNativeNode = System.getenv("NODE_BINARY") ?: (nvmNode20.exists() ? nvmNode20.absolutePath : "node")
+    nodeExecutableAndArgs = [reactNativeNode]
     //
     //
     //   The command to run when bundling. By default is 'bundle'

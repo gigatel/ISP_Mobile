@@ -391,7 +391,7 @@ export const MasterFormModal: FC<MasterFormModalProps> = ({
                     <Text style={styles.selectMaster}>Discard</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    onPress={onSubmit}
+                    onPress={() => onSubmit()}
                     disabled={isSubmitting}
                     style={[
                       styles.btn,
