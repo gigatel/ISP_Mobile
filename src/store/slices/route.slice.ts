@@ -53,6 +53,14 @@ export interface InsertUpdateRouteChamberMappingArgs {
   endCountry: string;
   routeLength: number;
   orderNo: number;
+  totalLength?: number;
+  drumLength?: number;
+  drumRemainingLength?: number;
+  loopUsed?: number;
+  fiberId?: string | number;
+  fiberType?: string;
+  fiberUsedBy?: string;
+  drumNo?: string;
 }
 export interface GetMasterByNameArgs {
   name?: string;
@@ -63,6 +71,14 @@ export interface GetNearestPoleTreeDDArgs {
   range: number;
   type: string;
   status: boolean;
+}
+export interface GetDrumNumbersByFiberTypeArgs {
+  fiberTypeId: string | number;
+}
+export interface GetRouteDetailsPaggiArgs {
+  page: number;
+  size: number;
+  search: string;
 }
 export interface UpdateMasterArgs {
   Id?: number;
@@ -199,6 +215,115 @@ export const GetDataCenterListAPI = createAsyncThunk<
     return thunkApi.rejectWithValue(error);
   }
 });
+
+export const GetFiberMasterListAPI = createAsyncThunk<
+  any,
+  void,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetFiberMasterList`, async (_, thunkApi) => {
+  try {
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getFiberMasterList,
+      isAuth: true,
+    });
+
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? [];
+    }
+    if (Array.isArray(res?.data)) {
+      return res.data;
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load fiber types',
+      data: error,
+    });
+  }
+});
+
+export const GetDrumNumbersByFiberTypeAPI = createAsyncThunk<
+  any,
+  GetDrumNumbersByFiberTypeArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetDrumNumbersByFiberType`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getDrumNumbersByFiberType,
+      params: `?fiberTypeId=${encodeURIComponent(String(payload.fiberTypeId))}`,
+      isAuth: true,
+    });
+
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? [];
+    }
+    if (Array.isArray(res?.data)) {
+      return res.data;
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load drum numbers',
+      data: error,
+    });
+  }
+});
+
+export const GetRouteDetailsPaggiAPI = createAsyncThunk<
+  any,
+  GetRouteDetailsPaggiArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetRouteDetailsPaggi`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.postRequestWithJsonWithBody({
+      path: URLs.getRouteDetailsPaggi,
+      body: {
+        page: Math.max(1, Number(payload.page) || 1),
+        size: Math.max(1, Number(payload.size) || 10),
+        search: String(payload.search ?? '').trim(),
+      },
+      isAuth: true,
+    });
+
+    if (res?.status === 200 && res?.success) {
+      return {
+        recordsTotal: Number(res?.recordsTotal) || 0,
+        recordsFiltered: Number(res?.recordsFiltered) || 0,
+        data: Array.isArray(res?.data) ? res.data : [],
+      };
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load active routes',
+      data: error,
+    });
+  }
+});
 export const createInitialRouteAPI = createAsyncThunk<
   any,
   CreateInitialRouteArgs,
@@ -222,13 +347,13 @@ export const createInitialRouteAPI = createAsyncThunk<
       orderNo: payload.orderNo,
       routePath: payload.routePath,
     };
-      console.log('startinitialrouteapi', {body});
+    console.log('startinitialrouteapi', {body});
 
-      const res = await APIs.postRequestWithJsonWithBody({
-        path: URLs.InsertUPdateInitialInfoAPI,
-        body,
-        isAuth: true,
-      });
+    const res = await APIs.postRequestWithJsonWithBody({
+      path: URLs.InsertUPdateInitialInfoAPI,
+      body,
+      isAuth: true,
+    });
     if (res?.status === 200 && res?.success) {
       return res?.data ?? res;
     }
@@ -255,11 +380,11 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
   try {
     const body = {...payload};
 
-      const res = await APIs.postRequestWithJsonWithBody({
-        path: URLs.InsertUpdateRouteChamberMapping,
-        body,
-        isAuth: true,
-      });
+    const res = await APIs.postRequestWithJsonWithBody({
+      path: URLs.InsertUpdateRouteChamberMapping,
+      body,
+      isAuth: true,
+    });
     if (res?.status === 200 && res?.success) {
       return res?.data ?? res;
     }
@@ -293,8 +418,8 @@ export const UpdateMasterAPI = createAsyncThunk<
     formData.append('PinCode', payload.PinCode);
     formData.append('Landmark', payload.Landmark);
     formData.append('LatLng', payload.LatLng);
-    formData.append('FiberDetailsReqVM[0].Id',0);
-    formData.append('FiberDetailsReqVM[0].RouteFiberId',0);
+    formData.append('FiberDetailsReqVM[0].Id', 0);
+    formData.append('FiberDetailsReqVM[0].RouteFiberId', 0);
 
     if (payload.Extra1) formData.append('Extra1', payload.Extra1);
     if (payload.Extra2) formData.append('Extra2', payload.Extra2);
@@ -341,12 +466,12 @@ export const updateRoutePathDetailsAPI = createAsyncThunk<
   UpdateRoutePathArgs,
   {rejectValue: ApiError}
 >(`${ROUTE}/updateRoutePathDetailsAPI`, async (payload, thunkApi) => {
-    try {
-      const res = await APIs.postRequestWithJsonWithBody({
-        path: URLs.UpadteChamberPathDetails,
-        body: payload,
-        isAuth: true,
-      });
+  try {
+    const res = await APIs.postRequestWithJsonWithBody({
+      path: URLs.UpadteChamberPathDetails,
+      body: payload,
+      isAuth: true,
+    });
     if (res?.status === 200 && res?.success) {
       return res?.data ?? res;
     }
@@ -439,17 +564,22 @@ export const addRouteAPI = createAsyncThunk<
         );
       });
     }
-      console.log('📤 Sending request to server...');
-      const res = await APIs.postRequestWithFormData({
-        path: URLs.updateRouteAPI,
-        body: formData,
-        isAuth: true,
-        isFormData: true,
+    console.log('📤 Sending request to server...');
+    const res = await APIs.postRequestWithFormData({
+      path: URLs.updateRouteAPI,
+      body: formData,
+      isAuth: true,
+      isFormData: true,
     });
 
     console.log('📥 addRouteAPI RESPONSE:', JSON.stringify(res, null, 2));
 
-    if (res?.status === 200 || res?.success) {
+    const hasSuccessfulStatus =
+      Number(res?.status) >= 200 && Number(res?.status) < 300;
+    if (
+      res?.success === true ||
+      (hasSuccessfulStatus && res?.success !== false)
+    ) {
       console.log('✅ Route added successfully!');
       return res?.data ?? res;
     }

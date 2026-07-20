@@ -29,6 +29,10 @@ export type AddRouteScreen = NativeStackScreenProps<
  RootStackParamList,
  'AddRouteScreen'
  > & AddRouteParams;
+export type AddRouteFiberScreen = NativeStackScreenProps<
+ RootStackParamList,
+ 'AddRouteFiberScreen'
+ > & AddRouteParams;
 export type DeveloperPKPScreen = NativeStackScreenProps<
   RootStackParamList,
   'DeveloperPKPScreen'

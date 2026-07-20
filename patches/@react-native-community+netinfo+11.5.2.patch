@@ -1,0 +1,45 @@
+diff --git a/node_modules/@react-native-community/netinfo/android/build.gradle b/node_modules/@react-native-community/netinfo/android/build.gradle
+--- a/node_modules/@react-native-community/netinfo/android/build.gradle
++++ b/node_modules/@react-native-community/netinfo/android/build.gradle
+@@ -37,6 +37,11 @@ def resolveReactNativeDirectory() {
+     return file(reactNativeLocation)
+   }
+ 
++  def reactNativeFromNodeModulesWithRNCNetInfo = file("${projectDir}/../../../react-native")
++  if (reactNativeFromNodeModulesWithRNCNetInfo.exists()) {
++    return reactNativeFromNodeModulesWithRNCNetInfo
++  }
++
+   // Fallback to node resolver for custom directory structures like monorepos.
+   def reactNativePackage = file(
+           providers.exec {
+@@ -49,11 +54,6 @@ def resolveReactNativeDirectory() {
+     return reactNativePackage.parentFile
+   }
+ 
+-  def reactNativeFromNodeModulesWithRNCNetInfo = file("${projectDir}/../../react-native")
+-  if (reactNativeFromNodeModulesWithRNCNetInfo.exists()) {
+-    return reactNativeFromNodeModulesWithRNCNetInfo
+-  }
+-
+   throw new Exception(
+           "[react-native-netinfo] Unable to resolve react-native location in " +
+                   "node_modules. You should add project extension property (in app/build.gradle) " +
+@@ -117,14 +117,8 @@ repositories {
+   maven {
+     // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+ 
+-    // Use node resolver to locate react-native package
+-    def reactNativePackage = file(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim())
+-    if (reactNativePackage.exists()) {
+-      url "$reactNativePackage.parentFile/android"
+-    }
+-    // Fallback to react-native package colocated in node_modules
+-    else {
+-      url "$rootDir/../node_modules/react-native/android"
+-    }
++    // Reuse the configured React Native path instead of requiring Node in Gradle's PATH.
++    def reactNativeDirectory = resolveReactNativeDirectory()
++    url "$reactNativeDirectory/android"
+   }
+   google()

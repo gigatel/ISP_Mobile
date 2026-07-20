@@ -144,5 +144,7 @@ export const playIcon = require('./images/playIcon.png');
 export const stopIcon = require('./images/stopIcon.png');
 export const resumeIcon = require('./images/resumeIcon.png');
 export const walkingPerson = require('./images/walkinganimation.gif');
+export const manWalking = require('./images/manwalking.gif');
+export const walkingManStatic = require('./images/walkingmen.png');
 export const bkgImage = require('./images/bgnew2.png');
 export const pauseIcon = require('./images/play-buttton.png');

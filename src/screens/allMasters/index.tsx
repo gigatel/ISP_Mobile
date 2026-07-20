@@ -11,6 +11,7 @@ import {
   Alert,
   Image,
   ImageSourcePropType,
+  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -19,6 +20,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -31,12 +33,13 @@ import MapView, {
   Region,
 } from 'react-native-maps';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
+import {useFocusEffect} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useDispatch} from 'react-redux';
 import {Screen} from '@organisms';
 import {COLORS, FONTS, IMAGES, SIZE} from '@res';
 import {StoreDispatch} from '@reducers';
-import {GetNearestPoleTreeDDAPI} from '@slices/route.slice';
+import {GetMasterByNameAPI, GetNearestPoleTreeDDAPI} from '@slices/route.slice';
 import {DataType} from '@types';
 import {Location} from '@utils';
 import {URLs} from '@apis';
@@ -76,6 +79,38 @@ type CurrentLocationPlacement = {
   isAtMaster: boolean;
 };
 
+type RouteAlertTone =
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'camera'
+  | 'location';
+
+type RouteAlertButton = {
+  text: string;
+  variant?: 'primary' | 'secondary' | 'danger';
+  onPress?: () => void;
+};
+
+type RouteAlertState = {
+  visible: boolean;
+  title: string;
+  message: string;
+  icon: ImageSourcePropType;
+  iconTint: string;
+  iconBg: string;
+  buttons: RouteAlertButton[];
+};
+
+type RouteAlertOptions = {
+  title: string;
+  message: string;
+  tone?: RouteAlertTone;
+  icon?: ImageSourcePropType;
+  buttons?: RouteAlertButton[];
+};
+
 const DEFAULT_DELHI_REGION: Region = {
   latitude: 28.6139,
   longitude: 77.209,
@@ -89,6 +124,11 @@ const MAX_SEARCH_RANGE = 1000;
 const SEARCH_RANGE_STEP = 100;
 const LOCATION_MATCH_THRESHOLD_METERS = 5;
 const ATTACHED_MASTER_MATCH_THRESHOLD_METERS = 8;
+const NEAREST_MASTER_TOLERANCE_METERS = 5;
+const NEAREST_MASTER_WARNING_LIMIT_METERS = 60;
+const BUILDING_CROSSING_BUFFER_METERS = 25;
+const BUILDING_ENDPOINT_BUFFER_METERS = 12;
+const NEARBY_ROUTE_MASTER_SUGGESTION_METERS = 75;
 
 const MASTER_TYPES: MasterType[] = [
   {label: 'Pole', value: 'pole', icon: IMAGES.PoleImage},
@@ -106,6 +146,48 @@ const CLICKABLE_AIR_SUPPORT_TYPES = new Set(['pole', 'tree']);
 const AIR_SUPPORT_TYPES = MASTER_TYPES.filter(type =>
   ['pole', 'tree', 'building'].includes(type.value),
 );
+
+const getRouteAlertVisual = (tone: RouteAlertTone = 'info') => {
+  switch (tone) {
+    case 'success':
+      return {
+        icon: IMAGES.checkFill,
+        iconTint: '#13A538',
+        iconBg: '#EAF8EE',
+      };
+    case 'warning':
+      return {
+        icon: IMAGES.warning,
+        iconTint: '#B7791F',
+        iconBg: '#FFF7E6',
+      };
+    case 'error':
+      return {
+        icon: IMAGES.warning,
+        iconTint: COLORS.ERROR,
+        iconBg: '#FDECEC',
+      };
+    case 'camera':
+      return {
+        icon: IMAGES.camera,
+        iconTint: COLORS.colorMediumslateblue,
+        iconBg: '#F2ECFF',
+      };
+    case 'location':
+      return {
+        icon: IMAGES.mapLocation,
+        iconTint: COLORS.colorMediumslateblue,
+        iconBg: '#F2ECFF',
+      };
+    case 'info':
+    default:
+      return {
+        icon: IMAGES.infoFill,
+        iconTint: COLORS.colorMediumslateblue,
+        iconBg: '#F2ECFF',
+      };
+  }
+};
 
 const getImageValue = (value: any): string => {
   if (!value) {
@@ -461,6 +543,112 @@ const getMasterTypeLabel = (master: MasterItem) =>
       getValueByNormalizedKeys(master, ['masterType', 'type']),
   ) || 'Master';
 
+const isSameMasterRecord = (first: any, second: any) => {
+  const firstId = getMasterId(first);
+  const secondId = getMasterId(second);
+  if (firstId && secondId) {
+    return firstId === secondId;
+  }
+
+  const coordinateDistance = getDistanceMeters(
+    getMasterCoordinate(first),
+    getMasterCoordinate(second),
+  );
+  return coordinateDistance !== null && coordinateDistance <= 1;
+};
+
+const isMasterAlreadyInRoute = (master: any, existingMasters: any[]) =>
+  existingMasters.some(existing => isSameMasterRecord(master, existing));
+
+const getLocalMetersFromOrigin = (
+  coordinate: Coordinate,
+  origin: Coordinate,
+) => {
+  const latitudeRadians = (origin.latitude * Math.PI) / 180;
+  return {
+    x:
+      (coordinate.longitude - origin.longitude) *
+      Math.cos(latitudeRadians) *
+      111320,
+    y: (coordinate.latitude - origin.latitude) * 110540,
+  };
+};
+
+const getPointToSegmentDistanceInfo = (
+  point: Coordinate,
+  start: Coordinate,
+  end: Coordinate,
+) => {
+  const pointMeters = getLocalMetersFromOrigin(point, start);
+  const endMeters = getLocalMetersFromOrigin(end, start);
+  const segmentLengthSquared =
+    endMeters.x * endMeters.x + endMeters.y * endMeters.y;
+
+  if (segmentLengthSquared === 0) {
+    return {
+      distance: getDistanceMeters(point, start) ?? 0,
+      projection: 0,
+    };
+  }
+
+  const rawProjection =
+    (pointMeters.x * endMeters.x + pointMeters.y * endMeters.y) /
+    segmentLengthSquared;
+  const projection = Math.max(0, Math.min(1, rawProjection));
+  const projectedPoint = {
+    x: projection * endMeters.x,
+    y: projection * endMeters.y,
+  };
+
+  return {
+    distance: Math.sqrt(
+      (pointMeters.x - projectedPoint.x) ** 2 +
+        (pointMeters.y - projectedPoint.y) ** 2,
+    ),
+    projection,
+  };
+};
+
+const findCrossingBuilding = (
+  start: Coordinate,
+  end: Coordinate,
+  buildingMasters: any[],
+  existingMasters: any[],
+  candidateMaster: any,
+) =>
+  buildingMasters
+    .map(master => {
+      const coordinate = getMasterCoordinate(master);
+      if (
+        !coordinate ||
+        isMasterAlreadyInRoute(master, existingMasters) ||
+        isSameMasterRecord(master, candidateMaster)
+      ) {
+        return null;
+      }
+
+      const segmentInfo = getPointToSegmentDistanceInfo(coordinate, start, end);
+      const startDistance = getDistanceMeters(coordinate, start) ?? 0;
+      const endDistance = getDistanceMeters(coordinate, end) ?? 0;
+      if (
+        segmentInfo.projection <= 0 ||
+        segmentInfo.projection >= 1 ||
+        segmentInfo.distance > BUILDING_CROSSING_BUFFER_METERS ||
+        startDistance < BUILDING_ENDPOINT_BUFFER_METERS ||
+        endDistance < BUILDING_ENDPOINT_BUFFER_METERS
+      ) {
+        return null;
+      }
+
+      return {master, coordinate, distanceToLine: segmentInfo.distance};
+    })
+    .filter(Boolean)
+    .sort(
+      (first: any, second: any) => first.distanceToLine - second.distanceToLine,
+    )[0] as
+    | {master: any; coordinate: Coordinate; distanceToLine: number}
+    | undefined;
+
 const getStatusInfo = (master: any) => {
   const label =
     asCleanText(
@@ -772,6 +960,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const didInitialLoadRef = useRef(false);
   const lastAddedMasterKeyRef = useRef<string | null>(null);
   const lastUpdatedSupportVersionRef = useRef<string | null>(null);
+  const buildingMastersRef = useRef<any[]>([]);
   const initialSelectedMasterType = asCleanText(
     route.params?.selectedMasterType,
   ).toLowerCase();
@@ -783,6 +972,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     route.params?.initialMasters,
   );
   const initialCurrentAddress = asCleanText(route.params?.currentAddress);
+  const isRouteSelectionMode = Boolean(route.params?.routeSelectionMode);
+  const routeDisplayName =
+    asCleanText(route.params?.routeName) || 'Unnamed Route';
   const isAirPlacementFlow = AIR_PLACED_MASTER_TYPES.has(
     initialSelectedMasterType,
   );
@@ -811,6 +1003,81 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     initialPosition,
   );
   const [currentAddress, setCurrentAddress] = useState(initialCurrentAddress);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [hasAddedCurrentLocation, setHasAddedCurrentLocation] = useState(false);
+  const [routeAlert, setRouteAlert] = useState<RouteAlertState>(() => {
+    const visual = getRouteAlertVisual('info');
+    return {
+      visible: false,
+      title: '',
+      message: '',
+      icon: visual.icon,
+      iconTint: visual.iconTint,
+      iconBg: visual.iconBg,
+      buttons: [],
+    };
+  });
+
+  const closeRouteAlert = useCallback(() => {
+    setRouteAlert(previous => ({...previous, visible: false}));
+  }, []);
+
+  const showScreenAlert = useCallback(
+    ({title, message, tone = 'info', icon, buttons}: RouteAlertOptions) => {
+      const alertButtons =
+        buttons && buttons.length > 0
+          ? buttons
+          : [{text: 'OK', variant: 'primary' as const}];
+
+      if (!isRouteSelectionMode) {
+        Alert.alert(
+          title,
+          message,
+          alertButtons.map(button => ({
+            text: button.text,
+            style:
+              button.variant === 'secondary'
+                ? ('cancel' as const)
+                : button.variant === 'danger'
+                ? ('destructive' as const)
+                : ('default' as const),
+            onPress: button.onPress,
+          })),
+        );
+        return;
+      }
+
+      const visual = getRouteAlertVisual(tone);
+      setRouteAlert({
+        visible: true,
+        title,
+        message,
+        icon: icon ?? visual.icon,
+        iconTint: visual.iconTint,
+        iconBg: visual.iconBg,
+        buttons: alertButtons,
+      });
+    },
+    [isRouteSelectionMode],
+  );
+
+  const handleRouteAlertButtonPress = useCallback(
+    (button: RouteAlertButton) => {
+      closeRouteAlert();
+      if (button.onPress) {
+        setTimeout(button.onPress, 120);
+      }
+    },
+    [closeRouteAlert],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isRouteSelectionMode) {
+        Keyboard.dismiss();
+      }
+    }, [isRouteSelectionMode]),
+  );
 
   useEffect(() => {
     const nextSelectedMasterType = asCleanText(
@@ -932,7 +1199,11 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
         if (!isValidCoordinate(nextPosition)) {
           if (showAlert) {
-            Alert.alert('Location', 'Unable to fetch your current location.');
+            showScreenAlert({
+              title: 'Location Unavailable',
+              message: 'Unable to fetch your current location.',
+              tone: 'location',
+            });
           }
           return null;
         }
@@ -956,17 +1227,18 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         return nextPosition;
       } catch (error: any) {
         if (showAlert) {
-          Alert.alert(
-            'Location',
-            error?.message || 'Unable to fetch your current location.',
-          );
+          showScreenAlert({
+            title: 'Location Unavailable',
+            message: error?.message || 'Unable to fetch your current location.',
+            tone: 'location',
+          });
         }
         return null;
       } finally {
         setIsLocating(false);
       }
     },
-    [],
+    [showScreenAlert],
   );
 
   const loadMasters = useCallback(
@@ -1053,10 +1325,11 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
         setMasters(nextMasters);
       } catch (error: any) {
-        Alert.alert(
-          'All Masters',
-          error?.message || 'Unable to load nearest masters.',
-        );
+        showScreenAlert({
+          title: 'Masters Load Failed',
+          message: error?.message || 'Unable to load nearest masters.',
+          tone: 'error',
+        });
         setMasters([]);
       } finally {
         setIsLoading(false);
@@ -1071,10 +1344,27 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       readCurrentLocation,
       selectedMasterTypes,
       searchRange,
+      showScreenAlert,
     ],
   );
 
-  const filteredMasters = masters;
+  const filteredMasters = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!isRouteSelectionMode || !query) {
+      return masters;
+    }
+
+    return masters.filter(master =>
+      [
+        getMasterName(master),
+        getMasterTypeLabel(master),
+        getMasterId(master),
+        getMasterCode(master),
+        getMasterAddress(master),
+        getMasterLatLngText(master),
+      ].some(value => value.toLowerCase().includes(query)),
+    );
+  }, [isRouteSelectionMode, masters, searchQuery]);
 
   const mapRegion = useMemo(
     () => getMapRegion(currentPosition, filteredMasters),
@@ -1098,7 +1388,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const currentLocationAddress =
     currentAddress || getCoordinateAddressText(currentPosition);
 
-  const screenTitle = route.params?.selectedMasterLabel
+  const screenTitle = isRouteSelectionMode
+    ? 'Select Master'
+    : route.params?.selectedMasterLabel
     ? `Add ${route.params.selectedMasterLabel}`
     : 'All Masters';
 
@@ -1109,10 +1401,19 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
     didInitialLoadRef.current = true;
 
-    if (!isAirPlacementFlow && initialMasters.length === 0) {
+    if (
+      !isRouteSelectionMode &&
+      !isAirPlacementFlow &&
+      initialMasters.length === 0
+    ) {
       loadMasters();
     }
-  }, [initialMasters.length, isAirPlacementFlow, loadMasters]);
+  }, [
+    initialMasters.length,
+    isAirPlacementFlow,
+    isRouteSelectionMode,
+    loadMasters,
+  ]);
 
   const onRefresh = async () => {
     if (
@@ -1137,6 +1438,10 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       return;
     }
 
+    if (isRouteSelectionMode) {
+      setHasAddedCurrentLocation(false);
+    }
+
     if (
       isAirPlacementFlow &&
       (!selectedAirSupportType || !hasLoadedAirSupports)
@@ -1154,7 +1459,24 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
   const handleAddCurrentLocation = () => {
     if (!currentPosition) {
-      Alert.alert('Location', 'Unable to find your current location.');
+      showScreenAlert({
+        title: 'Location Unavailable',
+        message: 'Unable to find your current location.',
+        tone: 'location',
+      });
+      return;
+    }
+
+    if (isRouteSelectionMode) {
+      navigation.navigate('Add-Master-Form', {
+        routeMasterSelectionMode: true,
+        routeName: routeDisplayName,
+        routeDraft: route.params?.routeDraft ?? {},
+        returnToRouteBuilder: route.params?.returnToRouteBuilder,
+        routeInitialMasters: masters,
+        currentPosition,
+        currentAddress: currentLocationAddress,
+      });
       return;
     }
 
@@ -1194,12 +1516,13 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
   const handleLoadAirSupports = async () => {
     if (!selectedAirSupportType) {
-      Alert.alert(
-        'Where to Add',
-        `Please select where you want to add ${
+      showScreenAlert({
+        title: 'Where to Add',
+        message: `Please select where you want to add ${
           route.params?.selectedMasterLabel || 'this master'
         }.`,
-      );
+        tone: 'warning',
+      });
       return;
     }
 
@@ -1212,20 +1535,34 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const openMaps = (master: MasterItem) => {
     const coordinate = getMasterCoordinate(master);
     if (!coordinate) {
-      Alert.alert('Google Maps', 'Location is not available for this master.');
+      showScreenAlert({
+        title: 'Google Maps',
+        message: 'Location is not available for this master.',
+        tone: 'location',
+        icon: IMAGES.GoogleMapsIcon,
+      });
       return;
     }
 
     const url = `https://maps.google.com/?q=${coordinate.latitude},${coordinate.longitude}`;
     Linking.openURL(url).catch(() => {
-      Alert.alert('Google Maps', 'Unable to open map.');
+      showScreenAlert({
+        title: 'Google Maps',
+        message: 'Unable to open map.',
+        tone: 'error',
+        icon: IMAGES.GoogleMapsIcon,
+      });
     });
   };
 
   const openMasterImages = (master: MasterItem) => {
     const images = getMasterImages(master);
     if (images.length === 0) {
-      Alert.alert('View Images', 'No images are available for this master.');
+      showScreenAlert({
+        title: 'View Images',
+        message: 'No images are available for this master.',
+        tone: 'camera',
+      });
       return;
     }
 
@@ -1256,6 +1593,313 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         ? master.__attachedAirMasters
         : [],
     });
+  };
+
+  const ensureBuildingMasters = useCallback(async () => {
+    if (buildingMastersRef.current.length > 0) {
+      return buildingMastersRef.current;
+    }
+
+    try {
+      const response = await dispatch(
+        GetMasterByNameAPI({name: 'Building'}),
+      ).unwrap();
+      const buildingMasters = getMasterListFromResponse(response);
+      buildingMastersRef.current = buildingMasters;
+      return buildingMasters;
+    } catch (error) {
+      console.warn(
+        '[SelectRouteMaster] Unable to load buildings for crossing warning:',
+        error,
+      );
+      return [];
+    }
+  }, [dispatch]);
+
+  const handleSelectRouteMaster = async (
+    master: MasterItem,
+    allowDuplicateLocation = false,
+  ) => {
+    if (!isRouteSelectionMode) {
+      return;
+    }
+    if (!currentPosition) {
+      showScreenAlert({
+        title: 'Select Master',
+        message: 'Current route location is unavailable.',
+        tone: 'location',
+      });
+      return;
+    }
+
+    const navigateWithMaster = (selectedMaster: MasterItem) => {
+      const params = {
+        routeName: routeDisplayName,
+        routeDraft: route.params?.routeDraft ?? {},
+        currentPosition,
+        currentAddress: currentLocationAddress,
+        selectedMaster,
+        selectedMasterVersion: `${Date.now()}-${getMasterUniqueKey(
+          selectedMaster,
+        )}`,
+      };
+
+      if (route.params?.returnToRouteBuilder) {
+        (navigation as any).popTo('Make-Route', params);
+      } else {
+        navigation.navigate('Make-Route', params);
+      }
+    };
+
+    const existingMasters = getMasterListFromResponse(
+      route.params?.routeExistingMasters,
+    );
+
+    const validateBuildingCrossingAndNavigate = async (
+      selectedMaster: MasterItem,
+    ) => {
+      const previousMaster = existingMasters[existingMasters.length - 1];
+      const startCoordinate = getMasterCoordinate(previousMaster);
+      const endCoordinate = getMasterCoordinate(selectedMaster);
+      if (!startCoordinate || !endCoordinate) {
+        navigateWithMaster(selectedMaster);
+        return;
+      }
+
+      const serverBuildings = await ensureBuildingMasters();
+      const visibleBuildings = masters.filter(
+        item => getMasterTypeValue(item) === 'building',
+      );
+      const uniqueBuildings = [...visibleBuildings, ...serverBuildings].filter(
+        (building, index, list) =>
+          list.findIndex(item => isSameMasterRecord(item, building)) === index,
+      );
+      const crossingBuilding = findCrossingBuilding(
+        startCoordinate,
+        endCoordinate,
+        uniqueBuildings,
+        existingMasters,
+        selectedMaster,
+      );
+
+      if (!crossingBuilding) {
+        navigateWithMaster(selectedMaster);
+        return;
+      }
+
+      const nearestRouteMaster = existingMasters
+        .map(existing => ({
+          master: existing,
+          distance: getDistanceMeters(
+            crossingBuilding.coordinate,
+            getMasterCoordinate(existing),
+          ),
+        }))
+        .filter(item => item.distance !== null)
+        .sort(
+          (first, second) =>
+            (first.distance ?? Number.MAX_SAFE_INTEGER) -
+            (second.distance ?? Number.MAX_SAFE_INTEGER),
+        )[0];
+      const routeSuggestion =
+        nearestRouteMaster &&
+        Number(nearestRouteMaster.distance) <=
+          NEARBY_ROUTE_MASTER_SUGGESTION_METERS
+          ? `\n\nNearby ${
+              getMasterTypeMeta(nearestRouteMaster.master).label
+            } already in this route: ${getMasterName(
+              nearestRouteMaster.master,
+            )} (${formatDistance(nearestRouteMaster.distance)}).`
+          : '';
+
+      showScreenAlert({
+        title: 'Building Crossing Warning',
+        message: `You are crossing ${getMasterName(
+          crossingBuilding.master,
+        )}, but this building is not added in the route.${routeSuggestion}\n\nYou can add ${getMasterName(
+          selectedMaster,
+        )} anyway, or cancel and add the crossing building first.`,
+        tone: 'warning',
+        buttons: [
+          {text: 'Cancel', variant: 'secondary'},
+          {
+            text: 'Add Anyway',
+            variant: 'primary',
+            onPress: () => navigateWithMaster(selectedMaster),
+          },
+        ],
+      });
+    };
+
+    const selectedId = getMasterId(master);
+    const selectedType = getMasterTypeValue(master);
+    const sameMaster = existingMasters.find(existing => {
+      const existingId = getMasterId(existing);
+      const existingType = getMasterTypeValue(existing);
+      return Boolean(
+        selectedId &&
+          existingId &&
+          selectedId === existingId &&
+          (!selectedType || !existingType || selectedType === existingType),
+      );
+    });
+
+    if (sameMaster) {
+      const typeLabel = getMasterTypeLabel(master);
+      showScreenAlert({
+        title: `${typeLabel} Already Added`,
+        message: `${getMasterName(master)} is already present in this route.`,
+        tone: 'info',
+      });
+      return;
+    }
+
+    const selectedCoordinate = getMasterCoordinate(master);
+    const selectedAddress = asCleanText(getMasterAddress(master))
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+    const duplicateLocations = existingMasters.filter(existing => {
+      const existingCoordinate = getMasterCoordinate(existing);
+      const existingAddress = asCleanText(getMasterAddress(existing))
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+      const coordinateDistance =
+        selectedCoordinate && existingCoordinate
+          ? getDistanceMeters(selectedCoordinate, existingCoordinate)
+          : null;
+      const sameCoordinate =
+        coordinateDistance !== null && coordinateDistance <= 1;
+      const sameAddress = Boolean(
+        selectedAddress &&
+          existingAddress &&
+          (selectedAddress === existingAddress ||
+            (selectedAddress.length >= 12 &&
+              existingAddress.includes(selectedAddress)) ||
+            (existingAddress.length >= 12 &&
+              selectedAddress.includes(existingAddress))),
+      );
+      return sameCoordinate || sameAddress;
+    });
+
+    if (duplicateLocations.length > 0 && !allowDuplicateLocation) {
+      showScreenAlert({
+        title: 'Location Already Exists',
+        message: `This location is already used by ${duplicateLocations
+          .map(existing => getMasterName(existing))
+          .join(', ')}. Review the existing master or add this one anyway.`,
+        tone: 'warning',
+        buttons: [
+          {text: 'Review', variant: 'secondary'},
+          {
+            text: 'Add Anyway',
+            variant: 'primary',
+            onPress: () => {
+              handleSelectRouteMaster(master, true);
+            },
+          },
+        ],
+      });
+      return;
+    }
+
+    const previousMaster = existingMasters[existingMasters.length - 1];
+    const previousCoordinate = getMasterCoordinate(previousMaster);
+    if (previousMaster && (!previousCoordinate || !selectedCoordinate)) {
+      showScreenAlert({
+        title: 'Lat/Lng Required',
+        message: `Unable to verify the nearest ${getMasterTypeLabel(
+          master,
+        )} because the previous or selected master is missing Lat/Lng data.`,
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (previousCoordinate && selectedCoordinate) {
+      const selectableMasters = masters
+        .filter(
+          item =>
+            getMasterTypeValue(item) === selectedType &&
+            !isMasterAlreadyInRoute(item, existingMasters),
+        )
+        .map((item, index) => ({
+          master: item,
+          index,
+          distance:
+            getDistanceMeters(previousCoordinate, getMasterCoordinate(item)) ??
+            Number.MAX_SAFE_INTEGER,
+        }))
+        .filter(item => Number.isFinite(item.distance))
+        .sort((first, second) =>
+          first.distance === second.distance
+            ? first.index - second.index
+            : first.distance - second.distance,
+        );
+
+      if (selectableMasters.length > 1) {
+        const nearestMaster = selectableMasters[0];
+        const candidateDistance =
+          getDistanceMeters(previousCoordinate, selectedCoordinate) ?? 0;
+        const selectedIsNearest = isSameMasterRecord(
+          master,
+          nearestMaster.master,
+        );
+
+        if (
+          !selectedIsNearest &&
+          candidateDistance >
+            nearestMaster.distance + NEAREST_MASTER_TOLERANCE_METERS
+        ) {
+          const selectedTypeLabel = getMasterTypeLabel(master);
+          const nearestTypeLabel = getMasterTypeMeta(
+            nearestMaster.master,
+          ).label;
+          const selectedWithinWarningRange =
+            candidateDistance <= NEAREST_MASTER_WARNING_LIMIT_METERS;
+          showScreenAlert({
+            title: `Nearest ${nearestTypeLabel} Missing`,
+            message: selectedWithinWarningRange
+              ? `You are missing the nearest ${nearestTypeLabel} from ${getMasterName(
+                  previousMaster,
+                )}.\n\nSuggested ${nearestTypeLabel}: ${getMasterName(
+                  nearestMaster.master,
+                )} (${formatDistance(
+                  nearestMaster.distance,
+                )}). Selected ${selectedTypeLabel} is ${formatDistance(
+                  candidateDistance,
+                )} away.`
+              : `Selected ${selectedTypeLabel} is ${formatDistance(
+                  candidateDistance,
+                )} away, which is above ${NEAREST_MASTER_WARNING_LIMIT_METERS} meters.\n\nYou can add it anyway, or add the nearest ${nearestTypeLabel} first from ${getMasterName(
+                  previousMaster,
+                )}.\n\nSuggested ${nearestTypeLabel}: ${getMasterName(
+                  nearestMaster.master,
+                )} (${formatDistance(nearestMaster.distance)}).`,
+            tone: 'warning',
+            buttons: [
+              {text: 'Cancel', variant: 'secondary'},
+              {
+                text: 'Add Nearest',
+                variant: 'secondary',
+                onPress: () => {
+                  handleSelectRouteMaster(nearestMaster.master);
+                },
+              },
+              {
+                text: 'Add Anyway',
+                variant: 'primary',
+                onPress: () => {
+                  validateBuildingCrossingAndNavigate(master);
+                },
+              },
+            ],
+          });
+          return;
+        }
+      }
+    }
+
+    await validateBuildingCrossingAndNavigate(master);
   };
 
   const renderTabs = () => (
@@ -1408,6 +2052,42 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     </View>
   );
 
+  const renderRouteSelectionControls = () => (
+    <View style={styles.routeSelectionControls}>
+      <View style={styles.routeSearchRow}>
+        <View style={styles.routeSearchBox}>
+          <Image source={IMAGES.search} style={styles.routeSearchIcon} />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search"
+            placeholderTextColor="#9298A2"
+            style={styles.routeSearchInput}
+            returnKeyType="search"
+          />
+          {searchQuery ? (
+            <TouchableOpacity
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="Clear master search"
+              onPress={() => setSearchQuery('')}
+              style={styles.routeSearchClear}>
+              <Text style={styles.routeSearchClearText}>×</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {renderRangeControl()}
+      </View>
+
+      <View style={styles.routeNameRow}>
+        <Text style={styles.routeNameLabel}>Route Name:</Text>
+        <Text numberOfLines={1} style={styles.routeNameValue}>
+          {routeDisplayName}
+        </Text>
+      </View>
+    </View>
+  );
+
   const renderDistanceSeparator = (
     distance: number | null | undefined,
     key: string,
@@ -1463,8 +2143,18 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleAddCurrentLocation}
-            style={styles.addCurrentButton}>
-            <Text style={styles.addCurrentButtonText}>Add</Text>
+            disabled={isRouteSelectionMode && hasAddedCurrentLocation}
+            style={[
+              styles.addCurrentButton,
+              isRouteSelectionMode &&
+                hasAddedCurrentLocation &&
+                styles.addCurrentButtonDisabled,
+            ]}>
+            <Text style={styles.addCurrentButtonText}>
+              {isRouteSelectionMode && hasAddedCurrentLocation
+                ? 'Added'
+                : 'Add'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1531,13 +2221,18 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       master,
       initialSelectedMasterType,
     );
+    const isCardInteractive = showSupportDetails || isRouteSelectionMode;
 
     return (
       <View key={`${master.__masterType}-${masterId || index}`}>
         <TouchableOpacity
-          activeOpacity={showSupportDetails ? 0.82 : 1}
-          disabled={!showSupportDetails}
-          onPress={() => openSupportDetails(master)}
+          activeOpacity={isCardInteractive ? 0.82 : 1}
+          disabled={!isCardInteractive}
+          onPress={() =>
+            isRouteSelectionMode
+              ? handleSelectRouteMaster(master)
+              : openSupportDetails(master)
+          }
           style={styles.masterCard}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.masterName} numberOfLines={1}>
@@ -1790,6 +2485,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
+      keyboardAvoidingEnabled={!isRouteSelectionMode || Platform.OS === 'ios'}
       statusBgColor="#8858F9"
       statusBarStyle="light">
       <StatusBar barStyle="light-content" backgroundColor="#8858F9" />
@@ -1813,10 +2509,16 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         </LinearGradient>
 
         <View style={styles.body}>
-          <View style={styles.topControls}>
-            <View style={styles.tabsWrap}>{renderTabs()}</View>
-            {activeTab === 'list' ? renderRangeControl() : renderFilterButton()}
-          </View>
+          {isRouteSelectionMode ? (
+            renderRouteSelectionControls()
+          ) : (
+            <View style={styles.topControls}>
+              <View style={styles.tabsWrap}>{renderTabs()}</View>
+              {activeTab === 'list'
+                ? renderRangeControl()
+                : renderFilterButton()}
+            </View>
+          )}
 
           {isAirPlacementFlow && activeTab === 'list'
             ? renderAirSupportSelector()
@@ -1849,6 +2551,73 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
             </TouchableOpacity>
           </View>
         </View>
+
+        <Modal
+          visible={routeAlert.visible}
+          transparent
+          statusBarTranslucent
+          animationType="fade"
+          onRequestClose={closeRouteAlert}>
+          <View style={styles.routeAlertOverlay}>
+            <View style={styles.routeAlertCard}>
+              <View
+                style={[
+                  styles.routeAlertIconBox,
+                  {backgroundColor: routeAlert.iconBg},
+                ]}>
+                <Image
+                  source={routeAlert.icon}
+                  style={[
+                    styles.routeAlertIcon,
+                    {tintColor: routeAlert.iconTint},
+                  ]}
+                  resizeMode="contain"
+                />
+              </View>
+              <Text style={styles.routeAlertTitle}>{routeAlert.title}</Text>
+              <ScrollView
+                style={styles.routeAlertMessageScroll}
+                contentContainerStyle={styles.routeAlertMessageContent}
+                showsVerticalScrollIndicator={false}>
+                <Text style={styles.routeAlertMessage}>
+                  {routeAlert.message}
+                </Text>
+              </ScrollView>
+              <View
+                style={[
+                  styles.routeAlertButtonRow,
+                  routeAlert.buttons.length === 1 &&
+                    styles.routeAlertButtonRowSingle,
+                ]}>
+                {routeAlert.buttons.map((button, index) => {
+                  const isSecondary = button.variant === 'secondary';
+                  const isDanger = button.variant === 'danger';
+                  return (
+                    <TouchableOpacity
+                      key={`${button.text}-${index}`}
+                      activeOpacity={0.85}
+                      onPress={() => handleRouteAlertButtonPress(button)}
+                      style={[
+                        styles.routeAlertButton,
+                        routeAlert.buttons.length === 1 &&
+                          styles.routeAlertButtonSingle,
+                        isSecondary && styles.routeAlertButtonSecondary,
+                        isDanger && styles.routeAlertButtonDanger,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.routeAlertButtonText,
+                          isSecondary && styles.routeAlertButtonTextSecondary,
+                        ]}>
+                        {button.text}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         <Modal
           visible={previewImages.length > 0}
@@ -1963,6 +2732,78 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SIZE.MS(8),
     marginBottom: SIZE.MS(8),
+  },
+  routeSelectionControls: {
+    marginBottom: SIZE.MS(7),
+  },
+  routeSearchRow: {
+    height: SIZE.MS(34),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZE.MS(8),
+  },
+  routeSearchBox: {
+    flex: 1,
+    height: SIZE.MS(34),
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: SIZE.MS(9),
+    paddingRight: SIZE.MS(4),
+    borderRadius: SIZE.MS(6),
+    backgroundColor: COLORS.WHITE,
+    shadowColor: '#000000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  routeSearchIcon: {
+    width: SIZE.MS(13),
+    height: SIZE.MS(13),
+    resizeMode: 'contain',
+    tintColor: '#8A919D',
+    marginRight: SIZE.MS(6),
+  },
+  routeSearchInput: {
+    flex: 1,
+    height: '100%',
+    paddingVertical: 0,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.REGULAR,
+    color: '#393D45',
+  },
+  routeSearchClear: {
+    width: SIZE.MS(24),
+    height: SIZE.MS(24),
+    borderRadius: SIZE.MS(5),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EDF1F6',
+  },
+  routeSearchClearText: {
+    fontSize: SIZE.MS(18),
+    lineHeight: SIZE.MS(20),
+    fontFamily: FONTS.REGULAR,
+    color: '#5B6170',
+  },
+  routeNameRow: {
+    minHeight: SIZE.MS(25),
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZE.MS(1),
+    paddingTop: SIZE.MS(5),
+  },
+  routeNameLabel: {
+    marginRight: SIZE.MS(4),
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.MEDIUM,
+    color: '#393D45',
+  },
+  routeNameValue: {
+    flex: 1,
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
+    color: '#7754F7',
   },
   tabsWrap: {
     flex: 1,
@@ -2329,6 +3170,100 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.BOLD,
     color: '#6036C4',
   },
+  routeAlertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(12, 12, 18, 0.52)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SIZE.MS(22),
+  },
+  routeAlertCard: {
+    width: '100%',
+    maxWidth: SIZE.MS(360),
+    borderRadius: SIZE.MS(12),
+    backgroundColor: COLORS.WHITE,
+    paddingHorizontal: SIZE.MS(18),
+    paddingTop: SIZE.MS(20),
+    paddingBottom: SIZE.MS(16),
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#EFEAFB',
+  },
+  routeAlertIconBox: {
+    width: SIZE.MS(58),
+    height: SIZE.MS(58),
+    borderRadius: SIZE.MS(29),
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SIZE.MS(12),
+  },
+  routeAlertIcon: {
+    width: SIZE.MS(26),
+    height: SIZE.MS(26),
+  },
+  routeAlertTitle: {
+    fontSize: SIZE.MS(17),
+    lineHeight: SIZE.MS(22),
+    color: COLORS.colorDarkslategray,
+    fontFamily: FONTS.BOLD,
+    fontWeight: FONTS.FONT_WEIGHT.BOLD,
+    textAlign: 'center',
+  },
+  routeAlertMessageScroll: {
+    maxHeight: SIZE.MS(180),
+    alignSelf: 'stretch',
+    marginTop: SIZE.MS(8),
+  },
+  routeAlertMessageContent: {
+    paddingHorizontal: SIZE.MS(2),
+  },
+  routeAlertMessage: {
+    fontSize: SIZE.MS(13),
+    lineHeight: SIZE.MS(19),
+    color: '#5A5A66',
+    fontFamily: FONTS.MEDIUM,
+    textAlign: 'center',
+  },
+  routeAlertButtonRow: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    gap: SIZE.MS(10),
+    marginTop: SIZE.MS(18),
+  },
+  routeAlertButtonRowSingle: {
+    justifyContent: 'center',
+  },
+  routeAlertButton: {
+    flex: 1,
+    minHeight: SIZE.MS(42),
+    borderRadius: SIZE.MS(22),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.colorMediumslateblue,
+    paddingHorizontal: SIZE.MS(12),
+  },
+  routeAlertButtonSingle: {
+    flex: 0,
+    width: SIZE.MS(160),
+  },
+  routeAlertButtonSecondary: {
+    backgroundColor: '#F0F0F3',
+    borderWidth: 1,
+    borderColor: '#E1E1E8',
+  },
+  routeAlertButtonDanger: {
+    backgroundColor: COLORS.ERROR,
+  },
+  routeAlertButtonText: {
+    color: COLORS.WHITE,
+    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.BOLD,
+    fontWeight: FONTS.FONT_WEIGHT.BOLD,
+    textAlign: 'center',
+  },
+  routeAlertButtonTextSecondary: {
+    color: COLORS.colorDarkslategray,
+  },
   previewOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.86)',
@@ -2460,6 +3395,9 @@ const styles = StyleSheet.create({
     fontSize: SIZE.MS(10),
     fontFamily: FONTS.SEMI_BOLD,
     color: COLORS.WHITE,
+  },
+  addCurrentButtonDisabled: {
+    backgroundColor: '#8F98A6',
   },
   stateBox: {
     minHeight: SIZE.MS(180),

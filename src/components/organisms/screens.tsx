@@ -16,6 +16,7 @@ interface ScreenProps {
   children: React.ReactNode;
   fixedComponent?: React.ReactNode;
   fixedBottomComponent?: React.ReactNode;
+  keyboardAvoidingEnabled?: boolean;
   statusBarStyle?: 'light' | 'dark';
   translucent?: boolean;
   statusBgColor?: string;
@@ -40,6 +41,7 @@ export function Screen(props: ScreenProps) {
     preset = 'fixed',
     fixedComponent,
     fixedBottomComponent,
+    keyboardAvoidingEnabled = true,
     loaderMessage = 'Loading',
   } = props;
   const scrollViewRef = useRef<ScrollView>(null);
@@ -56,6 +58,7 @@ export function Screen(props: ScreenProps) {
         backgroundColor={statusBgColor ?? COLORS.PRIMARY}
       />
       <KeyboardAvoidingView
+        enabled={keyboardAvoidingEnabled}
         behavior={isIos ? 'padding' : 'height'}
         keyboardVerticalOffset={isIos ? 0 : 20}
         style={[$keyboardAvoidingViewStyle]}>

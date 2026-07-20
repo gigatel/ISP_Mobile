@@ -64,6 +64,10 @@ export const getDataCenterList =
 export const getRackMasterList = BASE_URL_2 + 'RackMaster/GetRackMasterDDISP';
 export const getFmsMasterList = BASE_URL_2 + 'FMSMaster/GetFmsMasterDDISP';
 export const getLcoMasterList = BASE_URL_2 + 'LcoMaster/GetLcoMasterDDISP';
+export const getFiberMasterList =
+  BASE_URL_2 + 'FiberMaster/GetFiberMasterDDISP';
+export const getDrumNumbersByFiberType =
+  BASE_URL_2 + 'SLD/GetDrumNoByFiberTypeIdDD';
 //update master
 export const updateMasterAPI =
   BASE_URL_2 + 'ISPMaster/InsertUpdateISPMasterISP';
@@ -75,6 +79,8 @@ export const InsertUpdateRouteChamberMapping =
   BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteChamberMapping';
 export const UpadteChamberPathDetails =
   BASE_URL_2 + 'RouteMasterMob/UpdateRoutePathDetails';
+export const getRouteDetailsPaggi =
+  'http://10.100.2.38:6101/api/RouteMasterMob/GetRouteDetailsPaggi';
 //
 export const postLocationAPI = BASE_URL_3 + 'Location/PostLocation';
 export const UpdateMobileLocation =

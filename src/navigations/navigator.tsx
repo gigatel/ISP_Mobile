@@ -10,6 +10,7 @@ import React, {FC, useEffect, useState} from 'react';
 import BottomTab from './bottom-tabs';
 import {navigationRef} from './services';
 import AddRouteScreen from '@screens/AddRouteScreen';
+import AddRouteFiberScreen from '@screens/AddRouteFiberScreen';
 import AttendanceDashboard from '@screens/attendance/attendance-dashboard';
 import AttendanceInOut from '@screens/attendance/attendance-mark-inout';
 import viewAttendanceReport from '@screens/attendance/view-attendance-report';
@@ -52,6 +53,12 @@ import AddMaster from '@screens/addMaster';
 import AllMasters from '@screens/allMasters';
 import AddMasterForm from '@screens/addMasterForm';
 import AddAirMasterOnSupport from '@screens/addAirMasterOnSupport';
+import SelectRouteMasterScreen from '@screens/SelectRouteMasterScreen';
+import MakeRouteScreen from '@screens/MakeRouteScreen';
+import SelectPausedRouteScreen from '@screens/SelectPausedRouteScreen';
+import SelectRouteToChangeFiberScreen from '@screens/SelectRouteToChangeFiberScreen';
+import FiberChangeScreen from '@screens/FiberChangeScreen';
+import type {PausedRouteSnapshot} from '../services/pausedRouteStorage';
 export interface RootStackParamList {
   Splash: undefined;
   BottomTab: undefined;
@@ -60,6 +67,11 @@ export interface RootStackParamList {
     | {
         selectedMasterType?: string;
         selectedMasterLabel?: string;
+        routeMasterSelectionMode?: boolean;
+        routeName?: string;
+        routeDraft?: Record<string, any>;
+        returnToRouteBuilder?: boolean;
+        routeInitialMasters?: any[];
         currentPosition?: {
           latitude: number;
           longitude: number;
@@ -95,14 +107,54 @@ export interface RootStackParamList {
         updatedSupportCount?: number;
         updatedSupportVersion?: string;
         updatedSupportAddedMaster?: any;
+        routeSelectionMode?: boolean;
+        routeName?: string;
+        routeDraft?: Record<string, any>;
+        returnToRouteBuilder?: boolean;
+        routeExistingMasters?: any[];
       }
     | undefined;
+  'Select-Route-Master': {
+    routeSelectionMode: true;
+    routeName: string;
+    currentPosition: {
+      latitude: number;
+      longitude: number;
+    };
+    currentAddress: string;
+    initialMasters: any[];
+    routeExistingMasters?: any[];
+    routeDraft: Record<string, any>;
+    returnToRouteBuilder?: boolean;
+    addedMaster?: any;
+    addedMasterKey?: string;
+  };
+  'Select-Paused-Route': undefined;
+  'Select-Route-To-Change-Fiber': undefined;
+  'Fiber-Change': {
+    selectedRoute: Record<string, any>;
+    selectedFibers: any[];
+  };
+  'Make-Route': {
+    routeName: string;
+    routeDraft: Record<string, any>;
+    currentPosition: {
+      latitude: number;
+      longitude: number;
+    };
+    currentAddress: string;
+    selectedMaster: any;
+    selectedMasterVersion: string;
+    resumeSnapshot?: PausedRouteSnapshot;
+    readOnly?: boolean;
+  };
   PrivacyPolicy: undefined;
   Login: undefined;
   ChamberReport: undefined;
   SearchCustomer: undefined;
   ProfileScreen: undefined;
   PitInstallation: undefined;
+  AddRouteFiberScreen: undefined;
   AppModulesScreen: undefined;
   ChamberDetails: {
     chamberId: string;
@@ -242,6 +294,10 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
         component={AddChamberComplaint}
       />
       <Stack.Screen name="AddRouteScreen" component={AddRouteScreen} />
+      <Stack.Screen
+        name="AddRouteFiberScreen"
+        component={AddRouteFiberScreen}
+      />
       <Stack.Screen name="SearchCustomer" component={SearchCustomer} />
       <Stack.Screen name="RoadProject" component={RoadProjectSurvey} />
       <Stack.Screen name="DistanceCovered" component={DistanceCovered} />
@@ -249,6 +305,20 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
       <Stack.Screen name="DeveloperPKPScreen" component={DeveloperPKPScreen} />
       <Stack.Screen name="addMaster" component={AddMaster} />
       <Stack.Screen name="All-Masters" component={AllMasters} />
+      <Stack.Screen
+        name="Select-Route-Master"
+        component={SelectRouteMasterScreen}
+      />
+      <Stack.Screen name="Make-Route" component={MakeRouteScreen} />
+      <Stack.Screen
+        name="Select-Paused-Route"
+        component={SelectPausedRouteScreen}
+      />
+      <Stack.Screen
+        name="Select-Route-To-Change-Fiber"
+        component={SelectRouteToChangeFiberScreen}
+      />
+      <Stack.Screen name="Fiber-Change" component={FiberChangeScreen} />
       <Stack.Screen name="Add-Master-Form" component={AddMasterForm} />
       <Stack.Screen
         name="Add-Air-Master-On-Support"

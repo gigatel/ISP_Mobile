@@ -1,7 +1,6 @@
-
-import { MMKV, Mode } from 'react-native-mmkv';
-import { log } from './common';
-import { Common } from '@utils';
+import {MMKV, Mode} from 'react-native-mmkv';
+import {log} from './common';
+import {Common} from '@utils';
 
 const storage = new MMKV({
   id: 'gigatel-gtpl-mobileapp',
@@ -10,9 +9,10 @@ const storage = new MMKV({
 
 export const KEY = {
   LANGUAGE: 'LANGUAGE',
-  ALLOWED_ACCESS_FOR_LOCATION_BACKGROUND: 'ALLOWED_ACCESS_FOR_LOCATION_BACKGROUND',
+  ALLOWED_ACCESS_FOR_LOCATION_BACKGROUND:
+    'ALLOWED_ACCESS_FOR_LOCATION_BACKGROUND',
   FOREGROUND_SERVICE: 'FOREGROUND_SERVICE',
-  LAST_COORDS:'LAST_COORDS',
+  LAST_COORDS: 'LAST_COORDS',
   FIRST_OPEN: 'FIRST_OPEN',
   PEM_KEY: 'PEM_KEY',
   PUBLIC_KEY: 'PUBLIC_KEY',
@@ -44,16 +44,18 @@ export const KEY = {
   EMPLOYEE_ID: 'EMPLOYEE_ID',
   COMPANY_ID: 'COMPANY_ID',
   LAST_POST_TS: 'LAST_POST_TS',
-  CACHE_KEY:'CACHE_KEY',
+  CACHE_KEY: 'CACHE_KEY',
   FORCE_UPDATE_REQUIRED: 'FORCE_UPDATE_REQUIRED',
   LAST_FULL_ADDRESS: 'LAST_FULL_ADDRESS',
-  OLA_MAPS_API_KEY:"OLA_MAPS_API_KEY",
+  OLA_MAPS_API_KEY: 'OLA_MAPS_API_KEY',
   STORAGE_KEY: 'STORAGE_KEY',
   ORGANIZATION_CODE: 'ORGANIZATION_CODE',
+  PAUSED_ROUTE_DRAFTS: 'PAUSED_ROUTE_DRAFTS',
+  COMPLETED_APP_ROUTES: 'COMPLETED_APP_ROUTES',
+  ROUTE_FIBER_SELECTIONS: 'ROUTE_FIBER_SELECTIONS',
 } as const;
 export const OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX =
   'OFFLINE_TODAY_WORKING_BEHALKF_OF' as const;
-
 
 export const logout = async () => {
   removeData('PEM_KEY');
@@ -89,12 +91,11 @@ export const logout = async () => {
   removeData('LAST_FULL_ADDRESS');
   removeData('STORAGE_KEY');
   removeData('OLA_MAPS_API_KEY');
-  };
+};
 export type KeyType = keyof typeof KEY;
 export type PreferenceKey =
   | KeyType
   | `${typeof OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX}${string}`;
-
 
 export const setData = (key: PreferenceKey, value: any) => {
   try {
@@ -107,7 +108,9 @@ export const setData = (key: PreferenceKey, value: any) => {
 export const getData = (key: PreferenceKey) => {
   try {
     const jsonValue = storage.getString(key);
-    if (!jsonValue) { return null; }
+    if (!jsonValue) {
+      return null;
+    }
     return JSON.parse(jsonValue);
   } catch (e) {
     Common.error('Error in Get Data for ->', key, e);

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -48,6 +49,21 @@ type Coordinate = {
   longitude: number;
 };
 
+type MasterTypeOption = {
+  label: string;
+  value: string;
+};
+
+const MASTER_TYPE_OPTIONS: MasterTypeOption[] = [
+  {label: 'Pole', value: 'pole'},
+  {label: 'Tree', value: 'tree'},
+  {label: 'Building', value: 'building'},
+  {label: 'POP', value: 'pop'},
+  {label: 'Splitter', value: 'splitter'},
+  {label: 'Tiffin', value: 'tiffin'},
+  {label: 'Enclosure', value: 'enclosure'},
+];
+
 const asCleanText = (value?: unknown) =>
   String(value ?? '')
     .trim()
@@ -75,11 +91,33 @@ const getGeneratedMasterName = (label: string) =>
 const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
   const dispatch = useDispatch<StoreDispatch>();
-  const selectedMasterType = asCleanText(route.params?.selectedMasterType);
-  const selectedMasterLabel =
-    asCleanText(route.params?.selectedMasterLabel) ||
-    selectedMasterType ||
-    'Master';
+  const isRouteMasterSelectionFlow = Boolean(
+    route.params?.routeMasterSelectionMode,
+  );
+  const initialMasterType = asCleanText(
+    route.params?.selectedMasterType,
+  ).toLowerCase();
+  const initialMasterLabel = asCleanText(route.params?.selectedMasterLabel);
+  const initialMasterOption = useMemo<MasterTypeOption | null>(() => {
+    const matchingOption = MASTER_TYPE_OPTIONS.find(
+      option => option.value === initialMasterType,
+    );
+
+    if (matchingOption) {
+      return matchingOption;
+    }
+
+    if (isRouteMasterSelectionFlow) {
+      return MASTER_TYPE_OPTIONS[0];
+    }
+
+    return initialMasterType || initialMasterLabel
+      ? {
+          label: initialMasterLabel || initialMasterType,
+          value: initialMasterType || initialMasterLabel.toLowerCase(),
+        }
+      : null;
+  }, [initialMasterLabel, initialMasterType, isRouteMasterSelectionFlow]);
   const initialAddress = asCleanText(route.params?.currentAddress);
   const initialLatLng = getLatLngText(route.params?.currentPosition ?? null);
   const initialAddressParts = useMemo(
@@ -108,8 +146,17 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const [showAddressDropdown, setShowAddressDropdown] = useState(false);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedMaster, setSelectedMaster] = useState<MasterTypeOption | null>(
+    initialMasterOption,
+  );
+  const [showMasterTypeDropdown, setShowMasterTypeDropdown] = useState(false);
 
-  const title = `Add ${selectedMasterLabel}`;
+  const selectedMasterType = selectedMaster?.value || '';
+  const selectedMasterLabel = selectedMaster?.label || 'Master';
+
+  const title = isRouteMasterSelectionFlow
+    ? 'Add Master'
+    : `Add ${selectedMasterLabel}`;
   const imageLabel = `${selectedMasterLabel} Images`;
   const showAirPlacementNotice = ['tiffin', 'enclosure'].includes(
     (selectedMasterType || selectedMasterLabel).toLowerCase(),
@@ -151,6 +198,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         : [],
     );
     setShowAddressDropdown(false);
+    setShowMasterTypeDropdown(false);
   };
 
   const requestCameraPermission = async () => {
@@ -270,6 +318,8 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   };
 
   const submitForm = async () => {
+    Keyboard.dismiss();
+
     if (!selectedMasterLabel || selectedMasterLabel === 'Master') {
       Alert.alert('Master', 'Please select a master type first.');
       return;
@@ -351,7 +401,28 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         status: true,
         isActive: true,
         extra1: remarks.trim(),
+        image1,
+        image2,
+        imageUrl1: image1,
+        imageUrl2: image2,
       };
+
+      const addedMasterKey = `${masterName}-${Date.now()}`;
+
+      if (isRouteMasterSelectionFlow) {
+        navigation.popTo('Select-Route-Master', {
+          routeSelectionMode: true,
+          routeName: asCleanText(route.params?.routeName) || 'Unnamed Route',
+          routeDraft: route.params?.routeDraft ?? {},
+          returnToRouteBuilder: route.params?.returnToRouteBuilder,
+          currentPosition: selectedCoordinate,
+          currentAddress: selectedAddress.trim(),
+          initialMasters: route.params?.routeInitialMasters ?? [],
+          addedMaster,
+          addedMasterKey,
+        });
+        return;
+      }
 
       navigation.popTo('All-Masters', {
         selectedMasterType:
@@ -360,7 +431,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         currentPosition: selectedCoordinate,
         currentAddress: selectedAddress.trim(),
         addedMaster,
-        addedMasterKey: `${masterName}-${Date.now()}`,
+        addedMasterKey,
       });
     } catch (error: any) {
       Alert.alert(
@@ -409,20 +480,54 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
-      statusBgColor="#F4F7FB"
-      statusBarStyle="dark">
-      <StatusBar barStyle="dark-content" backgroundColor="#F4F7FB" />
-      <View style={[styles.screen, {paddingTop: insets.top}]}>
-        <View style={styles.header}>
+      statusBgColor={isRouteMasterSelectionFlow ? '#8858F9' : '#F4F7FB'}
+      statusBarStyle={isRouteMasterSelectionFlow ? 'light' : 'dark'}>
+      <StatusBar
+        barStyle={isRouteMasterSelectionFlow ? 'light-content' : 'dark-content'}
+        backgroundColor={isRouteMasterSelectionFlow ? '#8858F9' : '#F4F7FB'}
+      />
+      <View
+        style={[
+          styles.screen,
+          !isRouteMasterSelectionFlow && {paddingTop: insets.top},
+        ]}>
+        <LinearGradient
+          colors={
+            isRouteMasterSelectionFlow
+              ? ['#8858F9', '#6036C4']
+              : ['#F4F7FB', '#F4F7FB']
+          }
+          useAngle
+          angle={148.57}
+          style={[
+            styles.header,
+            isRouteMasterSelectionFlow && styles.routeHeader,
+            isRouteMasterSelectionFlow && {paddingTop: insets.top},
+          ]}>
           <TouchableOpacity
             activeOpacity={0.75}
-            onPress={() => navigation.goBack()}
+            onPress={() => {
+              Keyboard.dismiss();
+              navigation.goBack();
+            }}
             style={styles.backButton}>
-            <Image source={IMAGES.back} style={styles.backIcon} />
+            <Image
+              source={IMAGES.back}
+              style={[
+                styles.backIcon,
+                isRouteMasterSelectionFlow && styles.routeHeaderBackIcon,
+              ]}
+            />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{title}</Text>
+          <Text
+            style={[
+              styles.headerTitle,
+              isRouteMasterSelectionFlow && styles.routeHeaderTitle,
+            ]}>
+            {title}
+          </Text>
           <View style={styles.headerSpacer} />
-        </View>
+        </LinearGradient>
 
         <ScrollView
           style={styles.scroll}
@@ -436,10 +541,26 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
             <View style={styles.twoColumnRow}>
               <View style={styles.masterField}>
                 <Text style={styles.label}>Master</Text>
-                <View style={styles.selectInput}>
-                  <Text style={styles.selectText}>{selectedMasterLabel}</Text>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    setShowMasterTypeDropdown(previous => !previous)
+                  }
+                  disabled={!isRouteMasterSelectionFlow}
+                  accessibilityRole={
+                    isRouteMasterSelectionFlow ? 'button' : undefined
+                  }
+                  accessibilityLabel="Select master type"
+                  style={styles.selectInput}>
+                  <Text
+                    style={[
+                      styles.selectText,
+                      !selectedMaster && styles.placeholderText,
+                    ]}>
+                    {selectedMaster?.label || 'Select'}
+                  </Text>
                   <Image source={IMAGES.down} style={styles.downIcon} />
-                </View>
+                </TouchableOpacity>
               </View>
 
               <View style={styles.latLngField}>
@@ -469,6 +590,46 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                 </View>
               </View>
             </View>
+
+            {isRouteMasterSelectionFlow && showMasterTypeDropdown ? (
+              <View style={styles.masterTypeDropdown}>
+                {MASTER_TYPE_OPTIONS.map((option, index) => {
+                  const isSelected = selectedMasterType === option.value;
+
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setSelectedMaster(option);
+                        setShowMasterTypeDropdown(false);
+                      }}
+                      style={[
+                        styles.masterTypeOption,
+                        index < MASTER_TYPE_OPTIONS.length - 1 &&
+                          styles.masterTypeOptionBorder,
+                      ]}>
+                      <View
+                        style={[
+                          styles.masterTypeRadio,
+                          isSelected && styles.masterTypeRadioSelected,
+                        ]}>
+                        {isSelected ? (
+                          <View style={styles.masterTypeRadioDot} />
+                        ) : null}
+                      </View>
+                      <Text
+                        style={[
+                          styles.masterTypeOptionText,
+                          isSelected && styles.masterTypeOptionTextSelected,
+                        ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
 
             <Text style={styles.label}>
               Select Address<Text style={styles.required}> *</Text>
@@ -629,6 +790,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  routeHeader: {
+    height: SIZE.MS(96),
+    paddingBottom: SIZE.MS(8),
+  },
   backButton: {
     width: SIZE.MS(34),
     height: SIZE.MS(34),
@@ -641,12 +806,18 @@ const styles = StyleSheet.create({
     tintColor: '#263241',
     resizeMode: 'contain',
   },
+  routeHeaderBackIcon: {
+    tintColor: COLORS.WHITE,
+  },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
     fontSize: SIZE.MS(15),
     fontFamily: FONTS.MEDIUM,
     color: '#263241',
+  },
+  routeHeaderTitle: {
+    color: COLORS.WHITE,
   },
   headerSpacer: {
     width: SIZE.MS(34),
@@ -706,6 +877,52 @@ const styles = StyleSheet.create({
     fontSize: SIZE.MS(11),
     fontFamily: FONTS.MEDIUM,
     color: '#5B6170',
+  },
+  masterTypeDropdown: {
+    marginTop: SIZE.MS(6),
+    borderWidth: 1,
+    borderColor: '#E5E8EE',
+    borderRadius: SIZE.MS(10),
+    backgroundColor: COLORS.WHITE,
+    overflow: 'hidden',
+  },
+  masterTypeOption: {
+    minHeight: SIZE.MS(36),
+    paddingHorizontal: SIZE.MS(12),
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  masterTypeOptionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F1F4',
+  },
+  masterTypeRadio: {
+    width: SIZE.MS(13),
+    height: SIZE.MS(13),
+    borderRadius: SIZE.MS(7),
+    borderWidth: 1,
+    borderColor: '#9CA3AF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SIZE.MS(9),
+  },
+  masterTypeRadioSelected: {
+    borderColor: '#7445DF',
+  },
+  masterTypeRadioDot: {
+    width: SIZE.MS(7),
+    height: SIZE.MS(7),
+    borderRadius: SIZE.MS(4),
+    backgroundColor: '#7445DF',
+  },
+  masterTypeOptionText: {
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.MEDIUM,
+    color: '#263241',
+  },
+  masterTypeOptionTextSelected: {
+    color: '#6036C4',
+    fontFamily: FONTS.SEMI_BOLD,
   },
   downIcon: {
     width: SIZE.MS(12),
