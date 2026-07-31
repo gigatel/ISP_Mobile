@@ -450,11 +450,11 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   addMasters: {
-    fontSize: 15,
+    fontSize: 18,
     letterSpacing: LetterSpacing.ls_0_1,
     textAlign: 'left',
     fontFamily: FontFamily.switzer,
-    fontWeight: '500',
+    fontWeight: '700',
     alignSelf: 'stretch',
   },
   row6: {
@@ -473,7 +473,7 @@ const styles = StyleSheet.create({
   },
   master: {
     color: COLORS.colorDarkslategray100,
-    fontSize: FontSize.fs_14,
+    fontSize: FontSize.fs_16,
     letterSpacing: LetterSpacing.ls_0_1,
     fontFamily: FontFamily.switzer,
     alignSelf: 'stretch',
@@ -492,12 +492,12 @@ const styles = StyleSheet.create({
   },
   pole2: {
     color: COLORS.colorDarkslategray100,
-    fontSize: FontSize.fs_14,
+    fontSize: FontSize.fs_16,
     letterSpacing: LetterSpacing.ls_0_1,
     fontFamily: FontFamily.switzer,
   },
   latlng: {
-    fontSize: FontSize.fs_14,
+    fontSize: FontSize.fs_16,
     letterSpacing: LetterSpacing.ls_0_1,
     fontFamily: FontFamily.switzer,
     alignSelf: 'stretch',
@@ -565,7 +565,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.colorWhite,
     paddingHorizontal: Padding.padding_12,
     height: 40,
-    fontSize: FontSize.fs_14,
+    fontSize: FontSize.fs_16,
     fontFamily: FontFamily.switzer,
   },
   dropdownContainer: {
@@ -588,7 +588,8 @@ const styles = StyleSheet.create({
     borderColor: '#eee',
   },
   dropdownText: {
-    fontSize: 13,
+    fontSize: 15,
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#444',
   },
   file: {
@@ -660,7 +661,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   selectMaster: {
-    fontSize: FontSize.fs_12,
+    fontSize: FontSize.fs_14,
     textAlign: 'left',
     fontFamily: FontFamily.switzer,
     color: COLORS.colorDarkslategray,

@@ -21,7 +21,7 @@ import {COLORS, IMAGES, FONTS, SIZE} from '@res';
 import LinearGradient from 'react-native-linear-gradient';
 import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
 import Geolocation from '@react-native-community/geolocation';
-import {Location, Common} from '@utils';
+import {Location, Common, ImageWatermark} from '@utils';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
 import {StoreDispatch} from '@reducers';
 import {URLs} from '@apis';
@@ -2229,11 +2229,23 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       quality: 0.7,
       saveToPhotos: false,
     };
-    launchCamera(options, response => {
+    launchCamera(options, async response => {
       if (response.didCancel || response.errorCode || !response.assets?.length)
         return;
       const uri = response.assets[0].uri;
-      if (uri) addImagesToItem(itemId, [uri]);
+      if (!uri) return;
+      try {
+        const watermarkedUri = await ImageWatermark.applyLocationWatermark(uri);
+        addImagesToItem(itemId, [watermarkedUri]);
+      } catch (error) {
+        Common.error('Unable to watermark route image:', error);
+        showRouteAlert({
+          title: 'Photo Not Added',
+          message:
+            'The location watermark could not be added. Please capture the photo again.',
+          tone: 'camera',
+        });
+      }
     });
   };
 
@@ -2271,13 +2283,25 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       maxHeight: 800,
       saveToPhotos: false,
     };
-    launchCamera(options, (response: ImagePickerResponse) => {
+    launchCamera(options, async (response: ImagePickerResponse) => {
       if (response.didCancel || response.errorCode || !response.assets?.length)
         return;
       const uri = response.assets[0]?.uri;
       if (uri) {
-        if (imageSlot === 1) setImage1(uri);
-        else setImage2(uri);
+        try {
+          const watermarkedUri =
+            await ImageWatermark.applyLocationWatermark(uri);
+          if (imageSlot === 1) setImage1(watermarkedUri);
+          else setImage2(watermarkedUri);
+        } catch (error) {
+          Common.error('Unable to watermark route master image:', error);
+          showRouteAlert({
+            title: 'Photo Not Added',
+            message:
+              'The location watermark could not be added. Please capture the photo again.',
+            tone: 'camera',
+          });
+        }
       }
     });
   };
@@ -3726,17 +3750,17 @@ const routeStyles = StyleSheet.create({
     gap: 8,
   },
   itemTitle: {
-    fontSize: 11,
+    fontSize: 14,
     color: COLORS.colorDarkslategray,
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.BOLD,
     fontWeight: FONTS.FONT_WEIGHT.MEDIUM,
     flex: 1,
   },
   itemAddress: {
-    fontSize: 10,
+    fontSize: 12,
     color: '#666',
-    fontFamily: FONTS.MEDIUM,
-    lineHeight: 14,
+    fontFamily: FONTS.SEMI_BOLD,
+    lineHeight: 16,
     marginTop: 4,
   },
   deleteMasterButton: {
@@ -3792,9 +3816,9 @@ const routeStyles = StyleSheet.create({
     tintColor: COLORS.colorMediumslateblue,
   },
   addImageText: {
-    fontSize: 10,
+    fontSize: 12,
     color: COLORS.colorMediumslateblue,
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.SEMI_BOLD,
     fontWeight: FONTS.FONT_WEIGHT.MEDIUM,
   },
   actionButtonsBox: {
@@ -4078,7 +4102,7 @@ const modalStyles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
   },
   headerText: {
-    fontSize: 16,
+    fontSize: 19,
     fontFamily: FONTS.BOLD,
     fontWeight: FONTS.FONT_WEIGHT.BOLD,
     color: COLORS.colorDarkslategray,
@@ -4110,7 +4134,7 @@ const modalStyles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: COLORS.colorMediumslateblue,
   },
-  checkboxLabel: {fontSize: 14, fontFamily: FONTS.MEDIUM, color: '#333'},
+  checkboxLabel: {fontSize: 16, fontFamily: FONTS.BOLD, color: '#333'},
   checkboxLabelSelected: {
     color: COLORS.colorMediumslateblue,
     fontWeight: FONTS.FONT_WEIGHT.BOLD,
@@ -4133,7 +4157,7 @@ const modalStyles = StyleSheet.create({
   actionButton: {flex: 1},
   gradientButton: {paddingVertical: 12, borderRadius: 25, alignItems: 'center'},
   buttonText: {
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: FONTS.BOLD,
     fontWeight: FONTS.FONT_WEIGHT.BOLD,
     color: COLORS.WHITE,

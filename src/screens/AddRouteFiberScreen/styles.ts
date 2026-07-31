@@ -7,6 +7,46 @@ export const MAP_HEIGHT = Math.min(
 );
 
 const styles = StyleSheet.create({
+  presentationRoot: {
+    flex: 1,
+  },
+  bottomSheetOverlay: {
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(20, 17, 30, 0.42)',
+  },
+  bottomSheetCard: {
+    flex: 0,
+    maxHeight: '86%',
+    borderTopLeftRadius: SIZE.MS(18),
+    borderTopRightRadius: SIZE.MS(18),
+    overflow: 'hidden',
+    backgroundColor: '#F5F6F8',
+  },
+  bottomSheetCardKeyboard: {
+    maxHeight: '96%',
+  },
+  bottomSheetHeader: {
+    alignItems: 'center',
+    paddingTop: SIZE.MVS(7),
+    paddingBottom: SIZE.MVS(11),
+  },
+  bottomSheetHandle: {
+    width: SIZE.MS(48),
+    height: SIZE.MVS(4),
+    borderRadius: SIZE.MS(2),
+    backgroundColor: '#737A82',
+    marginBottom: SIZE.MVS(10),
+  },
+  bottomSheetTitle: {
+    color: '#353A42',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(18),
+  },
+  bottomSheetFormArea: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 1,
+  },
   screen: {
     flex: 1,
     backgroundColor: '#F5F6F8',
@@ -85,8 +125,8 @@ const styles = StyleSheet.create({
   locationErrorText: {
     flex: 1,
     color: '#8F252D',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     lineHeight: SIZE.MVS(15),
   },
   retryButton: {
@@ -125,8 +165,8 @@ const styles = StyleSheet.create({
   addressText: {
     flex: 1,
     color: '#3C4148',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     lineHeight: SIZE.MVS(15),
   },
   refreshIcon: {
@@ -190,8 +230,8 @@ const styles = StyleSheet.create({
   },
   label: {
     color: '#474B51',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     lineHeight: SIZE.MVS(16),
     marginBottom: SIZE.MVS(4),
   },
@@ -219,8 +259,8 @@ const styles = StyleSheet.create({
   inputText: {
     flex: 1,
     color: '#41454B',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     paddingRight: SIZE.MS(5),
   },
   placeholderText: {
@@ -233,8 +273,8 @@ const styles = StyleSheet.create({
     flex: 1,
     height: '100%',
     color: '#41454B',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     paddingVertical: 0,
   },
   chevron: {
@@ -287,8 +327,8 @@ const styles = StyleSheet.create({
   },
   stockText: {
     color: '#52565B',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
   },
   lengthInputShell: {
     paddingRight: SIZE.MS(10),
@@ -297,15 +337,15 @@ const styles = StyleSheet.create({
     flex: 1,
     height: '100%',
     color: '#41454B',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     paddingVertical: 0,
     textAlign: 'right',
   },
   unitText: {
     color: '#62666B',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
     marginLeft: SIZE.MS(2),
   },
   footer: {
@@ -334,8 +374,8 @@ const styles = StyleSheet.create({
   },
   footerButtonText: {
     color: COLORS.WHITE,
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(14),
   },
   modalOverlay: {
     flex: 1,
@@ -371,8 +411,8 @@ const styles = StyleSheet.create({
   },
   routeTypeTitle: {
     color: '#292D32',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(18),
   },
   routeTypeOptionsCard: {
     marginHorizontal: SIZE.MS(10),
@@ -412,8 +452,8 @@ const styles = StyleSheet.create({
   routeTypeOptionText: {
     flex: 1,
     color: '#30343A',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(14),
   },
   routeTypeActions: {
     flexDirection: 'row',
@@ -434,8 +474,8 @@ const styles = StyleSheet.create({
   },
   routeTypeActionText: {
     color: COLORS.WHITE,
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(14),
   },
   sheetHandle: {
     width: SIZE.MS(40),
@@ -469,7 +509,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: COLORS.TEXT_DARKER,
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(15),
+    fontSize: SIZE.MS(18),
   },
   pickerCloseIcon: {
     width: SIZE.MS(18),
@@ -531,8 +571,8 @@ const styles = StyleSheet.create({
   },
   optionText: {
     color: '#45494F',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(15),
     lineHeight: SIZE.MVS(18),
   },
   optionTextSelected: {
@@ -541,8 +581,8 @@ const styles = StyleSheet.create({
   },
   optionMeta: {
     color: COLORS.TEXT_MEDIUM,
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
     marginTop: SIZE.MVS(2),
   },
   radioOuter: {

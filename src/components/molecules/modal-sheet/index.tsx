@@ -121,8 +121,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZE.MS(25),
   },
   title: {
-    fontSize: SIZE.MS(18),
-    fontFamily: FONTS.REGULAR,
+    fontSize: SIZE.MS(20),
+    fontFamily: FONTS.BOLD,
     textAlign: 'center',
     color: COLORS.colorDarkslategray,
   },
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
   },
   doneTitle: {
     fontFamily: FONTS.EXTRA_BOLD,
-    fontSize: SIZE.MS(16),
+    fontSize: SIZE.MS(17),
   },
   closeButtonView: {
     flex: 1,
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
     marginTop: SIZE.MS(15),
   },
   closeButtonTitle: {
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(16),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(17),
   },
 });

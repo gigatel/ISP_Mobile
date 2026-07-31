@@ -314,7 +314,10 @@ const SelectPausedRouteScreen: FC<Props> = ({navigation}) => {
     }
   };
 
-  const renderRouteCard = (route: PausedRouteSnapshot) => {
+  const renderRouteCard = (
+    route: PausedRouteSnapshot,
+    isCurrentLocationRoute: boolean,
+  ) => {
     const firstPoint = route.routePoints[0];
     const lastPoint = route.routePoints[route.routePoints.length - 1];
     const routeId =
@@ -330,8 +333,12 @@ const SelectPausedRouteScreen: FC<Props> = ({navigation}) => {
         activeOpacity={0.82}
         accessibilityRole="button"
         accessibilityLabel={`Resume ${route.routeName}`}
+        accessibilityState={{selected: isCurrentLocationRoute}}
         onPress={() => resumeRoute(route)}
-        style={styles.routeCard}>
+        style={[
+          styles.routeCard,
+          isCurrentLocationRoute && styles.currentRouteCard,
+        ]}>
         <View style={styles.cardTitleRow}>
           <Text numberOfLines={1} style={styles.routeName}>
             {route.routeName}
@@ -391,7 +398,7 @@ const SelectPausedRouteScreen: FC<Props> = ({navigation}) => {
             <PointerSvg width={SIZE.MS(25)} height={SIZE.MS(25)} />
           </View>
         ) : null}
-        {renderRouteCard(item.route)}
+        {renderRouteCard(item.route, item.isNearest)}
       </View>
     );
   };

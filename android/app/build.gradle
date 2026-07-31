@@ -104,7 +104,9 @@ android {
 }
     buildTypes {
         debug {
-            signingConfig signingConfigs.debug
+            // Physical devices already have the production-signed app.
+            // Use the same certificate so debug installs can update it in place.
+            signingConfig signingConfigs.release
         }
         release {
             signingConfig signingConfigs.release

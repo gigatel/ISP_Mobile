@@ -67,8 +67,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.WHITE,
   },
   dropdownValueText: {
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(14),
     color: COLORS.TEXT_DARK,
     flex: 1,
   },

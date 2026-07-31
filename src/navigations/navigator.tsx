@@ -54,6 +54,7 @@ import AllMasters from '@screens/allMasters';
 import AddMasterForm from '@screens/addMasterForm';
 import AddAirMasterOnSupport from '@screens/addAirMasterOnSupport';
 import SelectRouteMasterScreen from '@screens/SelectRouteMasterScreen';
+import RouteMasterHubScreen from '@screens/RouteMasterHubScreen';
 import MakeRouteScreen from '@screens/MakeRouteScreen';
 import SelectPausedRouteScreen from '@screens/SelectPausedRouteScreen';
 import SelectRouteToChangeFiberScreen from '@screens/SelectRouteToChangeFiberScreen';
@@ -72,6 +73,12 @@ export interface RootStackParamList {
         routeDraft?: Record<string, any>;
         returnToRouteBuilder?: boolean;
         routeInitialMasters?: any[];
+        returnToRouteHub?: boolean;
+        returnToFiberChange?: boolean;
+        fiberChangeRoute?: Record<string, any>;
+        fiberChangeSelectedFibers?: any[];
+        fiberChangeInstallationProgress?: PausedRouteSnapshot;
+        fiberChangeInstallationScope?: 'full' | 'partial' | 'withoutSld';
         currentPosition?: {
           latitude: number;
           longitude: number;
@@ -80,7 +87,7 @@ export interface RootStackParamList {
       }
     | undefined;
   'Add-Air-Master-On-Support': {
-    selectedMasterType: 'tiffin' | 'enclosure';
+    selectedMasterType: 'pop' | 'tiffin' | 'enclosure';
     selectedMasterLabel: string;
     supportMaster: any;
     supportKey: string;
@@ -112,6 +119,9 @@ export interface RootStackParamList {
         routeDraft?: Record<string, any>;
         returnToRouteBuilder?: boolean;
         routeExistingMasters?: any[];
+        routeHubMode?: boolean;
+        pendingMakeRoute?: RootStackParamList['Make-Route'];
+        pendingMakeRouteVersion?: string;
       }
     | undefined;
   'Select-Route-Master': {
@@ -134,6 +144,15 @@ export interface RootStackParamList {
   'Fiber-Change': {
     selectedRoute: Record<string, any>;
     selectedFibers: any[];
+    installationScope?: 'full' | 'partial' | 'withoutSld';
+    installationProgress?: PausedRouteSnapshot;
+    addedMaster?: any;
+    addedMasterKey?: string;
+    currentPosition?: {
+      latitude: number;
+      longitude: number;
+    };
+    currentAddress?: string;
   };
   'Make-Route': {
     routeName: string;
@@ -143,10 +162,14 @@ export interface RootStackParamList {
       longitude: number;
     };
     currentAddress: string;
-    selectedMaster: any;
-    selectedMasterVersion: string;
+    selectedMaster?: any;
+    selectedMasterVersion?: string;
     resumeSnapshot?: PausedRouteSnapshot;
     readOnly?: boolean;
+    fiberChangeMode?: 'full' | 'partial' | 'withoutSld';
+    fiberChangeRoute?: Record<string, any>;
+    fiberChangeSelectedFibers?: any[];
+    fiberChangeActiveMasterKey?: string;
   };
   PrivacyPolicy: undefined;
   Login: undefined;
@@ -154,7 +177,33 @@ export interface RootStackParamList {
   SearchCustomer: undefined;
   ProfileScreen: undefined;
   PitInstallation: undefined;
-  AddRouteFiberScreen: undefined;
+  AddRouteFiberScreen:
+    | {
+        routeType?: 'new-route';
+        asBottomSheet?: boolean;
+        currentPosition?: {
+          latitude: number;
+          longitude: number;
+        };
+        currentAddress?: string;
+        selectedMaster?: any;
+        selectedMasterVersion?: string;
+      }
+    | undefined;
+  'Route-Master-Hub':
+    | {
+        currentPosition?: {
+          latitude: number;
+          longitude: number;
+        };
+        currentAddress?: string;
+        initialMasters?: any[];
+        addedMaster?: any;
+        addedMasterKey?: string;
+        pendingMakeRoute?: RootStackParamList['Make-Route'];
+        pendingMakeRouteVersion?: string;
+      }
+    | undefined;
   AppModulesScreen: undefined;
   ChamberDetails: {
     chamberId: string;
@@ -297,7 +346,13 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
       <Stack.Screen
         name="AddRouteFiberScreen"
         component={AddRouteFiberScreen}
+        options={{
+          presentation: 'transparentModal',
+          animation: 'none',
+          contentStyle: {backgroundColor: 'transparent'},
+        }}
       />
+      <Stack.Screen name="Route-Master-Hub" component={RouteMasterHubScreen} />
       <Stack.Screen name="SearchCustomer" component={SearchCustomer} />
       <Stack.Screen name="RoadProject" component={RoadProjectSurvey} />
       <Stack.Screen name="DistanceCovered" component={DistanceCovered} />

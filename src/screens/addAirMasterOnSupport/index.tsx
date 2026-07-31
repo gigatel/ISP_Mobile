@@ -39,9 +39,13 @@ import {
   GetNearestPoleTreeDDAPI,
   UpdateMasterAPI,
 } from '@slices/route.slice';
-import {Common} from '@utils';
+import {Common, ImageWatermark} from '@utils';
 import {URLs} from '@apis';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
+import {
+  isFreeAirPlacedMaster,
+  saveRecentlyAddedMaster,
+} from '../../services/airPlacedMasterStorage';
 
 type Props = NativeStackScreenProps<
   RootStackParamList,
@@ -193,6 +197,13 @@ const getType = (master: any) =>
       master?.type ??
       master?.Type,
   ) || 'Master';
+
+const getAirPlacementSupport = (master: any, fallback: string) =>
+  cleanText(
+    master?.extra2 ??
+      master?.Extra2 ??
+      valueByKeys(master, ['extra2', 'placement', 'placedAt']),
+  ).replace(/^on\s+/i, '') || fallback;
 
 const getAddress = (master: any) =>
   cleanText(
@@ -412,6 +423,9 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
           }),
         ).unwrap();
         const exactMatches = getList(response).filter(master => {
+          if (isFreeAirPlacedMaster(master)) {
+            return false;
+          }
           const coordinate = getCoordinate(master);
           return (
             !!coordinate &&
@@ -437,7 +451,6 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
         });
       } catch (error) {
         console.warn('[AddAirMaster] Existing masters fetch failed:', error);
-        setExistingMasters([]);
       } finally {
         setIsLoadingExisting(false);
       }
@@ -488,13 +501,23 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       maxHeight: 800,
       saveToPhotos: false,
     };
-    launchCamera(options, (response: ImagePickerResponse) => {
+    launchCamera(options, async (response: ImagePickerResponse) => {
       const uri = response.assets?.[0]?.uri;
       if (!response.didCancel && !response.errorCode && uri) {
-        if (slot === 1) {
-          setImage1(uri);
-        } else {
-          setImage2(uri);
+        try {
+          const watermarkedUri =
+            await ImageWatermark.applyLocationWatermark(uri);
+          if (slot === 1) {
+            setImage1(watermarkedUri);
+          } else {
+            setImage2(watermarkedUri);
+          }
+        } catch (error) {
+          Common.error('Unable to watermark support image:', error);
+          Alert.alert(
+            'Photo Not Added',
+            'The location watermark could not be added. Please capture the photo again.',
+          );
         }
       }
     });
@@ -525,6 +548,17 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
   };
 
   const submit = async () => {
+    if (
+      selectedMasterType === 'pop' &&
+      supportType.toLowerCase() !== 'building'
+    ) {
+      Alert.alert(
+        'Building Required',
+        'POP can only be placed on a Building.',
+      );
+      return;
+    }
+
     if (!supportCoordinate) {
       Alert.alert('Lat/Lng', `${supportType} Lat/Lng is not available.`);
       return;
@@ -592,9 +626,21 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
     try {
       setIsSubmitting(true);
       const savedMaster = await dispatch(UpdateMasterAPI(payload)).unwrap();
+      const savedMasterData =
+        savedMaster?.data && typeof savedMaster.data === 'object'
+          ? savedMaster.data
+          : savedMaster;
+      const savedMasterId = Number(
+        savedMasterData?.id ??
+          savedMasterData?.Id ??
+          (typeof savedMasterData === 'number' ? savedMasterData : undefined),
+      );
       const addedMaster = {
-        ...(savedMaster && typeof savedMaster === 'object' ? savedMaster : {}),
-        id: savedMaster?.id ?? savedMaster?.Id ?? 0,
+        ...(savedMasterData && typeof savedMasterData === 'object'
+          ? savedMasterData
+          : {}),
+        id: Number.isFinite(savedMasterId) ? savedMasterId : 0,
+        masterId: Number.isFinite(savedMasterId) ? savedMasterId : 0,
         name: masterName,
         masterType: selectedMasterType,
         MasterType: selectedMasterLabel,
@@ -606,11 +652,13 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
         isActive: true,
         extra1: remarks.trim(),
         extra2: `On ${supportType}`,
+        placementMode: 'support',
         image1,
         image2,
         Image1: image1,
         Image2: image2,
       };
+      saveRecentlyAddedMaster(addedMaster);
       const knownCount = getKnownCount(supportDetails, selectedMasterType);
       const updatedCount = Math.max(knownCount, existingMasters.length) + 1;
       Common.showToast(`${selectedMasterLabel} added on ${supportType}!`);
@@ -681,6 +729,7 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
+      keyboardAvoidingEnabled={Platform.OS === 'ios'}
       statusBgColor="#F3F6FA"
       statusBarStyle="dark">
       <StatusBar barStyle="dark-content" backgroundColor="#F3F6FA" />
@@ -772,6 +821,10 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
           {!isLoadingExisting
             ? existingMasters.map((master, index) => {
                 const images = getImages(master);
+                const placementSupport = getAirPlacementSupport(
+                  master,
+                  supportType,
+                );
                 return (
                   <View
                     key={`${getId(master) || getName(master)}-${index}`}
@@ -783,10 +836,11 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
                       </Text>
                       {renderStatus(master)}
                     </View>
-                    <Text style={styles.detailText}>
-                      <Text style={styles.detailLabel}>Placed At: </Text>On{' '}
-                      {supportType}
-                    </Text>
+                    <View style={styles.airPlacementBadge}>
+                      <Text style={styles.airPlacementText}>
+                        {selectedMasterLabel} placed on {placementSupport}
+                      </Text>
+                    </View>
                     <View style={styles.existingFooter}>
                       <Text style={styles.detailText}>
                         <Text style={styles.detailLabel}>Lat/Lng: </Text>
@@ -978,6 +1032,19 @@ const styles = StyleSheet.create({
     color: '#343943',
   },
   detailLabel: {fontFamily: FONTS.BOLD},
+  airPlacementBadge: {
+    alignSelf: 'flex-start',
+    marginTop: SIZE.MS(5),
+    borderRadius: SIZE.MS(10),
+    backgroundColor: '#F2ECFF',
+    paddingHorizontal: SIZE.MS(7),
+    paddingVertical: SIZE.MS(3),
+  },
+  airPlacementText: {
+    fontSize: SIZE.MS(8),
+    fontFamily: FONTS.SEMI_BOLD,
+    color: '#7040DF',
+  },
   imagesLabel: {
     marginTop: SIZE.MS(5),
     marginBottom: SIZE.MS(4),

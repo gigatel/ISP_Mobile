@@ -88,9 +88,9 @@ const BASE_STYLE: ViewStyle = {
   alignItems: 'center',
 };
 const BASE_TEXT_STYLE: TextStyle = {
-  fontSize: SIZE.MVS(15),
-  fontFamily: FONTS.MEDIUM,
-  fontWeight: FONTS.FONT_WEIGHT.MEDIUM,
+  fontSize: SIZE.MVS(16),
+  fontFamily: FONTS.BOLD,
+  fontWeight: FONTS.FONT_WEIGHT.BOLD,
 };
 
 const viewStyles: ViewStyles = {

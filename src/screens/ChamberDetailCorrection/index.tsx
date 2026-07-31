@@ -1390,8 +1390,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e2e8f0',
   },
   pickerTitle: {
-    fontSize: 16,
-    fontFamily: FONTS.MEDIUM,
+    fontSize: 19,
+    fontFamily: FONTS.BOLD,
     color: '#393d45',
   },
   pickerCloseButton: {
@@ -1425,8 +1425,8 @@ const styles = StyleSheet.create({
     paddingVertical: SIZE.MS(10),
   },
   pickerOptionText: {
-    fontSize: 16,
-    fontFamily: FONTS.MEDIUM,
+    fontSize: 17,
+    fontFamily: FONTS.BOLD,
     color: '#393d45',
     textAlign: 'center',
   },

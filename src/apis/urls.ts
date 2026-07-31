@@ -77,10 +77,19 @@ export const InsertUPdateInitialInfoAPI =
   BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteInitialInfo';
 export const InsertUpdateRouteChamberMapping =
   BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteChamberMapping';
+export const InsertUpdateRouteFiberMappingByRoute =
+  BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteFiberMappingByRoute';
 export const UpadteChamberPathDetails =
   BASE_URL_2 + 'RouteMasterMob/UpdateRoutePathDetails';
 export const getRouteDetailsPaggi =
-  'http://10.100.2.38:6101/api/RouteMasterMob/GetRouteDetailsPaggi';
+  BASE_URL_2 + 'RouteMasterMob/GetRouteDetailsPaggi';
+export const getRouteFiberMappingPaggiISP =
+  BASE_URL_2 + 'RouteFiberMapping/GetRouteFiberMappingPaggiISP';
+export const getRouteFiberAllDataBySLDIdISP =
+  BASE_URL_2 + 'RouteFiberMapping/GetRouteFiberAllDataBySLDIdISP';
+// Temporary contract until the final SLD fiber-install endpoint is published.
+export const installFiberBySLDTemp =
+  BASE_URL_2 + 'RouteMasterMob/UpdateRouteChamberMappingImages';
 //
 export const postLocationAPI = BASE_URL_3 + 'Location/PostLocation';
 export const UpdateMobileLocation =

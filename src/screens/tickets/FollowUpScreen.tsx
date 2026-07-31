@@ -31,7 +31,7 @@ import {
 } from 'react-native-image-picker';
 import {RootStackParamList} from '@navigation/navigator';
 import {COLORS, SIZE} from '@res';
-import {Common} from '@utils';
+import {Common, ImageWatermark} from '@utils';
 import {ticketService} from '../../services/ticketService';
 /* ───────────── Types ───────────── */
 type Nav = NativeStackNavigationProp<RootStackParamList, 'FollowUpScreen'>;
@@ -510,7 +510,32 @@ export default function FollowUpScreen() {
     };
 
     setTimeout(() => {
-      launchCamera(options, handleImageResponse);
+      launchCamera(options, async response => {
+        if (
+          response.didCancel ||
+          response.errorCode ||
+          !response.assets?.[0]?.uri
+        ) {
+          handleImageResponse(response);
+          return;
+        }
+
+        try {
+          const asset = response.assets[0];
+          const watermarkedUri =
+            await ImageWatermark.applyLocationWatermark(asset.uri!);
+          handleImageResponse({
+            ...response,
+            assets: [{...asset, uri: watermarkedUri, base64: undefined}],
+          });
+        } catch (error) {
+          Common.error('Unable to watermark ticket image:', error);
+          Alert.alert(
+            'Photo Not Added',
+            'The location watermark could not be added. Please capture the photo again.',
+          );
+        }
+      });
     }, 300);
   }, [handleImageResponse]);
 

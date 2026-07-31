@@ -79,8 +79,8 @@ const BASE_STYLE: ViewStyle = {
   alignItems: 'center',
 };
 const BASE_TEXT_STYLE: TextStyle = {
-  fontSize: SIZE.MVS(15),
-  fontFamily: FONTS.MEDIUM,
+  fontSize: SIZE.MVS(16),
+  fontFamily: FONTS.BOLD,
 };
 
 const viewStyles: ViewStyles = {

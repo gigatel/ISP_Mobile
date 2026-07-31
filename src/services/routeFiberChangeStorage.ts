@@ -11,6 +11,20 @@ export type StoredRouteFiberSelection = {
   drumLabel: string;
   drumLength: number;
   lengthToUse: number;
+  totalDistance?: number;
+  sldId?: number;
+  sldCode?: string;
+  fiberCode?: string;
+  totalDrumLength?: number;
+  remainingDrumLength?: number;
+  masterCount?: number;
+  changeScope?: 'Full' | 'Partial';
+  fromOrderNo?: number;
+  toOrderNo?: number;
+  fromMasterName?: string;
+  toMasterName?: string;
+  fromAddress?: string;
+  toAddress?: string;
   addedAt: number;
 };
 

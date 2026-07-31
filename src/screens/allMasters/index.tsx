@@ -11,10 +11,11 @@ import {
   Alert,
   Image,
   ImageSourcePropType,
-  Keyboard,
+  LayoutChangeEvent,
   Linking,
   Modal,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -28,12 +29,10 @@ import LinearGradient from 'react-native-linear-gradient';
 import MapView, {
   Callout,
   Marker,
-  Polyline,
   PROVIDER_GOOGLE,
   Region,
 } from 'react-native-maps';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
-import {useFocusEffect} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useDispatch} from 'react-redux';
 import {Screen} from '@organisms';
@@ -46,7 +45,14 @@ import {URLs} from '@apis';
 import PointerSvg from '../../res/images/pointer.svg';
 import PolygonSvg from '../../res/images/Polygon.svg';
 import VectorSvg from '../../res/images/Vector.svg';
+import BurgerSvg from '../../res/images/burger.svg';
 import type {RootStackParamList} from '@navigation/navigator';
+import {
+  isFreeAirPlacedMaster,
+  loadFreeAirPlacedMasters,
+  loadRecentlyAddedMasters,
+  loadStandalonePlacedMasters,
+} from '../../services/airPlacedMasterStorage';
 
 type AllMastersProps = NativeStackScreenProps<
   RootStackParamList,
@@ -54,6 +60,13 @@ type AllMastersProps = NativeStackScreenProps<
 >;
 
 type TabKey = 'list' | 'map';
+type MapDisplayType = 'standard' | 'satellite' | 'threeDimensional';
+
+const MAP_DISPLAY_OPTIONS: {type: MapDisplayType; label: string}[] = [
+  {type: 'standard', label: 'Standard'},
+  {type: 'satellite', label: 'Satellite'},
+  {type: 'threeDimensional', label: '3D'},
+];
 
 type Coordinate = {
   latitude: number;
@@ -77,6 +90,12 @@ type CurrentLocationPlacement = {
   nearestIndex: number;
   nearestDistance: number;
   isAtMaster: boolean;
+};
+
+type LocalAttachedMasterEntry = {
+  supportKey: string;
+  supportCoordinate: Coordinate | null;
+  masters: any[];
 };
 
 type RouteAlertTone =
@@ -117,6 +136,7 @@ const DEFAULT_DELHI_REGION: Region = {
   latitudeDelta: 0.04,
   longitudeDelta: 0.04,
 };
+const SATELLITE_DETAIL_DELTA = 0.004;
 
 const DEFAULT_SEARCH_RANGE = 200;
 const MIN_SEARCH_RANGE = 100;
@@ -140,12 +160,26 @@ const MASTER_TYPES: MasterType[] = [
   {label: 'Enclosure', value: 'enclosure', icon: IMAGES.jointEnclosure},
 ];
 
+const MAP_FILTER_MASTER_TYPES = MASTER_TYPES.filter(
+  type => type.value !== 'splitter',
+);
+
 const AIR_PLACED_MASTER_TYPES = new Set(['pop', 'tiffin', 'enclosure']);
-const SUPPORT_DETAIL_MASTER_TYPES = new Set(['tiffin', 'enclosure']);
-const CLICKABLE_AIR_SUPPORT_TYPES = new Set(['pole', 'tree']);
+const FREE_AIR_MASTER_TYPES = new Set(['tiffin', 'enclosure']);
+const SUPPORT_DETAIL_MASTER_TYPES = new Set(['pop', 'tiffin', 'enclosure']);
+// Tiffin and Enclosure can be attached to every support offered in the
+// "Where to add" selector. Keep this aligned with AIR_SUPPORT_TYPES so a
+// submitted Building result is clickable and displays its attached count just
+// like Pole and Tree.
+const CLICKABLE_AIR_SUPPORT_TYPES = new Set(['pole', 'tree', 'building']);
 const AIR_SUPPORT_TYPES = MASTER_TYPES.filter(type =>
   ['pole', 'tree', 'building'].includes(type.value),
 );
+
+const getAllowedAirSupportTypes = (masterType: string) =>
+  masterType === 'pop'
+    ? AIR_SUPPORT_TYPES.filter(type => type.value === 'building')
+    : AIR_SUPPORT_TYPES;
 
 const getRouteAlertVisual = (tone: RouteAlertTone = 'info') => {
   switch (tone) {
@@ -546,15 +580,30 @@ const getMasterTypeLabel = (master: MasterItem) =>
 const isSameMasterRecord = (first: any, second: any) => {
   const firstId = getMasterId(first);
   const secondId = getMasterId(second);
-  if (firstId && secondId) {
-    return firstId === secondId;
-  }
-
+  const firstType = getMasterTypeValue(first);
+  const secondType = getMasterTypeValue(second);
+  const sameType = !firstType || !secondType || firstType === secondType;
+  const sameName =
+    asCleanText(getMasterName(first)).toLowerCase() ===
+    asCleanText(getMasterName(second)).toLowerCase();
   const coordinateDistance = getDistanceMeters(
     getMasterCoordinate(first),
     getMasterCoordinate(second),
   );
-  return coordinateDistance !== null && coordinateDistance <= 1;
+  const sameLocation =
+    coordinateDistance !== null && coordinateDistance <= 1;
+
+  if (
+    firstId &&
+    secondId &&
+    firstId !== '0' &&
+    secondId !== '0' &&
+    firstId === secondId
+  ) {
+    return sameType && (sameName || sameLocation);
+  }
+
+  return sameType && sameName && sameLocation;
 };
 
 const isMasterAlreadyInRoute = (master: any, existingMasters: any[]) =>
@@ -838,6 +887,42 @@ const getAttachedMasterCount = (master: any, masterType: string) => {
   return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0;
 };
 
+const mergeUniqueAttachedMasters = (...groups: any[][]) =>
+  groups.flat().filter((master, index, list) => {
+    const masterId = getMasterId(master);
+    const masterName = asCleanText(getMasterName(master)).toLowerCase();
+    const masterType = getMasterTypeValue(master);
+    const masterCoordinate = getMasterCoordinate(master);
+
+    return (
+      list.findIndex(item => {
+        const itemId = getMasterId(item);
+        const itemName = asCleanText(getMasterName(item)).toLowerCase();
+        const itemType = getMasterTypeValue(item);
+        const itemCoordinate = getMasterCoordinate(item);
+        const sameServerId =
+          masterId &&
+          itemId &&
+          masterId !== '0' &&
+          itemId !== '0' &&
+          masterId === itemId;
+        const coordinateDistance = getDistanceMeters(
+          masterCoordinate,
+          itemCoordinate,
+        );
+        const sameNameAndLocation =
+          masterName === itemName &&
+          coordinateDistance !== null &&
+          coordinateDistance <= 1;
+
+        return (
+          (!masterType || !itemType || masterType === itemType) &&
+          (sameServerId || sameNameAndLocation)
+        );
+      }) === index
+    );
+  });
+
 const addAttachedMastersToSupports = (
   supports: MasterItem[],
   attachedMasters: any[],
@@ -850,6 +935,9 @@ const addAttachedMastersToSupports = (
     }
 
     const matchingMasters = attachedMasters.filter(master => {
+      if (isFreeAirPlacedMaster(master)) {
+        return false;
+      }
       const coordinate = getMasterCoordinate(master);
       const distance = getDistanceMeters(supportCoordinate, coordinate);
 
@@ -858,17 +946,67 @@ const addAttachedMastersToSupports = (
         (distance as number) <= ATTACHED_MASTER_MATCH_THRESHOLD_METERS
       );
     });
-    const uniqueMatchingMasters = matchingMasters.filter(
-      (master, index, list) =>
-        list.findIndex(
-          item => getMasterUniqueKey(item) === getMasterUniqueKey(master),
-        ) === index,
+    const uniqueMatchingMasters = mergeUniqueAttachedMasters(
+      Array.isArray(support.__attachedAirMasters)
+        ? support.__attachedAirMasters
+        : [],
+      matchingMasters,
     );
 
     return {
       ...support,
-      __airMasterCount: uniqueMatchingMasters.length,
+      __airMasterCount: Math.max(
+        getAttachedMasterCount(support, masterType),
+        uniqueMatchingMasters.length,
+      ),
       __attachedAirMasters: uniqueMatchingMasters,
+      __attachedAirMasterType: masterType,
+    };
+  });
+
+const mergeLocalAttachedMastersIntoSupports = (
+  supports: MasterItem[],
+  localEntries: LocalAttachedMasterEntry[],
+  masterType: string,
+) =>
+  supports.map(support => {
+    const supportKey = getMasterUniqueKey(support);
+    const supportCoordinate = getMasterCoordinate(support);
+    const matchingLocalMasters = localEntries
+      .filter(entry => {
+        if (entry.supportKey === supportKey) {
+          return true;
+        }
+
+        const distance = getDistanceMeters(
+          entry.supportCoordinate,
+          supportCoordinate,
+        );
+        return (
+          distance !== null &&
+          distance <= ATTACHED_MASTER_MATCH_THRESHOLD_METERS
+        );
+      })
+      .flatMap(entry => entry.masters);
+
+    if (matchingLocalMasters.length === 0) {
+      return support;
+    }
+
+    const attachedMasters = mergeUniqueAttachedMasters(
+      matchingLocalMasters,
+      Array.isArray(support.__attachedAirMasters)
+        ? support.__attachedAirMasters
+        : [],
+    );
+
+    return {
+      ...support,
+      __airMasterCount: Math.max(
+        getAttachedMasterCount(support, masterType),
+        attachedMasters.length,
+      ),
+      __attachedAirMasters: attachedMasters,
       __attachedAirMasterType: masterType,
     };
   });
@@ -896,6 +1034,52 @@ const insertMasterNearCoordinate = (
   nextList.splice(placement.insertAfterIndex + 1, 0, masterToInsert);
   return nextList;
 };
+
+const mergeFreeAirMastersIntoList = (
+  list: MasterItem[],
+  freeAirMasters: any[],
+  masterType: string,
+  center: Coordinate,
+  range: number,
+) =>
+  decorateMasters(
+    freeAirMasters.filter(master => {
+      const distance = getDistanceMeters(center, getMasterCoordinate(master));
+      return (
+        isFreeAirPlacedMaster(master) &&
+        getMasterTypeValue(master) === masterType &&
+        distance !== null &&
+        distance <= range
+      );
+    }),
+    masterType,
+  ).reduce(
+    (nextList, master) => insertMasterNearCoordinate(nextList, master),
+    list,
+  );
+
+const mergeRecentlyAddedMastersIntoList = (
+  list: MasterItem[],
+  recentMasters: any[],
+  masterTypes: string[],
+  center: Coordinate,
+  range: number,
+) =>
+  decorateMasters(
+    recentMasters.filter(master => {
+      const distance = getDistanceMeters(center, getMasterCoordinate(master));
+      return (
+        masterTypes.includes(getMasterTypeValue(master)) &&
+        distance !== null &&
+        distance <= range
+      );
+    }),
+  ).reduce((nextList, master) => {
+    const merged = mergeUniqueAttachedMasters(nextList, [master]);
+    return merged.length === nextList.length
+      ? nextList
+      : insertMasterNearCoordinate(nextList, master);
+  }, list);
 
 const getMasterAddress = (master: any) =>
   [
@@ -957,10 +1141,22 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
   const dispatch = useDispatch<StoreDispatch>();
   const mapRef = useRef<MapView | null>(null);
+  const listScrollRef = useRef<ScrollView | null>(null);
+  const currentLocationRowYRef = useRef(0);
+  const pendingLocationScrollRef = useRef(false);
   const didInitialLoadRef = useRef(false);
   const lastAddedMasterKeyRef = useRef<string | null>(null);
   const lastUpdatedSupportVersionRef = useRef<string | null>(null);
+  const lastPendingMakeRouteVersionRef = useRef<string | null>(null);
   const buildingMastersRef = useRef<any[]>([]);
+  const localAttachedMastersRef = useRef<LocalAttachedMasterEntry[]>([]);
+  const localFreeAirMastersRef = useRef<any[]>(loadFreeAirPlacedMasters());
+  const localStandaloneMastersRef = useRef<any[]>(
+    loadStandalonePlacedMasters(),
+  );
+  const localRecentlyAddedMastersRef = useRef<any[]>(
+    loadRecentlyAddedMasters(),
+  );
   const initialSelectedMasterType = asCleanText(
     route.params?.selectedMasterType,
   ).toLowerCase();
@@ -972,14 +1168,19 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     route.params?.initialMasters,
   );
   const initialCurrentAddress = asCleanText(route.params?.currentAddress);
-  const isRouteSelectionMode = Boolean(route.params?.routeSelectionMode);
+  const isRouteHubMode = Boolean(route.params?.routeHubMode);
+  const isRouteSelectionMode =
+    Boolean(route.params?.routeSelectionMode) || isRouteHubMode;
   const routeDisplayName =
     asCleanText(route.params?.routeName) || 'Unnamed Route';
   const isAirPlacementFlow = AIR_PLACED_MASTER_TYPES.has(
     initialSelectedMasterType,
   );
+  const isPopPlacementFlow = initialSelectedMasterType === 'pop';
 
   const [activeTab, setActiveTab] = useState<TabKey>('list');
+  const [mapDisplayType, setMapDisplayType] =
+    useState<MapDisplayType>('standard');
   const [masters, setMasters] = useState<MasterItem[]>(() =>
     isAirPlacementFlow
       ? []
@@ -990,8 +1191,12 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       ? [initialSelectedMasterType]
       : [],
   );
-  const [selectedAirSupportType, setSelectedAirSupportType] = useState('');
+  const [selectedAirSupportType, setSelectedAirSupportType] = useState(
+    isPopPlacementFlow ? 'building' : '',
+  );
   const [showAirSupportDropdown, setShowAirSupportDropdown] = useState(false);
+  const [isMasterFilterVisible, setIsMasterFilterVisible] = useState(false);
+  const [pendingMapMasterType, setPendingMapMasterType] = useState('pole');
   const [hasLoadedAirSupports, setHasLoadedAirSupports] = useState(false);
   const [searchRange, setSearchRange] = useState(DEFAULT_SEARCH_RANGE);
   const [isLoading, setIsLoading] = useState(false);
@@ -1005,6 +1210,10 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const [currentAddress, setCurrentAddress] = useState(initialCurrentAddress);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasAddedCurrentLocation, setHasAddedCurrentLocation] = useState(false);
+  const [isRouteTypeSheetVisible, setIsRouteTypeSheetVisible] = useState(false);
+  const [pendingRouteType, setPendingRouteType] = useState<
+    'new-route' | 'change-fiber' | 'paused-route' | null
+  >(null);
   const [routeAlert, setRouteAlert] = useState<RouteAlertState>(() => {
     const visual = getRouteAlertVisual('info');
     return {
@@ -1071,14 +1280,6 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     [closeRouteAlert],
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      if (isRouteSelectionMode) {
-        Keyboard.dismiss();
-      }
-    }, [isRouteSelectionMode]),
-  );
-
   useEffect(() => {
     const nextSelectedMasterType = asCleanText(
       route.params?.selectedMasterType,
@@ -1100,7 +1301,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       !route.params?.updatedSupportKey
     ) {
       setSelectedMasterTypes([]);
-      setSelectedAirSupportType('');
+      setSelectedAirSupportType(
+        nextSelectedMasterType === 'pop' ? 'building' : '',
+      );
       setShowAirSupportDropdown(false);
       setHasLoadedAirSupports(false);
     }
@@ -1121,6 +1324,30 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   }, [route.params]);
 
   useEffect(() => {
+    const pendingMakeRoute = route.params?.pendingMakeRoute;
+    const pendingVersion = asCleanText(
+      route.params?.pendingMakeRouteVersion,
+    );
+
+    if (
+      !pendingMakeRoute ||
+      !pendingVersion ||
+      lastPendingMakeRouteVersionRef.current === pendingVersion
+    ) {
+      return;
+    }
+
+    lastPendingMakeRouteVersionRef.current = pendingVersion;
+    requestAnimationFrame(() => {
+      navigation.navigate('Make-Route', pendingMakeRoute);
+    });
+  }, [
+    navigation,
+    route.params?.pendingMakeRoute,
+    route.params?.pendingMakeRouteVersion,
+  ]);
+
+  useEffect(() => {
     const addedMaster = route.params?.addedMaster;
     const addedMasterKey = asCleanText(route.params?.addedMasterKey);
 
@@ -1137,6 +1364,23 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       getMasterTypeValue(addedMaster) ||
       asCleanText(route.params?.selectedMasterType);
     const [decoratedMaster] = decorateMasters([addedMaster], fallbackType);
+
+    if (isFreeAirPlacedMaster(addedMaster)) {
+      localFreeAirMastersRef.current = mergeUniqueAttachedMasters(
+        localFreeAirMastersRef.current,
+        [addedMaster],
+      );
+    }
+    localRecentlyAddedMastersRef.current = mergeUniqueAttachedMasters(
+      localRecentlyAddedMastersRef.current,
+      [addedMaster],
+    );
+    if (['pole', 'tree', 'building'].includes(getMasterTypeValue(addedMaster))) {
+      localStandaloneMastersRef.current = mergeUniqueAttachedMasters(
+        localStandaloneMastersRef.current,
+        [addedMaster],
+      );
+    }
 
     setMasters(prev => insertMasterNearCoordinate(prev, decoratedMaster));
   }, [
@@ -1161,6 +1405,31 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     }
 
     lastUpdatedSupportVersionRef.current = version;
+    if (addedMaster) {
+      const support = masters.find(
+        master => getMasterUniqueKey(master) === supportKey,
+      );
+      const existingEntry = localAttachedMastersRef.current.find(
+        entry => entry.supportKey === supportKey,
+      );
+      const nextMasters = mergeUniqueAttachedMasters(
+        existingEntry?.masters ?? [],
+        [addedMaster],
+      );
+
+      if (existingEntry) {
+        existingEntry.masters = nextMasters;
+        existingEntry.supportCoordinate =
+          existingEntry.supportCoordinate ?? getMasterCoordinate(support);
+      } else {
+        localAttachedMastersRef.current.push({
+          supportKey,
+          supportCoordinate: getMasterCoordinate(support),
+          masters: nextMasters,
+        });
+      }
+    }
+
     setMasters(previous =>
       previous.map(master =>
         getMasterUniqueKey(master) === supportKey
@@ -1168,12 +1437,12 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               ...master,
               __airMasterCount: Math.max(0, Math.floor(count)),
               __attachedAirMasters: addedMaster
-                ? [
-                    ...(Array.isArray(master?.__attachedAirMasters)
+                ? mergeUniqueAttachedMasters(
+                    Array.isArray(master?.__attachedAirMasters)
                       ? master.__attachedAirMasters
-                      : []),
-                    addedMaster,
-                  ]
+                      : [],
+                    [addedMaster],
+                  )
                 : master?.__attachedAirMasters,
             }
           : master,
@@ -1184,6 +1453,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     route.params?.updatedSupportCount,
     route.params?.updatedSupportKey,
     route.params?.updatedSupportVersion,
+    masters,
   ]);
 
   const readCurrentLocation = useCallback(
@@ -1248,12 +1518,14 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       position = currentPosition,
       refreshLocation = false,
       range = searchRange,
+      strictMasterTypeFilter = false,
     }: {
       refreshing?: boolean;
       masterTypes?: string[];
       position?: Coordinate | null;
       refreshLocation?: boolean;
       range?: number;
+      strictMasterTypeFilter?: boolean;
     } = {}) => {
       if (refreshing) {
         setIsRefreshing(true);
@@ -1298,6 +1570,16 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           getMasterListFromResponse(response),
           cleanMasterTypes.length === 1 ? cleanMasterTypes[0] : null,
         );
+        const storedRecentlyAddedMasters = loadRecentlyAddedMasters();
+        const storedStandaloneMasters = loadStandalonePlacedMasters();
+        localRecentlyAddedMastersRef.current = mergeUniqueAttachedMasters(
+          localRecentlyAddedMastersRef.current,
+          storedRecentlyAddedMasters,
+        );
+        localStandaloneMastersRef.current = mergeUniqueAttachedMasters(
+          localStandaloneMastersRef.current,
+          storedStandaloneMasters,
+        );
 
         if (isAirPlacementFlow && initialSelectedMasterType) {
           try {
@@ -1321,7 +1603,51 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               error,
             );
           }
+
+          nextMasters = mergeLocalAttachedMastersIntoSupports(
+            nextMasters,
+            localAttachedMastersRef.current,
+            initialSelectedMasterType,
+          );
+
+          nextMasters = addAttachedMastersToSupports(
+            nextMasters,
+            localRecentlyAddedMastersRef.current.filter(
+              master =>
+                getMasterTypeValue(master) === initialSelectedMasterType &&
+                !isFreeAirPlacedMaster(master),
+            ),
+            initialSelectedMasterType,
+          );
+
+          if (
+            !strictMasterTypeFilter &&
+            FREE_AIR_MASTER_TYPES.has(initialSelectedMasterType)
+          ) {
+            nextMasters = mergeFreeAirMastersIntoList(
+              nextMasters,
+              localFreeAirMastersRef.current,
+              initialSelectedMasterType,
+              locationToUse,
+              range,
+            );
+          }
         }
+
+        nextMasters = mergeRecentlyAddedMastersIntoList(
+          nextMasters,
+          localRecentlyAddedMastersRef.current,
+          cleanMasterTypes,
+          locationToUse,
+          range,
+        );
+        nextMasters = mergeRecentlyAddedMastersIntoList(
+          nextMasters,
+          localStandaloneMastersRef.current,
+          cleanMasterTypes,
+          locationToUse,
+          range,
+        );
 
         setMasters(nextMasters);
       } catch (error: any) {
@@ -1330,7 +1656,6 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           message: error?.message || 'Unable to load nearest masters.',
           tone: 'error',
         });
-        setMasters([]);
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -1371,13 +1696,55 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     [currentPosition, filteredMasters],
   );
 
-  const routeCoordinates = useMemo(
-    () =>
-      [
-        currentPosition,
-        ...filteredMasters.map(getMasterCoordinate).filter(isValidCoordinate),
-      ].filter(isValidCoordinate),
-    [currentPosition, filteredMasters],
+  const handleMapDisplayTypeChange = useCallback(
+    (type: MapDisplayType) => {
+      setMapDisplayType(type);
+
+      requestAnimationFrame(() => {
+        if (type === 'threeDimensional') {
+          mapRef.current?.animateCamera(
+            {
+              center: {
+                latitude: mapRegion.latitude,
+                longitude: mapRegion.longitude,
+              },
+              pitch: 60,
+              heading: 0,
+              zoom: 18,
+              altitude: 350,
+            },
+            {duration: 650},
+          );
+          return;
+        }
+
+        mapRef.current?.animateCamera(
+          {
+            pitch: 0,
+            heading: 0,
+          },
+          {duration: 350},
+        );
+
+        if (type === 'satellite') {
+          mapRef.current?.animateToRegion(
+            {
+              ...mapRegion,
+              latitudeDelta: Math.min(
+                mapRegion.latitudeDelta,
+                SATELLITE_DETAIL_DELTA,
+              ),
+              longitudeDelta: Math.min(
+                mapRegion.longitudeDelta,
+                SATELLITE_DETAIL_DELTA,
+              ),
+            },
+            450,
+          );
+        }
+      });
+    },
+    [mapRegion],
   );
 
   const currentLocationPlacement = useMemo(
@@ -1387,6 +1754,13 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
   const currentLocationAddress =
     currentAddress || getCoordinateAddressText(currentPosition);
+  // Android already lays this screen out above the system navigation bar.
+  // Re-applying its bottom inset after returning from Make Route adds the
+  // navigation-bar height twice and visibly pushes the footer upward.
+  const footerBottomPadding =
+    Platform.OS === 'ios'
+      ? Math.max(insets.bottom, SIZE.MS(10))
+      : SIZE.MS(10);
 
   const screenTitle = isRouteSelectionMode
     ? 'Select Master'
@@ -1402,7 +1776,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     didInitialLoadRef.current = true;
 
     if (
-      !isRouteSelectionMode &&
+      (!isRouteSelectionMode || isRouteHubMode) &&
       !isAirPlacementFlow &&
       initialMasters.length === 0
     ) {
@@ -1411,6 +1785,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   }, [
     initialMasters.length,
     isAirPlacementFlow,
+    isRouteHubMode,
     isRouteSelectionMode,
     loadMasters,
   ]);
@@ -1455,9 +1830,35 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         ? [selectedAirSupportType]
         : selectedMasterTypes,
     });
+
+    if (activeTab === 'list') {
+      pendingLocationScrollRef.current = true;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!pendingLocationScrollRef.current) {
+            return;
+          }
+
+          pendingLocationScrollRef.current = false;
+          listScrollRef.current?.scrollTo({
+            y: Math.max(0, currentLocationRowYRef.current - SIZE.MS(16)),
+            animated: true,
+          });
+        });
+      });
+    }
   };
 
   const handleAddCurrentLocation = () => {
+    if (isPopPlacementFlow) {
+      showScreenAlert({
+        title: 'Select a Building',
+        message: 'POP can only be added by selecting a Building card.',
+        tone: 'warning',
+      });
+      return;
+    }
+
     if (!currentPosition) {
       showScreenAlert({
         title: 'Location Unavailable',
@@ -1473,6 +1874,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         routeName: routeDisplayName,
         routeDraft: route.params?.routeDraft ?? {},
         returnToRouteBuilder: route.params?.returnToRouteBuilder,
+        returnToRouteHub: isRouteHubMode,
         routeInitialMasters: masters,
         currentPosition,
         currentAddress: currentLocationAddress,
@@ -1573,7 +1975,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const canOpenSupportDetails = (master: MasterItem) =>
     isAirPlacementFlow &&
     SUPPORT_DETAIL_MASTER_TYPES.has(initialSelectedMasterType) &&
-    CLICKABLE_AIR_SUPPORT_TYPES.has(master.__masterType);
+    (isPopPlacementFlow
+      ? master.__masterType === 'building'
+      : CLICKABLE_AIR_SUPPORT_TYPES.has(master.__masterType));
 
   const openSupportDetails = (master: MasterItem) => {
     if (!canOpenSupportDetails(master)) {
@@ -1581,10 +1985,17 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     }
 
     navigation.navigate('Add-Air-Master-On-Support', {
-      selectedMasterType: initialSelectedMasterType as 'tiffin' | 'enclosure',
+      selectedMasterType: initialSelectedMasterType as
+        | 'pop'
+        | 'tiffin'
+        | 'enclosure',
       selectedMasterLabel:
         asCleanText(route.params?.selectedMasterLabel) ||
-        (initialSelectedMasterType === 'tiffin' ? 'Tiffin' : 'Enclosure'),
+        (initialSelectedMasterType === 'pop'
+          ? 'POP'
+          : initialSelectedMasterType === 'tiffin'
+          ? 'Tiffin'
+          : 'Enclosure'),
       supportMaster: master,
       supportKey: getMasterUniqueKey(master),
       currentPosition: currentPosition ?? undefined,
@@ -1620,7 +2031,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     master: MasterItem,
     allowDuplicateLocation = false,
   ) => {
-    if (!isRouteSelectionMode) {
+    if (!isRouteSelectionMode || isRouteHubMode) {
       return;
     }
     if (!currentPosition) {
@@ -1902,6 +2313,26 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     await validateBuildingCrossingAndNavigate(master);
   };
 
+  const openNewRouteForMaster = (master: MasterItem) => {
+    if (!currentPosition) {
+      showScreenAlert({
+        title: 'Location Unavailable',
+        message: 'Please wait for your current location and try again.',
+        tone: 'location',
+      });
+      return;
+    }
+
+    navigation.navigate('AddRouteFiberScreen', {
+      routeType: 'new-route',
+      asBottomSheet: true,
+      currentPosition,
+      currentAddress: currentLocationAddress,
+      selectedMaster: master,
+      selectedMasterVersion: `${Date.now()}-${getMasterUniqueKey(master)}`,
+    });
+  };
+
   const renderTabs = () => (
     <View style={styles.tabBar}>
       {(['list', 'map'] as TabKey[]).map(tab => {
@@ -1936,19 +2367,18 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const renderFilterButton = () => (
     <TouchableOpacity
       activeOpacity={0.85}
-      onPress={() =>
-        loadMasters({
-          range: searchRange,
-          masterTypes: isAirPlacementFlow
-            ? [selectedAirSupportType]
-            : selectedMasterTypes,
-        })
-      }
-      disabled={
-        isLoading ||
-        (isAirPlacementFlow &&
-          (!selectedAirSupportType || !hasLoadedAirSupports))
-      }
+      onPress={() => {
+        const appliedType =
+          selectedMasterTypes.length === 1 &&
+          MAP_FILTER_MASTER_TYPES.some(
+            type => type.value === selectedMasterTypes[0],
+          )
+            ? selectedMasterTypes[0]
+            : 'pole';
+        setPendingMapMasterType(appliedType);
+        setIsMasterFilterVisible(true);
+      }}
+      disabled={isLoading}
       style={styles.filterButtonTouchable}>
       <LinearGradient
         colors={['#8858F9', '#6036C4']}
@@ -1961,7 +2391,10 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   );
 
   const renderAirSupportSelector = () => {
-    const selectedSupport = AIR_SUPPORT_TYPES.find(
+    const allowedSupportTypes = getAllowedAirSupportTypes(
+      initialSelectedMasterType,
+    );
+    const selectedSupport = allowedSupportTypes.find(
       type => type.value === selectedAirSupportType,
     );
 
@@ -2011,7 +2444,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
         {showAirSupportDropdown ? (
           <View style={styles.airSupportDropdown}>
-            {AIR_SUPPORT_TYPES.map(type => (
+            {allowedSupportTypes.map(type => (
               <TouchableOpacity
                 key={type.value}
                 activeOpacity={0.8}
@@ -2079,12 +2512,14 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         {renderRangeControl()}
       </View>
 
-      <View style={styles.routeNameRow}>
-        <Text style={styles.routeNameLabel}>Route Name:</Text>
-        <Text numberOfLines={1} style={styles.routeNameValue}>
-          {routeDisplayName}
-        </Text>
-      </View>
+      {!isRouteHubMode ? (
+        <View style={styles.routeNameRow}>
+          <Text style={styles.routeNameLabel}>Route Name:</Text>
+          <Text numberOfLines={1} style={styles.routeNameValue}>
+            {routeDisplayName}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 
@@ -2121,7 +2556,25 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       : 'Nearest master not available';
 
     return (
-      <View key="current-location" style={styles.currentLocationRow}>
+      <View
+        key="current-location"
+        onLayout={(event: LayoutChangeEvent) => {
+          currentLocationRowYRef.current = event.nativeEvent.layout.y;
+
+          if (pendingLocationScrollRef.current) {
+            pendingLocationScrollRef.current = false;
+            requestAnimationFrame(() => {
+              listScrollRef.current?.scrollTo({
+                y: Math.max(
+                  0,
+                  currentLocationRowYRef.current - SIZE.MS(16),
+                ),
+                animated: true,
+              });
+            });
+          }
+        }}
+        style={styles.currentLocationRow}>
         <View style={styles.currentMarkerWrap}>
           <PointerSvg width={SIZE.MS(24)} height={SIZE.MS(24)} />
         </View>
@@ -2140,22 +2593,24 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               {nearestText}
             </Text>
           </View>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={handleAddCurrentLocation}
-            disabled={isRouteSelectionMode && hasAddedCurrentLocation}
-            style={[
-              styles.addCurrentButton,
-              isRouteSelectionMode &&
-                hasAddedCurrentLocation &&
-                styles.addCurrentButtonDisabled,
-            ]}>
-            <Text style={styles.addCurrentButtonText}>
-              {isRouteSelectionMode && hasAddedCurrentLocation
-                ? 'Added'
-                : 'Add'}
-            </Text>
-          </TouchableOpacity>
+          {!isPopPlacementFlow ? (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={handleAddCurrentLocation}
+              disabled={isRouteSelectionMode && hasAddedCurrentLocation}
+              style={[
+                styles.addCurrentButton,
+                isRouteSelectionMode &&
+                  hasAddedCurrentLocation &&
+                  styles.addCurrentButtonDisabled,
+              ]}>
+              <Text style={styles.addCurrentButtonText}>
+                {isRouteSelectionMode && hasAddedCurrentLocation
+                  ? 'Added'
+                  : 'Add'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     );
@@ -2222,6 +2677,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       initialSelectedMasterType,
     );
     const isCardInteractive = showSupportDetails || isRouteSelectionMode;
+    const isFreeAirMaster = isFreeAirPlacedMaster(master);
 
     return (
       <View key={`${master.__masterType}-${masterId || index}`}>
@@ -2229,11 +2685,19 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           activeOpacity={isCardInteractive ? 0.82 : 1}
           disabled={!isCardInteractive}
           onPress={() =>
-            isRouteSelectionMode
+            isRouteHubMode
+              ? openNewRouteForMaster(master)
+              : isRouteSelectionMode
               ? handleSelectRouteMaster(master)
               : openSupportDetails(master)
           }
           style={styles.masterCard}>
+          {isFreeAirMaster ? (
+            <View style={styles.freeAirBadge}>
+              <Text style={styles.freeAirBadgeText}>Placed in the air</Text>
+            </View>
+          ) : null}
+
           <View style={styles.cardTitleRow}>
             <Text style={styles.masterName} numberOfLines={1}>
               {getMasterName(master)}
@@ -2377,6 +2841,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
   const renderListView = () => (
     <ScrollView
+      ref={listScrollRef}
       style={styles.listScroll}
       contentContainerStyle={styles.listContent}
       showsVerticalScrollIndicator={false}
@@ -2398,7 +2863,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
             <View style={styles.stateBox}>
               <Text style={styles.stateTitle}>Select where to add</Text>
               <Text style={styles.stateText}>
-                Choose Pole, Tree, or Building above and tap Submit.
+                {isPopPlacementFlow
+                  ? 'Building is selected for POP. Tap Submit to load nearby buildings.'
+                  : 'Choose Pole, Tree, or Building above and tap Submit.'}
               </Text>
             </View>
           ) : filteredMasters.length > 0 ? (
@@ -2408,11 +2875,13 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               {renderCurrentLocationRow()}
               <View style={styles.stateBox}>
                 <Text style={styles.stateTitle}>No supports found</Text>
-                <Text style={styles.stateText}>
-                  You can still add{' '}
-                  {route.params?.selectedMasterLabel || 'this master'} at your
-                  current address using the Add button above.
-                </Text>
+              <Text style={styles.stateText}>
+                  {isPopPlacementFlow
+                    ? 'No Building is available nearby. POP can only be added by selecting a Building card.'
+                    : `You can still add ${
+                        route.params?.selectedMasterLabel || 'this master'
+                      } at your current address using the Add button above.`}
+              </Text>
               </View>
             </>
           ) : (
@@ -2433,18 +2902,18 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       <MapView
         ref={mapRef}
         provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+        mapType={mapDisplayType === 'satellite' ? 'satellite' : 'standard'}
         style={styles.map}
         initialRegion={mapRegion}
-        region={mapRegion}>
-        {routeCoordinates.length > 1 ? (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor="#7754F7"
-            strokeWidth={4}
-            geodesic
-          />
-        ) : null}
-
+        region={mapRegion}
+        cacheEnabled={false}
+        loadingEnabled={mapDisplayType === 'satellite'}
+        loadingIndicatorColor={COLORS.colorMediumslateblue}
+        maxZoomLevel={20}
+        pitchEnabled
+        rotateEnabled
+        showsBuildings
+        zoomEnabled>
         {currentPosition ? (
           <Marker coordinate={currentPosition} title="You are here">
             <PointerSvg width={SIZE.MS(38)} height={SIZE.MS(38)} />
@@ -2471,10 +2940,86 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         })}
       </MapView>
 
+      <View style={styles.mapTypeControl}>
+        {MAP_DISPLAY_OPTIONS.map(({type, label}) => {
+          const isSelected = mapDisplayType === type;
+
+          return (
+            <TouchableOpacity
+              key={type}
+              accessibilityRole="button"
+              accessibilityLabel={`Show ${label.toLowerCase()} map`}
+              accessibilityState={{selected: isSelected}}
+              activeOpacity={0.8}
+              onPress={() => handleMapDisplayTypeChange(type)}
+              style={[
+                styles.mapTypeOption,
+                isSelected && styles.mapTypeOptionSelected,
+              ]}>
+              <Text
+                style={[
+                  styles.mapTypeOptionText,
+                  isSelected && styles.mapTypeOptionTextSelected,
+                ]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {isLoading ? (
         <View style={styles.mapLoading}>
           <ActivityIndicator color={COLORS.colorMediumslateblue} />
           <Text style={styles.mapLoadingText}>Loading masters...</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const renderHubMap = () => (
+    <View style={styles.hubMapContainer}>
+      <MapView
+        ref={mapRef}
+        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+        style={styles.map}
+        initialRegion={mapRegion}
+        region={mapRegion}
+        showsCompass
+        showsMyLocationButton={false}
+        toolbarEnabled={false}>
+        {currentPosition ? (
+          <Marker coordinate={currentPosition} title="You are here">
+            <PointerSvg width={SIZE.MS(34)} height={SIZE.MS(34)} />
+          </Marker>
+        ) : null}
+
+        {filteredMasters.slice(0, 3).map((master, index) => {
+          const coordinate = getMasterCoordinate(master);
+          if (!coordinate) {
+            return null;
+          }
+
+          return (
+            <Marker
+              key={`hub-${master.__masterType}-${getMasterId(master) || index}`}
+              coordinate={coordinate}>
+              <Image
+                source={master.__masterIcon}
+                style={styles.hubMapMasterIcon}
+              />
+              {renderMapMasterCallout(master)}
+            </Marker>
+          );
+        })}
+      </MapView>
+
+      {isLocating || isLoading ? (
+        <View style={styles.hubMapLoading} pointerEvents="none">
+          <ActivityIndicator size="small" color={COLORS.colorMediumslateblue} />
+          <Text style={styles.hubMapLoadingText}>
+            {isLocating ? 'Finding your location...' : 'Loading masters...'}
+          </Text>
         </View>
       ) : null}
     </View>
@@ -2485,7 +3030,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
-      keyboardAvoidingEnabled={!isRouteSelectionMode || Platform.OS === 'ios'}
+      keyboardAvoidingEnabled={Platform.OS === 'ios'}
       statusBgColor="#8858F9"
       statusBarStyle="light">
       <StatusBar barStyle="light-content" backgroundColor="#8858F9" />
@@ -2505,10 +3050,22 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               <Image source={IMAGES.back} style={styles.backIcon} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>{screenTitle}</Text>
+            {isRouteHubMode ? (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Select route type"
+                onPress={() => setIsRouteTypeSheetVisible(true)}
+                style={styles.burgerButton}>
+                <BurgerSvg width={SIZE.MS(19)} height={SIZE.MS(14)} />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </LinearGradient>
 
         <View style={styles.body}>
+          {isRouteHubMode ? renderHubMap() : null}
+
           {isRouteSelectionMode ? (
             renderRouteSelectionControls()
           ) : (
@@ -2531,7 +3088,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           <View
             style={[
               styles.footer,
-              {paddingBottom: Math.max(insets.bottom, SIZE.MS(10))},
+              {paddingBottom: footerBottomPadding},
             ]}>
             <TouchableOpacity
               activeOpacity={0.9}
@@ -2551,6 +3108,191 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
             </TouchableOpacity>
           </View>
         </View>
+
+        <Modal
+          visible={isRouteTypeSheetVisible}
+          transparent
+          statusBarTranslucent
+          animationType="slide"
+          onRequestClose={() => setIsRouteTypeSheetVisible(false)}>
+          <Pressable
+            onPress={() => setIsRouteTypeSheetVisible(false)}
+            style={styles.routeTypeOverlay}>
+            <Pressable
+              onPress={event => event.stopPropagation()}
+              style={styles.routeTypeSheet}>
+              <View style={styles.routeTypeHandle} />
+              <Text style={styles.routeTypeSheetTitle}>Select Route Type</Text>
+              <View style={styles.routeTypeOptions}>
+                {[
+                  {label: 'New Route', value: 'new-route' as const},
+                  {
+                    label: 'Existing Route (Change Fiber)',
+                    value: 'change-fiber' as const,
+                  },
+                  {
+                    label: 'Paused Route / UnSaved Route',
+                    value: 'paused-route' as const,
+                  },
+                ].map((option, index, options) => {
+                  const selected = pendingRouteType === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      activeOpacity={0.75}
+                      onPress={() => setPendingRouteType(option.value)}
+                      style={[
+                        styles.routeTypeOption,
+                        index < options.length - 1 &&
+                          styles.routeTypeOptionBorder,
+                      ]}>
+                      <View
+                        style={[
+                          styles.routeTypeRadio,
+                          selected && styles.routeTypeRadioSelected,
+                        ]}>
+                        {selected ? (
+                          <View style={styles.routeTypeRadioDot} />
+                        ) : null}
+                      </View>
+                      <Text style={styles.routeTypeOptionText}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={styles.routeTypeActions}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setPendingRouteType(null);
+                    setIsRouteTypeSheetVisible(false);
+                  }}
+                  style={[styles.routeTypeAction, styles.routeTypeClose]}>
+                  <Text style={styles.routeTypeActionText}>Close</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    if (!pendingRouteType) {
+                      showScreenAlert({
+                        title: 'Select Route Type',
+                        message: 'Please select a route type.',
+                        tone: 'warning',
+                      });
+                      return;
+                    }
+
+                    setIsRouteTypeSheetVisible(false);
+                    if (pendingRouteType === 'new-route') {
+                      navigation.navigate('AddRouteFiberScreen', {
+                        routeType: 'new-route',
+                        asBottomSheet: true,
+                        currentPosition: currentPosition ?? undefined,
+                        currentAddress: currentLocationAddress,
+                      });
+                    } else if (pendingRouteType === 'change-fiber') {
+                      navigation.navigate('Select-Route-To-Change-Fiber');
+                    } else {
+                      navigation.navigate('Select-Paused-Route');
+                    }
+                    setPendingRouteType(null);
+                  }}
+                  style={[styles.routeTypeAction, styles.routeTypeSelect]}>
+                  <Text style={styles.routeTypeActionText}>Select</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal
+          visible={isMasterFilterVisible}
+          transparent
+          statusBarTranslucent
+          animationType="slide"
+          onRequestClose={() => setIsMasterFilterVisible(false)}>
+          <Pressable
+            onPress={() => setIsMasterFilterVisible(false)}
+            style={styles.masterFilterOverlay}>
+            <Pressable
+              onPress={event => event.stopPropagation()}
+              style={styles.masterFilterSheet}>
+              <View style={styles.masterFilterHandle} />
+              <Text style={styles.masterFilterTitle}>Select Master Type</Text>
+
+              <View style={styles.masterFilterOptions}>
+                {MAP_FILTER_MASTER_TYPES.map((option, index) => {
+                  const selected = pendingMapMasterType === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      activeOpacity={0.75}
+                      onPress={() => setPendingMapMasterType(option.value)}
+                      style={[
+                        styles.masterFilterOption,
+                        index < MAP_FILTER_MASTER_TYPES.length - 1 &&
+                          styles.masterFilterOptionBorder,
+                      ]}>
+                      <View
+                        style={[
+                          styles.masterFilterCheckbox,
+                          selected && styles.masterFilterCheckboxSelected,
+                        ]}>
+                        {selected ? (
+                          <Text style={styles.masterFilterCheckmark}>✓</Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.masterFilterOptionText}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.masterFilterActions}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setIsMasterFilterVisible(false)}
+                  style={[
+                    styles.masterFilterAction,
+                    styles.masterFilterCloseAction,
+                  ]}>
+                  <Text style={styles.masterFilterActionText}>Close</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={async () => {
+                    if (!pendingMapMasterType) {
+                      showScreenAlert({
+                        title: 'Select Master Type',
+                        message: 'Please select a master type.',
+                        tone: 'warning',
+                      });
+                      return;
+                    }
+
+                    const selectedTypes = [pendingMapMasterType];
+                    setSelectedMasterTypes(selectedTypes);
+                    setIsMasterFilterVisible(false);
+                    await loadMasters({
+                      range: searchRange,
+                      masterTypes: selectedTypes,
+                      strictMasterTypeFilter: true,
+                    });
+                  }}
+                  style={[
+                    styles.masterFilterAction,
+                    styles.masterFilterSaveAction,
+                  ]}>
+                  <Text style={styles.masterFilterActionText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         <Modal
           visible={routeAlert.visible}
@@ -2690,9 +3432,200 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
   },
   headerTitle: {
+    flex: 1,
     fontSize: SIZE.MS(15),
     fontFamily: FONTS.MEDIUM,
     color: COLORS.WHITE,
+  },
+  burgerButton: {
+    width: SIZE.MS(28),
+    height: SIZE.MS(28),
+    borderRadius: SIZE.MS(5),
+    backgroundColor: COLORS.WHITE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeTypeOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(19, 22, 28, 0.28)',
+  },
+  routeTypeSheet: {
+    backgroundColor: '#F5F6F8',
+    borderTopLeftRadius: SIZE.MS(16),
+    borderTopRightRadius: SIZE.MS(16),
+    paddingHorizontal: SIZE.MS(15),
+    paddingTop: SIZE.MVS(7),
+    paddingBottom: SIZE.MVS(18),
+  },
+  routeTypeHandle: {
+    width: SIZE.MS(48),
+    height: SIZE.MVS(4),
+    borderRadius: SIZE.MS(2),
+    alignSelf: 'center',
+    backgroundColor: '#737A82',
+    marginBottom: SIZE.MVS(10),
+  },
+  routeTypeSheetTitle: {
+    color: '#353A42',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(18),
+    textAlign: 'center',
+    marginBottom: SIZE.MVS(12),
+  },
+  routeTypeOptions: {
+    overflow: 'hidden',
+    borderRadius: SIZE.MS(8),
+    backgroundColor: COLORS.WHITE,
+  },
+  routeTypeOption: {
+    minHeight: SIZE.MVS(48),
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZE.MS(14),
+  },
+  routeTypeOptionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#DADDE2',
+  },
+  routeTypeRadio: {
+    width: SIZE.MS(13),
+    height: SIZE.MS(13),
+    borderRadius: SIZE.MS(7),
+    borderWidth: 1,
+    borderColor: '#8B9097',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SIZE.MS(10),
+  },
+  routeTypeRadioSelected: {
+    borderColor: '#7545E7',
+  },
+  routeTypeRadioDot: {
+    width: SIZE.MS(7),
+    height: SIZE.MS(7),
+    borderRadius: SIZE.MS(4),
+    backgroundColor: '#7545E7',
+  },
+  routeTypeOptionText: {
+    color: '#32363D',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(15),
+  },
+  routeTypeActions: {
+    flexDirection: 'row',
+    gap: SIZE.MS(9),
+    marginTop: SIZE.MVS(25),
+  },
+  routeTypeAction: {
+    flex: 1,
+    height: SIZE.MVS(39),
+    borderRadius: SIZE.MS(7),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeTypeClose: {
+    backgroundColor: '#5B5E61',
+  },
+  routeTypeSelect: {
+    backgroundColor: '#7040DF',
+  },
+  routeTypeActionText: {
+    color: COLORS.WHITE,
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(14),
+  },
+  masterFilterOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(19, 22, 28, 0.3)',
+  },
+  masterFilterSheet: {
+    backgroundColor: '#F5F6F8',
+    borderTopLeftRadius: SIZE.MS(16),
+    borderTopRightRadius: SIZE.MS(16),
+    paddingHorizontal: SIZE.MS(14),
+    paddingTop: SIZE.MVS(7),
+    paddingBottom: SIZE.MVS(18),
+  },
+  masterFilterHandle: {
+    width: SIZE.MS(46),
+    height: SIZE.MVS(4),
+    borderRadius: SIZE.MS(2),
+    alignSelf: 'center',
+    backgroundColor: '#858A91',
+    marginBottom: SIZE.MVS(8),
+  },
+  masterFilterTitle: {
+    color: '#353A42',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(17),
+    textAlign: 'center',
+    marginBottom: SIZE.MVS(10),
+  },
+  masterFilterOptions: {
+    overflow: 'hidden',
+    borderRadius: SIZE.MS(10),
+    backgroundColor: COLORS.WHITE,
+  },
+  masterFilterOption: {
+    minHeight: SIZE.MVS(42),
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZE.MS(13),
+  },
+  masterFilterOptionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#D9DDE3',
+  },
+  masterFilterCheckbox: {
+    width: SIZE.MS(14),
+    height: SIZE.MS(14),
+    borderRadius: SIZE.MS(3),
+    borderWidth: 1,
+    borderColor: '#A4AAB2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SIZE.MS(10),
+    backgroundColor: COLORS.WHITE,
+  },
+  masterFilterCheckboxSelected: {
+    borderColor: '#2878E6',
+    backgroundColor: '#2878E6',
+  },
+  masterFilterCheckmark: {
+    color: COLORS.WHITE,
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(10),
+    lineHeight: SIZE.MS(12),
+  },
+  masterFilterOptionText: {
+    color: '#30343A',
+    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(14),
+  },
+  masterFilterActions: {
+    flexDirection: 'row',
+    gap: SIZE.MS(8),
+    marginTop: SIZE.MVS(22),
+  },
+  masterFilterAction: {
+    flex: 1,
+    height: SIZE.MVS(39),
+    borderRadius: SIZE.MS(7),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  masterFilterCloseAction: {
+    backgroundColor: '#5B5E61',
+  },
+  masterFilterSaveAction: {
+    backgroundColor: '#7040DF',
+  },
+  masterFilterActionText: {
+    color: COLORS.WHITE,
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(13),
   },
   starOne: {
     position: 'absolute',
@@ -2795,14 +3728,14 @@ const styles = StyleSheet.create({
   },
   routeNameLabel: {
     marginRight: SIZE.MS(4),
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
   },
   routeNameValue: {
     flex: 1,
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(14),
+    fontFamily: FONTS.BOLD,
     color: '#7754F7',
   },
   tabsWrap: {
@@ -3030,7 +3963,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.WHITE,
     borderRadius: SIZE.MS(8),
     paddingHorizontal: SIZE.MS(10),
-    paddingVertical: SIZE.MS(9),
+    minHeight: SIZE.MVS(128),
+    paddingVertical: SIZE.MS(11),
     shadowColor: '#000000',
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.06,
@@ -3044,8 +3978,8 @@ const styles = StyleSheet.create({
   },
   masterName: {
     flex: 1,
-    fontSize: SIZE.MS(12),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(14),
+    fontFamily: FONTS.BOLD,
     color: '#7754F7',
     marginRight: SIZE.MS(8),
   },
@@ -3054,8 +3988,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statusLabel: {
-    fontSize: SIZE.MS(9),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
     marginRight: SIZE.MS(4),
   },
@@ -3071,27 +4005,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#8E8E8E',
   },
   statusBadgeText: {
-    fontSize: SIZE.MS(8),
+    fontSize: SIZE.MS(10),
     fontFamily: FONTS.BOLD,
     color: COLORS.WHITE,
   },
   masterIdText: {
     marginTop: SIZE.MS(4),
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
   },
   addressText: {
     marginTop: SIZE.MS(4),
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
-    lineHeight: SIZE.MS(14),
+    lineHeight: SIZE.MS(16),
   },
   latLngText: {
     marginTop: SIZE.MS(2),
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
     lineHeight: SIZE.MS(14),
   },
@@ -3106,8 +4040,8 @@ const styles = StyleSheet.create({
   },
   distanceText: {
     flex: 1,
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
   },
   distanceValue: {
@@ -3121,8 +4055,8 @@ const styles = StyleSheet.create({
     marginRight: SIZE.MS(5),
   },
   viewMasterImagesText: {
-    fontSize: SIZE.MS(8),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#393D45',
     textDecorationLine: 'underline',
   },
@@ -3143,6 +4077,22 @@ const styles = StyleSheet.create({
     width: SIZE.MS(24),
     height: SIZE.MS(24),
     resizeMode: 'contain',
+  },
+  freeAirBadge: {
+    alignSelf: 'stretch',
+    marginBottom: SIZE.MS(7),
+    borderRadius: SIZE.MS(6),
+    borderWidth: 1,
+    borderColor: '#7040DF',
+    backgroundColor: '#EEE7FF',
+    paddingHorizontal: SIZE.MS(8),
+    paddingVertical: SIZE.MS(5),
+  },
+  freeAirBadgeText: {
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.BOLD,
+    color: '#6036C4',
+    textAlign: 'center',
   },
   supportDetailFooter: {
     marginTop: SIZE.MS(7),
@@ -3426,6 +4376,69 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapTypeControl: {
+    position: 'absolute',
+    right: SIZE.MS(12),
+    bottom: SIZE.MS(12),
+    flexDirection: 'row',
+    padding: SIZE.MS(3),
+    borderRadius: SIZE.MS(7),
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    shadowColor: '#000000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  mapTypeOption: {
+    minHeight: SIZE.MS(30),
+    paddingHorizontal: SIZE.MS(10),
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: SIZE.MS(5),
+  },
+  mapTypeOptionSelected: {
+    backgroundColor: '#7754F7',
+  },
+  mapTypeOptionText: {
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
+    color: '#515762',
+  },
+  mapTypeOptionTextSelected: {
+    color: COLORS.WHITE,
+  },
+  hubMapContainer: {
+    height: Math.min(SIZE.MVS(185), SIZE.SCREEN_HEIGHT * 0.23),
+    marginHorizontal: -SIZE.MS(14),
+    marginTop: -SIZE.MS(10),
+    marginBottom: SIZE.MS(10),
+    overflow: 'hidden',
+    backgroundColor: '#DCE7EA',
+  },
+  hubMapMasterIcon: {
+    width: SIZE.MS(25),
+    height: SIZE.MS(25),
+    resizeMode: 'contain',
+  },
+  hubMapLoading: {
+    position: 'absolute',
+    top: SIZE.MS(8),
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZE.MS(6),
+    borderRadius: SIZE.MS(16),
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    paddingHorizontal: SIZE.MS(10),
+    paddingVertical: SIZE.MS(6),
+    elevation: 3,
+  },
+  hubMapLoadingText: {
+    color: '#515762',
+    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(9),
   },
   mapUserMarker: {
     width: SIZE.MS(38),

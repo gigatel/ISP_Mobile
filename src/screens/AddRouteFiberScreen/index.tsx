@@ -9,6 +9,7 @@ import React, {
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Image,
   Keyboard,
@@ -17,6 +18,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -31,7 +33,6 @@ import {
   request,
   RESULTS,
 } from 'react-native-permissions';
-import MapView, {Marker, PROVIDER_GOOGLE, Region} from 'react-native-maps';
 import LinearGradient from 'react-native-linear-gradient';
 import {BackHeader} from '@molecules';
 import {RootStackParamList} from '@navigation/navigator';
@@ -41,7 +42,6 @@ import {COLORS, IMAGES} from '@res';
 import {
   GetDrumNumbersByFiberTypeAPI,
   GetFiberMasterListAPI,
-  GetNearestPoleTreeDDAPI,
 } from '@slices/route.slice';
 import {Common, Location, Preferences} from '@utils';
 import {useDispatch} from 'react-redux';
@@ -73,13 +73,6 @@ type PickerKey =
   | 'address';
 
 type FormField = PickerKey | 'routeName' | 'lengthToUse' | 'location';
-
-const DEFAULT_REGION: Region = {
-  latitude: 28.5355,
-  longitude: 77.2588,
-  latitudeDelta: 0.015,
-  longitudeDelta: 0.015,
-};
 
 const ROUTE_TYPES: PickerOption[] = [
   {label: 'New Route', value: 'new-route'},
@@ -116,17 +109,6 @@ const FIBER_DEFAULTS: Record<string, {tubes: string; cores: string}> = {
   '96': {tubes: '8', cores: '12'},
   '144': {tubes: '12', cores: '12'},
 };
-
-const DEFAULT_ROUTE_MASTER_TYPES = [
-  'pole',
-  'tree',
-  'building',
-  'pop',
-  'splitter',
-  'tiffin',
-  'enclosure',
-];
-const DEFAULT_ROUTE_MASTER_RANGE = 200;
 
 const pickerTitle: Record<PickerKey, string> = {
   routeType: 'Select Route Type',
@@ -332,9 +314,8 @@ const SelectField: FC<SelectFieldProps> = ({
   </>
 );
 
-const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
+const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const dispatch = useDispatch<StoreDispatch>();
-  const mapRef = useRef<MapView>(null);
   const formScrollRef = useRef<ScrollView>(null);
   const mountedRef = useRef(true);
   const focusedInputRef = useRef<'routeName' | 'lengthToUse' | null>(null);
@@ -342,10 +323,10 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
   const drumRequestIdRef = useRef(0);
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
-  const [routeType, setRouteType] = useState<string | null>(null);
+  const [routeType, setRouteType] = useState<string | null>('new-route');
   const [draftRouteType, setDraftRouteType] = useState<string | null>(null);
   const [routeName, setRouteName] = useState('');
-  const [fiberUsedBy, setFiberUsedBy] = useState<string | null>(null);
+  const [fiberUsedBy, setFiberUsedBy] = useState<string | null>('UGIG');
   const [fiberType, setFiberType] = useState<string | null>(null);
   const [fiberOptions, setFiberOptions] = useState<PickerOption[]>([]);
   const [isLoadingFibers, setIsLoadingFibers] = useState(false);
@@ -357,15 +338,18 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
   const [drumOptions, setDrumOptions] = useState<PickerOption[]>([]);
   const [isLoadingDrums, setIsLoadingDrums] = useState(false);
   const [drumLoadError, setDrumLoadError] = useState('');
-  const [isLoadingRouteMasters, setIsLoadingRouteMasters] = useState(false);
   const [lengthToUse, setLengthToUse] = useState('300');
   const [currentPosition, setCurrentPosition] = useState<Coordinate | null>(
-    null,
+    route.params?.currentPosition ?? null,
   );
-  const [currentAddress, setCurrentAddress] = useState('');
+  const [currentAddress, setCurrentAddress] = useState(
+    route.params?.currentAddress ?? '',
+  );
   const [addressOptions, setAddressOptions] = useState<PickerOption[]>([]);
-  const [isLocating, setIsLocating] = useState(true);
-  const [locationError, setLocationError] = useState('');
+  const [_isLocating, setIsLocating] = useState(
+    !route.params?.currentPosition,
+  );
+  const [_locationError, setLocationError] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<FormField, string>>>({});
 
@@ -399,6 +383,9 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
     const hideSubscription = Keyboard.addListener(hideEvent, () => {
       setIsKeyboardVisible(false);
       focusedInputRef.current = null;
+      requestAnimationFrame(() => {
+        formScrollRef.current?.scrollTo({y: 0, animated: false});
+      });
     });
 
     return () => {
@@ -406,6 +393,22 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
       hideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !isKeyboardVisible) {
+      return;
+    }
+
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        Keyboard.dismiss();
+        return true;
+      },
+    );
+
+    return () => subscription.remove();
+  }, [isKeyboardVisible]);
 
   useEffect(() => {
     const timer = setTimeout(
@@ -631,11 +634,6 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
 
       setCurrentPosition(coordinate);
       clearError('location');
-      mapRef.current?.animateToRegion(
-        {...coordinate, latitudeDelta: 0.008, longitudeDelta: 0.008},
-        650,
-      );
-
       const geoAddress = await Location.getAddressWithLatLong(
         coordinate.latitude,
         coordinate.longitude,
@@ -679,8 +677,10 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
   }, [clearError, getCurrentCoordinate, requestLocationPermission]);
 
   useEffect(() => {
-    loadCurrentLocation();
-  }, [loadCurrentLocation]);
+    if (!route.params?.currentPosition) {
+      loadCurrentLocation();
+    }
+  }, [loadCurrentLocation, route.params?.currentPosition]);
 
   const selectedDrum = useMemo(
     () => getOption(drumOptions, drum),
@@ -690,11 +690,6 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
     () => getOption(fiberOptions, fiberType),
     [fiberOptions, fiberType],
   );
-  const selectedRouteType = useMemo(
-    () => getOption(ROUTE_TYPES, routeType),
-    [routeType],
-  );
-
   const activeOptions = useMemo(() => {
     switch (activePicker) {
       case 'routeType':
@@ -879,14 +874,8 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
     const requestedLength = Number(lengthToUse);
     const availableLength = Number(selectedDrum?.meta ?? 0);
 
-    if (!routeType) {
-      nextErrors.routeType = 'Select a route type';
-    }
     if (!routeName.trim()) {
       nextErrors.routeName = 'Enter a route name';
-    }
-    if (!fiberUsedBy) {
-      nextErrors.fiberUsedBy = 'Select who will use this fiber';
     }
     if (!fiberType) {
       nextErrors.fiberType = 'Select a fiber type';
@@ -916,58 +905,48 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
     return Object.keys(nextErrors).length === 0;
   };
 
-  const submitRoute = async () => {
-    if (!validate() || !currentPosition || isLoadingRouteMasters) {
+  const submitRoute = () => {
+    if (!validate() || !currentPosition) {
       Common.showToast('Please complete the required fields');
       return;
     }
 
-    try {
-      setIsLoadingRouteMasters(true);
-      const response = await dispatch(
-        GetNearestPoleTreeDDAPI({
-          latLng: `${currentPosition.latitude}, ${currentPosition.longitude}`,
-          labelType: DEFAULT_ROUTE_MASTER_TYPES.join(','),
-          range: DEFAULT_ROUTE_MASTER_RANGE,
-          type: 'master',
-          status: true,
-        }),
-      ).unwrap();
-
-      navigation.navigate('Select-Route-Master', {
-        routeSelectionMode: true,
+    const makeRouteParams = {
+      routeName: routeName.trim(),
+      currentPosition,
+      currentAddress,
+      routeDraft: {
+        routeType: 'new-route',
         routeName: routeName.trim(),
+        fiberUsedBy,
+        fiberUsedByName: getOption(FIBER_USED_BY_OPTIONS, fiberUsedBy)?.label,
+        fiberTypeId: fiberType,
+        fiberTypeName: selectedFiber?.label,
+        fiberType: selectedFiber?.fiberCount
+          ? `${selectedFiber.fiberCount}F`
+          : selectedFiber?.label,
+        fibreSpecification: getOption(ARMOUR_TYPES, armourType)?.label,
+        tubeCount,
+        coreCount,
+        drumId: drum,
+        drumNo: selectedDrum?.label,
+        drumLength: selectedDrum?.meta,
+        lengthToUse,
+      },
+      selectedMaster: route.params?.selectedMaster,
+      selectedMasterVersion: route.params?.selectedMasterVersion,
+    };
+
+    Keyboard.dismiss();
+    if (route.params?.asBottomSheet) {
+      (navigation as any).popTo('Route-Master-Hub', {
         currentPosition,
         currentAddress,
-        initialMasters: getDropdownListFromResponse(response),
-        routeDraft: {
-          routeType,
-          routeName: routeName.trim(),
-          fiberUsedBy,
-          fiberUsedByName: getOption(FIBER_USED_BY_OPTIONS, fiberUsedBy)?.label,
-          fiberTypeId: fiberType,
-          fiberTypeName: selectedFiber?.label,
-          fiberType: selectedFiber?.fiberCount
-            ? `${selectedFiber.fiberCount}F`
-            : selectedFiber?.label,
-          fibreSpecification: getOption(ARMOUR_TYPES, armourType)?.label,
-          tubeCount,
-          coreCount,
-          drumId: drum,
-          drumNo: selectedDrum?.label,
-          drumLength: selectedDrum?.meta,
-          lengthToUse,
-        },
+        pendingMakeRoute: makeRouteParams,
+        pendingMakeRouteVersion: `${Date.now()}`,
       });
-    } catch (error: any) {
-      Alert.alert(
-        'Select Master',
-        error?.message || 'Unable to load nearest masters.',
-      );
-    } finally {
-      if (mountedRef.current) {
-        setIsLoadingRouteMasters(false);
-      }
+    } else {
+      navigation.navigate('Make-Route', makeRouteParams);
     }
   };
 
@@ -1015,134 +994,60 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
       loadDrumOptions(fiberType);
     }
   };
+  const isBottomSheet = Boolean(route.params?.asBottomSheet);
 
   return (
     <Screen
       preset="fixed"
-      keyboardAvoidingEnabled={Platform.OS === 'ios'}
-      statusBgColor={COLORS.PRIMARY}
-      navBarColor={COLORS.WHITE}>
-      <View style={styles.screen}>
-        <BackHeader
-          title="Add Route"
-          onBackPress={() => navigation.goBack()}
-          showGps
-        />
+      keyboardAvoidingEnabled={
+        Platform.OS === 'ios' || (isBottomSheet && isKeyboardVisible)
+      }
+      statusBgColor={isBottomSheet ? 'transparent' : COLORS.PRIMARY}
+      navBarColor={isBottomSheet ? 'transparent' : COLORS.WHITE}
+      isSafeArea={!isBottomSheet}
+      isNavSafeArea={!isBottomSheet}
+      translucent={isBottomSheet}>
+      <View
+        style={[
+          styles.presentationRoot,
+          isBottomSheet && styles.bottomSheetOverlay,
+        ]}>
+        {isBottomSheet ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close add new route"
+            onPress={() => navigation.goBack()}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : null}
 
         <View
           style={[
-            styles.mapContainer,
-            isKeyboardVisible && styles.mapContainerKeyboard,
+            styles.screen,
+            isBottomSheet && styles.bottomSheetCard,
+            isBottomSheet &&
+              isKeyboardVisible &&
+              styles.bottomSheetCardKeyboard,
           ]}>
-          <MapView
-            ref={mapRef}
-            provider={PROVIDER_GOOGLE}
-            style={styles.map}
-            initialRegion={DEFAULT_REGION}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            showsCompass
-            toolbarEnabled={false}>
-            {currentPosition ? (
-              <Marker coordinate={currentPosition} anchor={{x: 0.5, y: 1}}>
-                <View style={styles.markerWrap}>
-                  <Image
-                    source={IMAGES.mapPin}
-                    style={styles.markerPin}
-                    resizeMode="contain"
-                  />
-                  <View style={styles.markerDot} />
-                </View>
-              </Marker>
-            ) : null}
-          </MapView>
-
-          {isLocating ? (
-            <View style={styles.mapStatusOverlay} pointerEvents="none">
-              <ActivityIndicator size="small" color={COLORS.PRIMARY} />
-              <Text style={styles.mapStatusText}>
-                Finding current location...
-              </Text>
+          {isBottomSheet ? (
+            <View style={styles.bottomSheetHeader}>
+              <View style={styles.bottomSheetHandle} />
+              <Text style={styles.bottomSheetTitle}>Add New Route</Text>
             </View>
-          ) : null}
-
-          {!isLocating && locationError ? (
-            <View style={styles.locationErrorCard}>
-              <Text numberOfLines={2} style={styles.locationErrorText}>
-                {locationError}
-              </Text>
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={loadCurrentLocation}
-                style={styles.retryButton}>
-                <Text style={styles.retryText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-        </View>
-
-        {!isKeyboardVisible ? (
-          <View>
-            <TouchableOpacity
-              activeOpacity={0.75}
-              accessibilityRole="button"
-              accessibilityLabel="Choose current address"
-              onPress={() => openPicker('address')}
-              style={[
-                styles.addressBar,
-                errors.location && styles.addressBarError,
-              ]}>
-              <Image
-                source={IMAGES.mapLocation}
-                style={styles.addressIcon}
-                resizeMode="contain"
-              />
-              <Text
-                numberOfLines={2}
-                style={[
-                  styles.addressText,
-                  !currentAddress && styles.placeholderText,
-                ]}>
-                {currentAddress ||
-                  (isLocating
-                    ? 'Fetching current address...'
-                    : 'Current address unavailable')}
-              </Text>
-              <TouchableOpacity
-                accessibilityRole="button"
-                accessibilityLabel="Refresh current location"
-                activeOpacity={0.7}
-                disabled={isLocating}
-                hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
-                onPress={loadCurrentLocation}>
-                <Image
-                  source={IMAGES.refresh}
-                  style={[
-                    styles.refreshIcon,
-                    isLocating && styles.refreshIconDisabled,
-                  ]}
-                  resizeMode="contain"
-                />
-              </TouchableOpacity>
-              {addressOptions.length > 1 ? (
-                <Image
-                  source={IMAGES.down}
-                  style={styles.addressChevron}
-                  resizeMode="contain"
-                />
-              ) : null}
-            </TouchableOpacity>
-            {errors.location ? (
-              <Text style={styles.locationValidationText}>
-                {errors.location}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
+          ) : (
+            <BackHeader
+              title="Add New Route"
+              onBackPress={() => navigation.goBack()}
+              showGps={false}
+            />
+          )}
 
         <ScrollView
           ref={formScrollRef}
-          style={styles.formArea}
+          style={[
+            styles.formArea,
+            isBottomSheet && styles.bottomSheetFormArea,
+          ]}
           contentContainerStyle={[
             styles.formScrollContent,
             isKeyboardVisible && styles.formScrollContentKeyboard,
@@ -1153,17 +1058,6 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
           <View style={styles.formCard}>
-            <View style={styles.fullField}>
-              <FieldLabel>Route Type</FieldLabel>
-              <SelectField
-                value={selectedRouteType?.label}
-                placeholder="Select Route Type"
-                accessibilityLabel="Select route type"
-                error={errors.routeType}
-                onPress={() => openPicker('routeType')}
-              />
-            </View>
-
             <View style={styles.fullField}>
               <FieldLabel>Route Name</FieldLabel>
               <View
@@ -1189,17 +1083,6 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
               {errors.routeName ? (
                 <Text style={styles.errorText}>{errors.routeName}</Text>
               ) : null}
-            </View>
-
-            <View style={styles.fullField}>
-              <FieldLabel>Fiber Used By</FieldLabel>
-              <SelectField
-                value={getOption(FIBER_USED_BY_OPTIONS, fiberUsedBy)?.label}
-                placeholder="Select Fiber Used By"
-                accessibilityLabel="Select who will use this fiber"
-                error={errors.fiberUsedBy}
-                onPress={() => openPicker('fiberUsedBy')}
-              />
             </View>
 
             <View style={styles.twoColumnRow}>
@@ -1313,31 +1196,21 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
               <LinearGradient
                 colors={['#777A7E', '#4C4F52']}
                 style={styles.footerGradient}>
-                <Text style={styles.footerButtonText}>Close</Text>
+                <Text style={styles.footerButtonText}>Back</Text>
               </LinearGradient>
             </TouchableOpacity>
             <TouchableOpacity
               activeOpacity={0.82}
               onPress={submitRoute}
-              disabled={isLoadingRouteMasters}
-              style={[
-                styles.footerButton,
-                isLoadingRouteMasters && styles.footerButtonDisabled,
-              ]}>
+              style={styles.footerButton}>
               <LinearGradient
                 colors={['#8B59F8', '#6036C4']}
                 start={{x: 0, y: 0}}
                 end={{x: 1, y: 1}}
                 style={styles.footerGradient}>
-                {isLoadingRouteMasters ? (
-                  <ActivityIndicator size="small" color={COLORS.WHITE} />
-                ) : (
-                  <Text style={styles.footerButtonText}>
-                    {routeType === 'change-fiber'
-                      ? 'Change Fiber'
-                      : 'Add Route'}
-                  </Text>
-                )}
+                <Text style={styles.footerButtonText}>
+                  {routeType === 'change-fiber' ? 'Change Fiber' : 'Add Route'}
+                </Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -1486,7 +1359,8 @@ const AddRouteFiberScreen: FC<Props> = ({navigation}) => {
             )}
           </Pressable>
         </Pressable>
-      </Modal>
+        </Modal>
+      </View>
     </Screen>
   );
 };

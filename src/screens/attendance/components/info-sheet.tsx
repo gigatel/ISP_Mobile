@@ -180,14 +180,14 @@ const styles = StyleSheet.create({
   },
   infoShortText: {
     flex: 0.3,
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.BOLD,
     color: COLORS.PRIMARY_DARK,
-    fontSize: SIZE.MS(15),
+    fontSize: SIZE.MS(16),
   },
   infoDescText: {
     flex: 1,
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.BOLD,
     color: COLORS.PRIMARY,
-    fontSize: SIZE.MS(15),
+    fontSize: SIZE.MS(16),
   },
 });

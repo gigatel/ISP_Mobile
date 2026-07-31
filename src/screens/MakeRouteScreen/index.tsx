@@ -8,6 +8,8 @@ import React, {
 } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Image,
   Keyboard,
   Linking,
@@ -21,6 +23,11 @@ import {
   View,
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
+import {
+  CameraOptions,
+  ImagePickerResponse,
+  launchCamera,
+} from 'react-native-image-picker';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import LinearGradient from 'react-native-linear-gradient';
 import MapView, {
@@ -44,13 +51,13 @@ import {Screen} from '@organisms';
 import {StoreDispatch} from '@reducers';
 import {COLORS, IMAGES} from '@res';
 import {
-  addRouteAPI,
   createInitialRouteAPI,
   GetDrumNumbersByFiberTypeAPI,
   GetNearestPoleTreeDDAPI,
   insertUpdateRouteChamberMappingAPI,
+  updateRoutePathDetailsAPI,
 } from '@slices/route.slice';
-import {Common, Location} from '@utils';
+import {Common, ImageWatermark, Location} from '@utils';
 import {
   PausedRouteSnapshot,
   removeCompletedRouteSnapshot,
@@ -75,6 +82,7 @@ type RouteAlertTone =
   | 'warning'
   | 'error'
   | 'delete'
+  | 'camera'
   | 'location';
 
 type RouteAlertButton = {
@@ -87,6 +95,7 @@ type RouteAlertState = {
   visible: boolean;
   title: string;
   message: string;
+  tone: RouteAlertTone;
   icon: any;
   iconTint: string;
   iconBg: string;
@@ -152,7 +161,7 @@ const MASTER_TYPES = [
   'enclosure',
 ];
 const DEFAULT_RANGE = 200;
-const MIN_TRACK_DISTANCE_METERS = 1;
+const MIN_TRACK_DISTANCE_METERS = 0.5;
 const MAX_TRACK_JUMP_METERS = 250;
 
 const MASTER_META: Record<string, {label: string; icon: any}> = {
@@ -334,7 +343,8 @@ const getImageValue = (value: any): string => {
 
 const getMasterImages = (master: any) => {
   const first = getImageValue(
-    master?.imageUrl1 ??
+    master?.__fiberChangePhotoUri ??
+      master?.imageUrl1 ??
       master?.ImageUrl1 ??
       master?.image1 ??
       master?.Image1 ??
@@ -407,6 +417,12 @@ const getRouteAlertVisual = (tone: RouteAlertTone = 'info') => {
         icon: IMAGES.close,
         iconTint: COLORS.ERROR,
         iconBg: '#FDECEC',
+      };
+    case 'camera':
+      return {
+        icon: IMAGES.camera,
+        iconTint: COLORS.colorMediumslateblue,
+        iconBg: '#F2ECFF',
       };
     case 'location':
       return {
@@ -494,6 +510,10 @@ const restoreRoutePoint = (
     address: asText(storedPoint?.address) || restored.address,
     coordinate: storedPoint?.coordinate ?? restored.coordinate,
     icon: meta.icon,
+    imageUrls:
+      Array.isArray(storedPoint?.imageUrls) && storedPoint.imageUrls.length > 0
+        ? storedPoint.imageUrls
+        : restored.imageUrls,
     loopMeters: asText(storedPoint?.loopMeters),
     isLocked: Boolean(storedPoint?.isLocked),
     isServerSaved: Boolean(storedPoint?.isServerSaved),
@@ -592,6 +612,7 @@ const getMasterToMasterDistance = (
 
   const previousPoint = routePoints[pointIndex - 1];
   const currentPoint = routePoints[pointIndex];
+
   const trackedDistance = walkingSegments
     .filter(segment => segment.afterPointKey === previousPoint.key)
     .reduce(
@@ -678,6 +699,8 @@ const buildInitialRoutePath = (
 const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const dispatch = useDispatch<StoreDispatch>();
   const isReadOnly = Boolean(route.params.readOnly);
+  const isFiberChange = Boolean(route.params.fiberChangeMode);
+  const canEditFiberLoop = route.params.fiberChangeMode === 'withoutSld';
   const resumeSnapshot = route.params.resumeSnapshot;
   const initialServerRouteId =
     Number(
@@ -692,13 +715,17 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       );
     }
 
-    return [
-      makeRoutePoint(
-        route.params.selectedMaster,
-        route.params.selectedMasterVersion,
-        initialCurrentPosition,
-      ),
-    ];
+    if (route.params.selectedMaster && route.params.selectedMasterVersion) {
+      return [
+        makeRoutePoint(
+          route.params.selectedMaster,
+          route.params.selectedMasterVersion,
+          initialCurrentPosition,
+        ),
+      ];
+    }
+
+    return [];
   }, [
     initialCurrentPosition,
     resumeSnapshot?.routePoints,
@@ -743,6 +770,8 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         .map(point => point.key),
     ),
   );
+  const masterSavePromisesRef = useRef(new Map<string, Promise<void>>());
+  const lastAutoSavePointKeyRef = useRef('');
 
   const [currentPosition, setCurrentPosition] = useState<Coordinate>(
     initialCurrentPosition,
@@ -764,6 +793,10 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   );
   const [isSelectingMaster, setIsSelectingMaster] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
+  const [capturingMasterKey, setCapturingMasterKey] = useState('');
+  const [capturedFiberMasterKeys, setCapturedFiberMasterKeys] = useState<
+    Set<string>
+  >(() => new Set());
   const [serverRouteId, setServerRouteId] = useState(initialServerRouteId);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewImageIndex, setPreviewImageIndex] = useState(0);
@@ -808,14 +841,61 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       visible: false,
       title: '',
       message: '',
+      tone: 'info',
       icon: visual.icon,
       iconTint: visual.iconTint,
       iconBg: visual.iconBg,
       buttons: [],
     };
   });
+  const alertCardAnimation = useRef(new Animated.Value(1)).current;
+  const alertIconAnimation = useRef(new Animated.Value(1)).current;
 
-  const activePoint = routePoints[routePoints.length - 1] ?? null;
+  useEffect(() => {
+    if (!routeAlert.visible || routeAlert.tone !== 'success') {
+      alertCardAnimation.setValue(1);
+      alertIconAnimation.setValue(1);
+      return;
+    }
+
+    alertCardAnimation.setValue(0);
+    alertIconAnimation.setValue(0);
+
+    const animation = Animated.parallel([
+      Animated.timing(alertCardAnimation, {
+        toValue: 1,
+        duration: 330,
+        easing: Easing.out(Easing.back(1.25)),
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.delay(130),
+        Animated.spring(alertIconAnimation, {
+          toValue: 1,
+          friction: 4,
+          tension: 110,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+
+    animation.start();
+    return () => animation.stop();
+  }, [
+    alertCardAnimation,
+    alertIconAnimation,
+    routeAlert.tone,
+    routeAlert.visible,
+  ]);
+
+  const activePoint =
+    (isFiberChange && route.params.fiberChangeActiveMasterKey
+      ? routePoints.find(
+          point => point.key === route.params.fiberChangeActiveMasterKey,
+        )
+      : null) ??
+    routePoints[routePoints.length - 1] ??
+    null;
   const completedWalkingDistance = useMemo(
     () =>
       routePoints.reduce(
@@ -835,8 +915,9 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     [routePoints],
   );
   const liveWalkingDistance = trackingState === 'idle' ? 0 : segmentDistance;
+  const liveMasterDistance = liveWalkingDistance;
   const totalCableDistance =
-    completedWalkingDistance + liveWalkingDistance + totalLoopDistance;
+    completedWalkingDistance + liveMasterDistance + totalLoopDistance;
   const totalAllocatedLength = useMemo(
     () =>
       drumAllocations.reduce(
@@ -957,6 +1038,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         visible: true,
         title,
         message,
+        tone,
         icon: visual.icon,
         iconTint: visual.iconTint,
         iconBg: visual.iconBg,
@@ -968,6 +1050,116 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     },
     [],
   );
+
+  const captureFiberChangeMaster = async (point: RoutePoint) => {
+    if (capturingMasterKey) {
+      return;
+    }
+    try {
+      const cameraPermission =
+        Platform.OS === 'android'
+          ? PERMISSIONS.ANDROID.CAMERA
+          : PERMISSIONS.IOS.CAMERA;
+      let permissionStatus = await check(cameraPermission);
+      if (permissionStatus === RESULTS.DENIED) {
+        permissionStatus = await request(cameraPermission);
+      }
+      if (
+        permissionStatus !== RESULTS.GRANTED &&
+        permissionStatus !== RESULTS.LIMITED
+      ) {
+        showRouteAlert({
+          title: 'Camera Permission',
+          message:
+            'Camera access is required to capture this route master photo.',
+          tone: 'camera',
+          buttons:
+            permissionStatus === RESULTS.BLOCKED
+              ? [
+                  {text: 'Cancel', variant: 'secondary'},
+                  {
+                    text: 'Open Settings',
+                    onPress: () => {
+                      openSettings().catch(() => Linking.openSettings());
+                    },
+                  },
+                ]
+              : undefined,
+        });
+        return;
+      }
+
+      setCapturingMasterKey(point.key);
+      const options: CameraOptions = {
+        mediaType: 'photo',
+        cameraType: 'back',
+        quality: 0.7,
+        maxWidth: 1000,
+        maxHeight: 1000,
+        saveToPhotos: false,
+      };
+      launchCamera(options, async (response: ImagePickerResponse) => {
+        if (response.didCancel || response.errorCode) {
+          setCapturingMasterKey('');
+          return;
+        }
+        const capturedAsset = response.assets?.[0];
+        const uri = capturedAsset?.uri;
+        if (!uri) {
+          setCapturingMasterKey('');
+          return;
+        }
+        let watermarkedUri: string;
+        try {
+          watermarkedUri =
+            await ImageWatermark.applyLocationWatermark(uri);
+        } catch (error) {
+          setCapturingMasterKey('');
+          Common.error('Unable to watermark fiber-change image:', error);
+          showRouteAlert({
+            title: 'Photo Not Added',
+            message:
+              'The location watermark could not be added. Please capture the photo again.',
+            tone: 'camera',
+          });
+          return;
+        }
+        setCapturingMasterKey('');
+        setRoutePoints(previous =>
+          previous.map(routePoint =>
+            routePoint.key === point.key
+              ? {
+                  ...routePoint,
+                  master: {
+                    ...routePoint.master,
+                    __fiberChangePhotoUri: watermarkedUri,
+                    __fiberChangePhotoType: capturedAsset?.type || 'image/jpeg',
+                    __fiberChangePhotoName:
+                      capturedAsset?.fileName ||
+                      `fiber-master-${
+                        point.masterId || point.key
+                      }-${Date.now()}.jpg`,
+                  },
+                  imageUrls: [watermarkedUri],
+                }
+              : routePoint,
+          ),
+        );
+        setCapturedFiberMasterKeys(previous => {
+          const next = new Set(previous);
+          next.add(point.key);
+          return next;
+        });
+      });
+    } catch (error: any) {
+      setCapturingMasterKey('');
+      showRouteAlert({
+        title: 'Camera',
+        message: error?.message || 'Unable to open the camera.',
+        tone: 'camera',
+      });
+    }
+  };
 
   const selectAdditionalDrum = useCallback(
     (option: DrumOption) => {
@@ -1192,7 +1384,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
       const previous = lastAcceptedPositionRef.current;
       const moved = distanceBetween(previous, coordinate);
-      const inaccurate = Number.isFinite(accuracy) && Number(accuracy) > 80;
+      const inaccurate = Number.isFinite(accuracy) && Number(accuracy) > 100;
 
       if (
         !inaccurate &&
@@ -1364,6 +1556,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   useEffect(
     () => () => {
       stopLocationWatch();
+      Keyboard.dismiss();
     },
     [stopLocationWatch],
   );
@@ -1376,6 +1569,31 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       ),
     [routePoints],
   );
+
+  const routePolylineCoordinates = useMemo(() => {
+    const coordinates = routePath.filter(
+      coordinate =>
+        Number.isFinite(coordinate.latitude) &&
+        Number.isFinite(coordinate.longitude),
+    );
+    if (trackingState !== 'walking') {
+      return coordinates;
+    }
+
+    const previous = coordinates[coordinates.length - 1];
+    const liveDistance = previous
+      ? distanceBetween(previous, currentPosition)
+      : 0;
+    if (
+      previous &&
+      liveDistance >= 0.5 &&
+      liveDistance <= MAX_TRACK_JUMP_METERS
+    ) {
+      return [...coordinates, currentPosition];
+    }
+
+    return coordinates;
+  }, [currentPosition, routePath, trackingState]);
 
   const getPointLatLng = (point: RoutePoint) =>
     point.coordinate
@@ -1422,7 +1640,24 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     );
   };
 
-  const getMappingFiberDetails = () => {
+  const getMappingFiberDetails = (point: RoutePoint) => {
+    const toSingleFiberId = (value: unknown) => {
+      const text = asText(value);
+      if (!/^\d+$/.test(text)) {
+        return undefined;
+      }
+      const id = Number(text);
+      return Number.isInteger(id) && id > 0 ? id : undefined;
+    };
+    const masterFiberId = [
+      point.master?.fiberId,
+      point.master?.FiberId,
+      point.master?.fiberTypeId,
+      point.master?.FiberTypeId,
+    ]
+      .map(toSingleFiberId)
+      .find((value): value is number => value !== undefined);
+    const routeFiberId = toSingleFiberId(route.params.routeDraft?.fiberTypeId);
     const fiberIdText = asText(route.params.routeDraft?.fiberTypeId);
     const numericFiberId = Number(fiberIdText);
     const rawFiberType =
@@ -1432,9 +1667,13 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
     return {
       fiberId:
-        fiberIdText && Number.isFinite(numericFiberId)
+        masterFiberId ??
+        routeFiberId ??
+        (!isFiberChange && fiberIdText && Number.isFinite(numericFiberId)
           ? numericFiberId
-          : fiberIdText,
+          : !isFiberChange
+          ? fiberIdText
+          : undefined),
       fiberType: fiberCapacity ? `${fiberCapacity}F` : rawFiberType,
       fiberUsedBy: asText(route.params.routeDraft?.fiberUsedBy),
     };
@@ -1446,6 +1685,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       return {
         drumLength,
         drumRemainingLength: Math.max(0, drumLength - totalLength),
+        drumId: asText(route.params.routeDraft?.drumId),
         drumNo: asText(route.params.routeDraft?.drumNo),
       };
     }
@@ -1487,6 +1727,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         0,
         activeAllocation.availableLength - activeDrumUsed,
       ),
+      drumId: activeAllocation.drumId,
       drumNo: activeAllocation.drumNo,
     };
   };
@@ -1561,8 +1802,21 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       );
     const totalLength = completedDistanceToPoint + cumulativeLoopUsed;
     const loopUsed = asPositiveNumber(point.loopMeters);
-    const fiberDetails = getMappingFiberDetails();
+    const fiberDetails = getMappingFiberDetails(point);
+    if (isFiberChange && fiberDetails.fiberId === undefined) {
+      throw new Error(
+        'A single fiber ID is unavailable for the selected master.',
+      );
+    }
     const drumDetails = getMappingDrumDetails(totalLength);
+    const fiberChangePhotoUri = asText(point.master?.__fiberChangePhotoUri);
+    const routeOrderNo = isFiberChange
+      ? Number(getMasterField(point.master, 'orderNo', 'OrderNo')) ||
+        pointIndex + 1
+      : pointIndex + 1;
+    const partialStartOrderNo = Number(
+      route.params.routeDraft?.partialStartOrderNo,
+    );
     await dispatch(
       insertUpdateRouteChamberMappingAPI({
         id: 0,
@@ -1588,7 +1842,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           ) || 0,
         endCountry: asText(getMasterField(point.master, 'country', 'Country')),
         routeLength: Math.round(totalLength),
-        orderNo: pointIndex + 1,
+        orderNo: routeOrderNo,
         totalLength: Math.round(totalLength),
         drumLength: Math.round(drumDetails.drumLength),
         drumRemainingLength: Math.round(drumDetails.drumRemainingLength),
@@ -1596,7 +1850,37 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         fiberId: fiberDetails.fiberId,
         fiberType: fiberDetails.fiberType,
         fiberUsedBy: fiberDetails.fiberUsedBy,
+        ...(isFiberChange
+          ? {
+              fiberChangeScope:
+                route.params.fiberChangeMode === 'full'
+                  ? ('FullRoute' as const)
+                  : route.params.fiberChangeMode === 'withoutSld'
+                  ? ('WithoutSLD' as const)
+                  : ('PartialRoute' as const),
+            }
+          : {}),
+        ...(route.params.fiberChangeMode === 'partial'
+          ? {
+              isStartingPoint:
+                Number.isFinite(partialStartOrderNo) &&
+                routeOrderNo === partialStartOrderNo,
+            }
+          : {}),
+        drumId: drumDetails.drumId,
         drumNo: drumDetails.drumNo,
+        ...(isFiberChange && fiberChangePhotoUri
+          ? {
+              imageFile: {
+                uri: fiberChangePhotoUri,
+                type:
+                  asText(point.master?.__fiberChangePhotoType) || 'image/jpeg',
+                fileName:
+                  asText(point.master?.__fiberChangePhotoName) ||
+                  `fiber-master-${point.masterId || point.key}.jpg`,
+              },
+            }
+          : {}),
       }),
     ).unwrap();
     markMasterAsServerSaved(point.key);
@@ -1606,6 +1890,16 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     point: RoutePoint,
     stopPosition: Coordinate,
   ) => {
+    if (isFiberChange) {
+      const routeId = initialRouteIdRef.current;
+      const pointIndex = routePoints.findIndex(item => item.key === point.key);
+      if (!routeId || pointIndex < 0) {
+        throw new Error('Selected fiber route master is unavailable.');
+      }
+      await saveMappedMasterToServer(point, pointIndex, routeId);
+      return;
+    }
+
     if (savedMasterKeysRef.current.has(point.key)) {
       return;
     }
@@ -1632,12 +1926,108 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     }
   };
 
+  const ensureMasterSavedToServer = (
+    point: RoutePoint,
+    position: Coordinate,
+  ) => {
+    if (savedMasterKeysRef.current.has(point.key)) {
+      return Promise.resolve();
+    }
+
+    const pendingSave = masterSavePromisesRef.current.get(point.key);
+    if (pendingSave) {
+      return pendingSave;
+    }
+
+    const savePromise = saveStoppedMasterToServer(point, position).finally(
+      () => {
+        masterSavePromisesRef.current.delete(point.key);
+      },
+    );
+    masterSavePromisesRef.current.set(point.key, savePromise);
+    return savePromise;
+  };
+
+  const saveRoutePathProgress = async (position: Coordinate) => {
+    const routeId = initialRouteIdRef.current;
+    if (!routeId) {
+      return;
+    }
+
+    const coordinates = [...routePathRef.current];
+    const lastCoordinate = coordinates[coordinates.length - 1];
+    if (coordinates.length === 0) {
+      coordinates.push(position, position);
+    } else if (coordinates.length === 1) {
+      coordinates.push(position);
+    } else if (
+      !lastCoordinate ||
+      distanceBetween(lastCoordinate, position) >= 0.5
+    ) {
+      coordinates.push(position);
+    }
+
+    await dispatch(
+      updateRoutePathDetailsAPI({
+        routeId,
+        routePath: `LINESTRING(${coordinates
+          .map(coordinate => `${coordinate.longitude} ${coordinate.latitude}`)
+          .join(', ')})`,
+      }),
+    ).unwrap();
+  };
+
+  useEffect(() => {
+    if (
+      isReadOnly ||
+      isFiberChange ||
+      trackingState !== 'idle' ||
+      isSelectingMaster
+    ) {
+      return;
+    }
+
+    const latestPoint = routePoints[routePoints.length - 1];
+    if (
+      !latestPoint ||
+      savedMasterKeysRef.current.has(latestPoint.key) ||
+      lastAutoSavePointKeyRef.current === latestPoint.key
+    ) {
+      return;
+    }
+
+    lastAutoSavePointKeyRef.current = latestPoint.key;
+    void ensureMasterSavedToServer(
+      latestPoint,
+      currentPositionRef.current,
+    ).catch((error: any) => {
+      showRouteAlert({
+        title: 'Master Save Failed',
+        message:
+          error?.message ||
+          `${latestPoint.masterTypeLabel} • ${latestPoint.name} could not be saved to this route.`,
+        tone: 'error',
+      });
+    });
+  }, [
+    isFiberChange,
+    isReadOnly,
+    isSelectingMaster,
+    routePoints,
+    trackingState,
+  ]);
+
   const handleStart = async () => {
     if (!activePoint || trackingState !== 'idle' || isSelectingMaster) {
       return;
     }
 
     try {
+      await ensureMasterSavedToServer(
+        activePoint,
+        currentPositionRef.current,
+      );
+      await saveRoutePathProgress(currentPositionRef.current);
       segmentDistanceRef.current = 0;
       setSegmentDistance(0);
       const started = await startLocationWatch();
@@ -1683,6 +2073,19 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     if (trackingState === 'idle' || !activePoint || isSelectingMaster) {
       return;
     }
+    if (
+      isFiberChange &&
+      !capturedFiberMasterKeys.has(activePoint.key) &&
+      !asText(activePoint.master?.__fiberChangePhotoUri)
+    ) {
+      showRouteAlert({
+        title: 'Master Photo Required',
+        message:
+          'Capture a photo of this route master before using Stop & Add Master.',
+        tone: 'camera',
+      });
+      return;
+    }
 
     let failureStage: 'route' | 'masters' = 'route';
     try {
@@ -1722,8 +2125,67 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       }
       setCurrentAddress(stopAddress);
 
-      await saveStoppedMasterToServer(activePoint, stopPosition);
+      await ensureMasterSavedToServer(activePoint, stopPosition);
+      await saveRoutePathProgress(stopPosition);
       failureStage = 'masters';
+
+      if (isFiberChange && route.params.fiberChangeRoute) {
+        const completedSegment = {
+          id: `${activePoint.key}-${Date.now()}`,
+          afterPointKey: activePoint.key,
+          distance: completedSegmentDistance,
+        };
+        const completedWalkingSegments = [...walkingSegments, completedSegment];
+        const completedRoutePoints = routePoints.map(point => ({
+          key: point.key,
+          master: point.master,
+          masterId: point.masterId,
+          masterType: point.masterType,
+          masterTypeLabel: point.masterTypeLabel,
+          name: point.name,
+          address: point.address,
+          coordinate: point.coordinate,
+          imageUrls: [...point.imageUrls],
+          loopMeters: point.loopMeters,
+          isLocked: true,
+          isServerSaved: true,
+        }));
+        setWalkingSegments(completedWalkingSegments);
+        segmentDistanceRef.current = 0;
+        setSegmentDistance(0);
+        setTrackingStateValue('idle');
+        routeCompletedRef.current = true;
+        Keyboard.dismiss();
+        navigation.replace('Fiber-Change', {
+          selectedRoute: route.params.fiberChangeRoute,
+          selectedFibers: route.params.fiberChangeSelectedFibers ?? [],
+          installationScope: route.params.fiberChangeMode,
+          installationProgress: {
+            id: routeSnapshotIdRef.current,
+            routeName: route.params.routeName,
+            routeDraft: {
+              ...route.params.routeDraft,
+              routeId: initialRouteIdRef.current,
+            },
+            currentPosition: stopPosition,
+            currentAddress: stopAddress,
+            routePoints: completedRoutePoints,
+            routePath: [...routePathRef.current],
+            walkingSegments: completedWalkingSegments,
+            segmentDistance: 0,
+            trackingState: 'idle',
+            drumAllocations,
+            totalDistance:
+              completedWalkingDistance +
+              completedSegmentDistance +
+              totalLoopDistance,
+            status: 'stopped',
+            createdAt: routeCreatedAtRef.current,
+            updatedAt: Date.now(),
+          },
+        });
+        return;
+      }
 
       const response = await dispatch(
         GetNearestPoleTreeDDAPI({
@@ -1790,191 +2252,110 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     }
   };
 
-  const saveAndEndRoute = async () => {
-    if (routePoints.length < 2) {
-      showRouteAlert({
-        title: 'Add Another Master',
-        message:
-          'Stop and add at least one more master before ending the route.',
-        tone: 'warning',
-      });
-      return;
-    }
-    if (routePathRef.current.length < 2) {
-      showRouteAlert({
-        title: 'Route Path',
-        message: 'Start walking before ending the route.',
-        tone: 'warning',
-      });
-      return;
-    }
-
-    const stateBeforeSave = trackingStateRef.current;
-    stopLocationWatch();
-    setTrackingStateValue('idle');
-    setIsEnding(true);
-
+  const handleAddFirstMaster = async () => {
+    setIsSelectingMaster(true);
     try {
-      const firstPoint = routePoints[0];
-      const lastPoint = routePoints[routePoints.length - 1];
-      const routeLineString = `LINESTRING(${routePathRef.current
-        .map(point => `${point.longitude} ${point.latitude}`)
-        .join(', ')})`;
-      const pointDistance = (_point: RoutePoint, index: number) => {
-        const completedDistance = getMasterToMasterDistance(
-          routePoints,
-          walkingSegments,
-          index,
-        );
-        const liveDistance =
-          index === routePoints.length - 1 ? segmentDistanceRef.current : 0;
-        return Math.round(completedDistance + liveDistance);
-      };
-      const toLatLng = (point: RoutePoint) =>
-        point.coordinate
-          ? `${point.coordinate.latitude}, ${point.coordinate.longitude}`
-          : '';
-
-      const saveResponse = await dispatch(
-        addRouteAPI({
-          Id: initialRouteIdRef.current || 0,
-          RouteName: route.params.routeName,
-          RouteLength: Math.round(
-            completedWalkingDistance +
-              segmentDistanceRef.current +
-              totalLoopDistance,
-          ),
-          StartAddress: firstPoint.address,
-          StartCity: asText(getMasterField(firstPoint.master, 'city', 'City')),
-          StartState: asText(
-            getMasterField(firstPoint.master, 'state', 'State'),
-          ),
-          StartCountry: asText(
-            getMasterField(firstPoint.master, 'country', 'Country'),
-          ),
-          StartArea: asText(getMasterField(firstPoint.master, 'area', 'Area')),
-          StartPincode:
-            Number(
-              getMasterField(
-                firstPoint.master,
-                'pincode',
-                'Pincode',
-                'PinCode',
-              ),
-            ) || 0,
-          StartLandmark: asText(
-            getMasterField(firstPoint.master, 'landmark', 'Landmark'),
-          ),
-          StartLatLng: toLatLng(firstPoint),
-          EndAddress: lastPoint.address,
-          EndCity: asText(getMasterField(lastPoint.master, 'city', 'City')),
-          EndState: asText(getMasterField(lastPoint.master, 'state', 'State')),
-          EndCountry: asText(
-            getMasterField(lastPoint.master, 'country', 'Country'),
-          ),
-          EndArea: asText(getMasterField(lastPoint.master, 'area', 'Area')),
-          EndPincode:
-            Number(
-              getMasterField(lastPoint.master, 'pincode', 'Pincode', 'PinCode'),
-            ) || 0,
-          EndLandmark: asText(
-            getMasterField(lastPoint.master, 'landmark', 'Landmark'),
-          ),
-          EndLatLng: toLatLng(lastPoint),
-          RoutePath: routeLineString,
-          RouteChamberMappingVM: routePoints.map((point, index) => ({
-            masterType: point.masterType,
-            masterId: Number(point.masterId) || 0,
-            distance: pointDistance(point, index),
-            latLng: toLatLng(point),
-            selectedAddress:
-              asText(
-                getMasterField(
-                  point.master,
-                  'selectedAddress',
-                  'SelectedAddress',
-                ),
-              ) || point.address,
-            address: point.address,
-            pincode:
-              Number(
-                getMasterField(point.master, 'pincode', 'Pincode', 'PinCode'),
-              ) || 0,
-            area: asText(getMasterField(point.master, 'area', 'Area')),
-            city: asText(getMasterField(point.master, 'city', 'City')),
-            state: asText(getMasterField(point.master, 'state', 'State')),
-            country: asText(getMasterField(point.master, 'country', 'Country')),
-            landmark: asText(
-              getMasterField(point.master, 'landmark', 'Landmark'),
-            ),
-            extra1: asText(getMasterField(point.master, 'extra1', 'Extra1')),
-            extra2: asText(getMasterField(point.master, 'extra2', 'Extra2')),
-          })),
+      const response = await dispatch(
+        GetNearestPoleTreeDDAPI({
+          latLng: `${currentPosition.latitude}, ${currentPosition.longitude}`,
+          labelType: MASTER_TYPES.join(','),
+          range: DEFAULT_RANGE,
+          type: 'master',
+          status: true,
         }),
       ).unwrap();
+      const initialMasters = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.data)
+        ? response.data
+        : [];
 
-      const responseRouteId = asText(
-        saveResponse?.routeId ??
-          saveResponse?.RouteId ??
-          saveResponse?.id ??
-          saveResponse?.Id ??
-          (typeof saveResponse === 'number' ? saveResponse : ''),
-      );
-      saveCompletedAppRoute({
-        serverRouteId:
-          responseRouteId || asText(initialRouteIdRef.current) || undefined,
+      navigation.navigate('Select-Route-Master', {
+        routeSelectionMode: true,
+        returnToRouteBuilder: true,
         routeName: route.params.routeName,
+        routeDraft: route.params.routeDraft,
         currentPosition,
         currentAddress,
-        routePoints: persistedRouteSnapshot.routePoints,
-        routePath: [...routePathRef.current],
-        walkingSegments: [...walkingSegments],
-        totalDistance:
-          completedWalkingDistance +
-          segmentDistanceRef.current +
-          totalLoopDistance,
-        createdAt: routeCreatedAtRef.current,
-        updatedAt: Date.now(),
+        initialMasters,
+        routeExistingMasters: [],
       });
-
-      routeCompletedRef.current = true;
-      removeCompletedRouteSnapshot(routeSnapshotIdRef.current);
-      Common.showToast('Route completed successfully');
-      (navigation as any).popTo('AddRouteFiberScreen');
     } catch (error: any) {
-      setTrackingStateValue(stateBeforeSave === 'idle' ? 'idle' : 'paused');
       showRouteAlert({
-        title: 'End Route',
-        message: error?.message || 'Unable to save this route.',
+        title: 'Select Master',
+        message: error?.message || 'Unable to load nearest masters.',
         tone: 'error',
       });
     } finally {
-      setIsEnding(false);
+      setIsSelectingMaster(false);
     }
   };
 
-  const handleEndRoute = () => {
-    showRouteAlert({
-      title: 'End Route',
-      message: `Complete ${route.params.routeName}?\nDistance: ${formatDistance(
+  const completeRouteLocally = () => {
+    stopLocationWatch();
+    Keyboard.dismiss();
+    setTrackingStateValue('idle');
+    setIsEnding(false);
+
+    saveCompletedAppRoute({
+      serverRouteId: asText(initialRouteIdRef.current) || undefined,
+      routeName: route.params.routeName,
+      currentPosition: currentPositionRef.current,
+      currentAddress,
+      routePoints: persistedRouteSnapshot.routePoints,
+      routePath: [...routePathRef.current],
+      walkingSegments: [...walkingSegments],
+      totalDistance:
         completedWalkingDistance +
-          segmentDistanceRef.current +
-          totalLoopDistance,
-      )}\nMasters: ${routePoints.length}`,
-      tone: 'warning',
+        segmentDistanceRef.current +
+        totalLoopDistance,
+      createdAt: routeCreatedAtRef.current,
+      updatedAt: Date.now(),
+    });
+    routeCompletedRef.current = true;
+    removeCompletedRouteSnapshot(routeSnapshotIdRef.current);
+
+    showRouteAlert({
+      title: 'Saved Successfully',
+      message: `${route.params.routeName} has been saved successfully.`,
+      tone: 'success',
       buttons: [
-        {text: 'Cancel', variant: 'secondary'},
         {
-          text: 'End',
-          variant: 'danger',
-          onPress: saveAndEndRoute,
+          text: 'OK',
+          variant: 'primary',
+          onPress: () => navigation.goBack(),
         },
       ],
     });
   };
 
+  const handleEndRoute = () => {
+    if (isFiberChange && route.params.fiberChangeRoute) {
+      if (trackingState !== 'idle') {
+        showRouteAlert({
+          title: 'Finish Current Master',
+          message:
+            'Use Stop & Save Master to save this master loop before ending the fiber change.',
+          tone: 'warning',
+        });
+        return;
+      }
+      routeCompletedRef.current = true;
+      Keyboard.dismiss();
+      navigation.replace('Fiber-Change', {
+        selectedRoute: route.params.fiberChangeRoute,
+        selectedFibers: route.params.fiberChangeSelectedFibers ?? [],
+        installationScope: route.params.fiberChangeMode,
+      });
+      return;
+    }
+
+    completeRouteLocally();
+  };
+
   const handleBack = () => {
     if (trackingState === 'idle') {
+      Keyboard.dismiss();
       navigation.goBack();
       return;
     }
@@ -1990,6 +2371,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           variant: 'danger',
           onPress: () => {
             stopLocationWatch();
+            Keyboard.dismiss();
             navigation.goBack();
           },
         },
@@ -2054,15 +2436,50 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     setPreviewImages(point.imageUrls);
   };
 
+  const deleteCapturedFiberPhoto = (pointKey: string) => {
+    setRoutePoints(previous =>
+      previous.map(point => {
+        if (point.key !== pointKey) {
+          return point;
+        }
+        const master = {...(point.master ?? {})};
+        delete master.__fiberChangePhotoUri;
+        delete master.__fiberChangePhotoType;
+        delete master.__fiberChangePhotoName;
+        return {...point, master, imageUrls: []};
+      }),
+    );
+    setCapturedFiberMasterKeys(previous => {
+      const next = new Set(previous);
+      next.delete(pointKey);
+      return next;
+    });
+  };
+
   const renderWalkingRow = (distance: number, key: string, isLive = false) => (
     <View key={key} style={styles.walkingRow}>
       <View style={styles.walkingLine} />
-      <View style={styles.walkingPill}>
-        <Image
-          source={isLive ? IMAGES.manWalking : IMAGES.walkingManStatic}
-          style={styles.walkingListImage}
-        />
-        <Text style={styles.walkingDistance}>
+      <View
+        style={
+          isLive ? styles.liveWalkingPill : styles.distanceConnector
+        }>
+        {isLive ? (
+          <Image
+            source={
+              trackingState === 'walking'
+                ? IMAGES.manWalking
+                : IMAGES.walkingManStatic
+            }
+            style={styles.walkingListImage}
+          />
+        ) : (
+          <Text style={styles.distanceArrow}>↕</Text>
+        )}
+        <Text
+          style={[
+            styles.walkingDistance,
+            isLive && styles.liveWalkingDistance,
+          ]}>
           {formatWalkingDistance(distance)}
         </Text>
       </View>
@@ -2077,7 +2494,13 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       navBarColor={COLORS.WHITE}>
       <View style={styles.screen}>
         <BackHeader
-          title={isReadOnly ? 'Route Details' : 'Add Route'}
+          title={
+            isFiberChange
+              ? 'Fiber Change'
+              : isReadOnly
+              ? 'Route Details'
+              : 'Add Route'
+          }
           onBackPress={handleBack}
         />
 
@@ -2094,23 +2517,25 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
               latitudeDelta: 0.012,
               longitudeDelta: 0.012,
             }}>
-            {routePath.length > 1 ? (
+            {routePolylineCoordinates.length > 1 ? (
               <>
                 <Polyline
-                  coordinates={routePath}
+                  coordinates={routePolylineCoordinates}
                   strokeColor="rgba(255,255,255,0.9)"
                   strokeWidth={9}
                   lineCap="round"
                   lineJoin="round"
                   geodesic
+                  zIndex={19}
                 />
                 <Polyline
-                  coordinates={routePath}
+                  coordinates={routePolylineCoordinates}
                   strokeColor="#6D43E5"
                   strokeWidth={5}
                   lineCap="round"
                   lineJoin="round"
                   geodesic
+                  zIndex={20}
                 />
               </>
             ) : null}
@@ -2173,6 +2598,10 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                 : null;
             const showLiveWalking =
               index === routePoints.length - 1 && trackingState !== 'idle';
+            const hasCapturedFiberPhoto =
+              Boolean(point.imageUrls[0]) &&
+              (capturedFiberMasterKeys.has(point.key) ||
+                Boolean(asText(point.master?.__fiberChangePhotoUri)));
 
             return (
               <View key={point.key}>
@@ -2198,10 +2627,14 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                       style={[
                         styles.loopControl,
                         styles.loopControlInColumn,
-                        (point.isLocked || isReadOnly) &&
+                        (point.isLocked ||
+                          isReadOnly ||
+                          (isFiberChange && !canEditFiberLoop)) &&
                           styles.loopControlLocked,
                       ]}>
-                      {point.isLocked || isReadOnly ? (
+                      {point.isLocked ||
+                      isReadOnly ||
+                      (isFiberChange && !canEditFiberLoop) ? (
                         <Text numberOfLines={1} style={styles.loopLockedText}>
                           Loop: {point.loopMeters || '0'} m
                         </Text>
@@ -2230,30 +2663,74 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                     ) : null}
                   </View>
 
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel={`View images for ${point.name}`}
-                    onPress={() => openMasterImages(point)}
-                    style={styles.masterThumbnail}>
-                    <Image
-                      source={
-                        point.imageUrls[0]
-                          ? {uri: point.imageUrls[0]}
-                          : point.icon
-                      }
-                      style={styles.masterThumbnailImage}
-                    />
-                    {point.imageUrls.length > 1 ? (
-                      <View style={styles.imageCountBadge}>
-                        <Text style={styles.imageCountText}>
-                          {point.imageUrls.length}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </TouchableOpacity>
+                  {isFiberChange && hasCapturedFiberPhoto ? (
+                    <View style={styles.fiberPhotoWrap}>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View captured photo for ${point.name}`}
+                        onPress={() => openMasterImages(point)}
+                        style={styles.masterThumbnail}>
+                        <Image
+                          source={{uri: point.imageUrls[0]}}
+                          style={styles.masterThumbnailImage}
+                        />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete captured photo for ${point.name}`}
+                        onPress={() => deleteCapturedFiberPhoto(point.key)}
+                        style={styles.fiberPhotoDelete}>
+                        <Text style={styles.fiberPhotoDeleteText}>×</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : isFiberChange ? (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Capture photo for ${point.name}`}
+                      disabled={Boolean(capturingMasterKey)}
+                      onPress={() => captureFiberChangeMaster(point)}
+                      style={styles.masterThumbnail}>
+                      {capturingMasterKey === point.key ? (
+                        <ActivityIndicator size="small" color="#555A62" />
+                      ) : (
+                        <Image
+                          source={IMAGES.camera}
+                          style={[
+                            styles.masterThumbnailImage,
+                            styles.fiberCameraImage,
+                          ]}
+                        />
+                      )}
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`View images for ${point.name}`}
+                      onPress={() => openMasterImages(point)}
+                      style={styles.masterThumbnail}>
+                      <Image
+                        source={
+                          point.imageUrls[0]
+                            ? {uri: point.imageUrls[0]}
+                            : point.icon
+                        }
+                        style={styles.masterThumbnailImage}
+                      />
+                      {point.imageUrls.length > 1 ? (
+                        <View style={styles.imageCountBadge}>
+                          <Text style={styles.imageCountText}>
+                            {point.imageUrls.length}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  )}
 
-                  {!isReadOnly ? (
+                  {!isReadOnly && !isFiberChange ? (
                     <TouchableOpacity
                       activeOpacity={0.75}
                       accessibilityRole="button"
@@ -2278,9 +2755,9 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                   : null}
                 {showLiveWalking
                   ? renderWalkingRow(
-                      segmentDistance,
+                      liveMasterDistance,
                       `live-${point.key}`,
-                      trackingState === 'walking',
+                      true,
                     )
                   : null}
               </View>
@@ -2291,7 +2768,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
             <View style={styles.emptyState}>
               <Text style={styles.emptyTitle}>No master selected</Text>
               <Text style={styles.emptyText}>
-                Go back and choose a master to begin the route.
+                Tap Add Master to choose the first master for this route.
               </Text>
             </View>
           ) : null}
@@ -2329,18 +2806,34 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
             <TouchableOpacity
               activeOpacity={0.82}
-              disabled={trackingState === 'idle' || isSelectingMaster}
-              onPress={handleStopAndAddMaster}
+              disabled={
+                isSelectingMaster ||
+                (Boolean(activePoint) && trackingState === 'idle') ||
+                (isFiberChange && !canEditFiberLoop && !activePoint)
+              }
+              onPress={
+                activePoint ? handleStopAndAddMaster : handleAddFirstMaster
+              }
               style={[
                 styles.footerButton,
                 styles.addMasterButton,
-                (trackingState === 'idle' || isSelectingMaster) &&
+                (isSelectingMaster ||
+                  (Boolean(activePoint) && trackingState === 'idle') ||
+                  (isFiberChange && !canEditFiberLoop && !activePoint)) &&
                   styles.footerButtonDisabled,
               ]}>
               {isSelectingMaster ? (
                 <ActivityIndicator size="small" color={COLORS.WHITE} />
               ) : (
-                <Text style={styles.footerButtonText}>Stop & Add Master</Text>
+                <Text style={styles.footerButtonText}>
+                  {activePoint
+                    ? isFiberChange
+                      ? 'Stop & Save Master'
+                      : 'Stop & Add Master'
+                    : isFiberChange && !canEditFiberLoop
+                    ? 'Master Unavailable'
+                    : 'Add Master'}
+                </Text>
               )}
             </TouchableOpacity>
 
@@ -2574,18 +3067,39 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           animationType="fade"
           onRequestClose={closeRouteAlert}>
           <View style={styles.alertOverlay}>
-            <View style={styles.alertCard}>
-              <View
+            <Animated.View
+              style={[
+                styles.alertCard,
+                {
+                  opacity: alertCardAnimation,
+                  transform: [
+                    {
+                      translateY: alertCardAnimation.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [24, 0],
+                      }),
+                    },
+                    {
+                      scale: alertCardAnimation.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.88, 1],
+                      }),
+                    },
+                  ],
+                },
+              ]}>
+              <Animated.View
                 style={[
                   styles.alertIconBox,
                   {backgroundColor: routeAlert.iconBg},
+                  {transform: [{scale: alertIconAnimation}]},
                 ]}>
                 <Image
                   source={routeAlert.icon}
                   style={[styles.alertIcon, {tintColor: routeAlert.iconTint}]}
                   resizeMode="contain"
                 />
-              </View>
+              </Animated.View>
               <Text style={styles.alertTitle}>{routeAlert.title}</Text>
               <ScrollView
                 style={styles.alertMessageScroll}
@@ -2625,7 +3139,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                   );
                 })}
               </View>
-            </View>
+            </Animated.View>
           </View>
         </Modal>
 

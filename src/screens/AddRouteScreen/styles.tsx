@@ -34,12 +34,12 @@ const styles = StyleSheet.create({
   routeNameSection: {gap: 8},
   routeNameRow: {flexDirection: 'row', alignItems: 'center', gap: 6},
   routeLabel: {
-    fontSize: 13,
+    fontSize: 15,
     color: COLORS.colorDarkslategray,
     fontFamily: FONTS.MEDIUM,
   },
   routeValue: {
-    fontSize: 13,
+    fontSize: 15,
     color: '#8858F9',
     fontFamily: FONTS.MEDIUM,
     fontWeight: '500',
@@ -65,13 +65,13 @@ const styles = StyleSheet.create({
     textAlign: 'left',
     color: COLORS.colorDarkslategray,
     fontFamily: FontFamily.switzer,
-    fontSize: FontSize.fs_13,
+    fontSize: FontSize.fs_15,
   },
   selectedText: {color: '#8858F9', fontWeight: '600'},
   textInput: {
     flex: 1,
     height: 40,
-    fontSize: 13,
+    fontSize: 15,
     color: COLORS.colorDarkslategray,
     fontFamily: FONTS.MEDIUM,
   },
@@ -120,7 +120,7 @@ const styles = StyleSheet.create({
   checkIconInner: {width: 10, height: 10, tintColor: COLORS.colorWhite},
   row: {gap: 6, borderRadius: Border.br_38},
   poleTypo: {
-    fontSize: FontSize.fs_12,
+    fontSize: FontSize.fs_14,
     textAlign: 'left',
     fontFamily: FontFamily.switzer,
     color: COLORS.colorDarkslategray,
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
   icon: {height: 17, width: 18, tintColor: COLORS.colorMediumslateblue100},
   f13MainRd: {
     color: COLORS.colorDarkslategray,
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: FONTS.MEDIUM,
     fontWeight: FONTS.FONT_WEIGHT.MEDIUM,
     flex: 1,
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   selectMaster: {
-    fontSize: FontSize.fs_12,
+    fontSize: FontSize.fs_14,
     textAlign: 'left',
     fontFamily: FontFamily.switzer,
     color: COLORS.colorDarkslategray,
@@ -321,13 +321,13 @@ const styles = StyleSheet.create({
   deleteButtonText: {color: '#fff', fontWeight: '600'},
   addImage: {
     color: COLORS.colorMediumslateblue100,
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: FONTS.MEDIUM,
     fontWeight: FONTS.FONT_WEIGHT.MEDIUM,
   },
   m4Typo: {
     lineHeight: LineHeight.lh_22,
-    fontSize: FontSize.fs_12,
+    fontSize: FontSize.fs_14,
     textAlign: 'left',
     fontFamily: FontFamily.switzer,
   },

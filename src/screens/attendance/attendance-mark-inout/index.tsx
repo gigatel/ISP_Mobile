@@ -11,7 +11,14 @@ import {COLORS, CONSTANT, FONTS, IMAGES, SIZE, STYLES} from '@res';
 import {markAttendanceApi} from '@slices/attendance.slice';
 import {checkCameraPermission} from '@slices/permission.slice';
 import {DataType, ScreenProps} from '@types';
-import {Common, Location, Preferences, Times, Voice} from '@utils';
+import {
+  Common,
+  ImageWatermark,
+  Location,
+  Preferences,
+  Times,
+  Voice,
+} from '@utils';
 import React, {FC, useEffect, useMemo, useRef, useState} from 'react';
 import {Platform, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {Camera, CameraType} from 'react-native-camera-kit';
@@ -80,11 +87,21 @@ const AttendanceInOut: FC<ScreenProps.AttendanceInOut> = ({
   const captureImage = async () => {
     try {
       const image = await cameraRef.current?.capture();
-      const base64Image = await Common.convertImageToBase64(image.uri);
+      const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+        image.uri,
+        {
+          latitude: address?.lat,
+          longitude: address?.long,
+          address: address?.address,
+        },
+      );
+      const base64Image = await Common.convertImageToBase64(watermarkedUri);
       if (base64Image) {
         Common.log('Base64 Image', base64Image?.slice(0, 64) + '...');
         return {
           ...image,
+          uri: watermarkedUri,
+          path: watermarkedUri,
           base64: base64Image,
         };
       }

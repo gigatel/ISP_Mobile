@@ -9,6 +9,7 @@ import * as Times from './times';
 import * as Services from './locationService';
 import * as Permissions from './permisions';
 import * as Notification from './notification';
+import * as ImageWatermark from './imageWatermark';
 export {
   Common,
   Preferences,
@@ -20,4 +21,5 @@ export {
   Services,
   Permissions,
   Notification,
+  ImageWatermark,
 };

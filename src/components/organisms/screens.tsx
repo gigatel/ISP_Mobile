@@ -1,7 +1,8 @@
 import {Loader} from '@molecules';
 import {COLORS} from '@res';
-import {StatusBar} from 'react-native';
-import React, {useRef} from 'react';
+import {Keyboard, StatusBar} from 'react-native';
+import React, {useCallback, useRef} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -45,6 +46,17 @@ export function Screen(props: ScreenProps) {
     loaderMessage = 'Loading',
   } = props;
   const scrollViewRef = useRef<ScrollView>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      Keyboard.dismiss();
+
+      return () => {
+        Keyboard.dismiss();
+      };
+    }, []),
+  );
+
   return (
     <View style={$keyboardAvoidingViewStyle}>
       {isSafeArea && isIos && (

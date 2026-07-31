@@ -104,12 +104,12 @@ const DUMMY_MODULES: {
   screen: Extract<keyof RootStackParamList, string>;
 }[] = [
   {name: 'Add Master', bg: '#E6F1FB', emoji: '🗼', screen: 'addMaster'},
-  {name: 'Add Route', bg: '#FCEBEB', emoji: '🛣️', screen: 'AddRouteScreen'},
+  // {name: 'Add Route', bg: '#FCEBEB', emoji: '🛣️', screen: 'AddRouteScreen'},
   {
     name: 'Add Route/Change Fiber',
     bg: '#EAF6EF',
     icon: IMAGES.FiberEnclosur,
-    screen: 'AddRouteFiberScreen',
+    screen: 'Route-Master-Hub',
   },
 ];
 

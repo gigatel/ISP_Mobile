@@ -1,13 +1,12 @@
 
 import NetInfo from '@react-native-community/netinfo';
-import { COLORS, FONTS, SIZE } from '@res';
 import moment from 'moment';
 import { Alert, Dimensions, Linking, Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import ImageCropPicker from 'react-native-image-crop-picker';
-import ImageMarker, { ImageFormat, Position, TextBackgroundType } from 'react-native-image-marker';
 import Toast from 'react-native-simple-toast';
 import { getFormatedTime } from './times';
+import {applyLocationWatermark} from '../utils/imageWatermark';
 //* Screen *//
 export const { height, width } = Dimensions.get('window');
 
@@ -401,82 +400,23 @@ export const convertBase64ToImage = async (base64: string) => {
 };
 
 
-export const captureCameraImageWithWatermark = async (text: string,) => {
+export const captureCameraImageWithWatermark = async (_text: string) => {
   try {
-    return openSigleImageCamera({ isBase64: false }).then(
-      async (img: any) => {
-        // log('Image PIcker', img);
-        if (!img) { return null; }
-        const options = {
-          backgroundImage: {
-            src: { uri: img.path },
-            scale: 1,
-          },
-          watermarkTexts: [
-            {
-              text: text,
-              position: {
-                position: Position.bottomLeft,
-                offsetX: 10,
-                offsetY: 10,
-              },
-              style: {
-                color: COLORS.WHITE,
-                fontSize: SIZE.MS(60),
-                fontName: FONTS.REGULAR,
-                textBackgroundStyle: {
-                  // cornerRadius: {
-                  //   topLeft: {
-                  //     x: '10%',
-                  //     y: '10%',
-                  //   },
-                  //   topRight: {
-                  //     x: '10%',
-                  //     y: '10%',
-                  //   },
-                  //   bottomLeft: {
-                  //     x: '10%',
-                  //     y: '10%',
-                  //   },
-                  //   bottomRight: {
-                  //     x: '10%',
-                  //     y: '10%',
-                  //   },
-                  // },
-                  padding: '1%',
-                  type: TextBackgroundType.none,
-                  color: '#00000050',
-
-                },
-              },
-            },
-          ],
-          scale: 1,
-          quality: 40,
-          filename: 'ChamberTask' + getFormatedDate(
-            'DDMMMYYYYhhmmssA',
-          ),
-          saveFormat: ImageFormat.jpg,
-        };
-        const markedImageUri = await ImageMarker.markText(options);
-        const base64 = await convertImageToBase64(
-          markedImageUri,
-        );
-        // log(
-        //   '✅ Watermarked image path:',
-        //   `data:image/jpeg;base64,${base64}`,
-        // );
-        ImageCropPicker.cleanSingle(img?.path);
-        return {
-          path: 'file://' + markedImageUri,
-          uri: 'file://' + markedImageUri,
-          type: img.type,
-          name: 'Chamber Task.jpg',
-          size: img.size,
-          data: base64,
-        };
-
-      });
+    const img: any = await openSigleImageCamera({isBase64: false});
+    if (!img) {
+      return null;
+    }
+    const markedImageUri = await applyLocationWatermark(img.path);
+    const base64 = await convertImageToBase64(markedImageUri);
+    ImageCropPicker.cleanSingle(img.path);
+    return {
+      path: markedImageUri,
+      uri: markedImageUri,
+      type: img.type,
+      name: 'Chamber Task.jpg',
+      size: img.size,
+      data: base64,
+    };
   } catch (err) {
     error('❌ Error applying watermark:', err);
     return null;

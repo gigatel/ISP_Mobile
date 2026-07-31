@@ -134,7 +134,7 @@ export default StyleSheet.create({
     flexGrow: 1,
   },
   routeCard: {
-    minHeight: SIZE.MVS(106),
+    minHeight: SIZE.MVS(124),
     paddingHorizontal: SIZE.MS(10),
     paddingVertical: SIZE.MVS(8),
     borderRadius: SIZE.MS(8),
@@ -145,6 +145,11 @@ export default StyleSheet.create({
     shadowOffset: {width: 0, height: 2},
     elevation: 2,
   },
+  currentRouteCard: {
+    borderWidth: 2,
+    borderColor: '#16A6D8',
+    backgroundColor: '#F3FCFF',
+  },
   cardTitleRow: {
     minHeight: SIZE.MVS(20),
     flexDirection: 'row',
@@ -154,14 +159,14 @@ export default StyleSheet.create({
     maxWidth: '38%',
     color: '#7546E7',
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(10),
+    fontSize: SIZE.MS(13),
   },
   routeId: {
     flex: 1,
     marginLeft: SIZE.MS(8),
     color: '#343940',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(9),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
   },
   statusBadge: {
     minWidth: SIZE.MS(42),
@@ -181,14 +186,14 @@ export default StyleSheet.create({
   statusText: {
     color: COLORS.WHITE,
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(8),
+    fontSize: SIZE.MS(10),
   },
   addressText: {
     marginTop: SIZE.MVS(2),
     color: '#40454D',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(9),
-    lineHeight: SIZE.MS(13),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
+    lineHeight: SIZE.MS(15),
   },
   addressLabel: {
     fontFamily: FONTS.MEDIUM,
@@ -204,7 +209,7 @@ export default StyleSheet.create({
     flex: 1,
     color: '#363B43',
     fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(9),
+    fontSize: SIZE.MS(11),
   },
   fiberText: {
     maxWidth: '42%',
@@ -212,7 +217,7 @@ export default StyleSheet.create({
     textAlign: 'right',
     color: '#363B43',
     fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(9),
+    fontSize: SIZE.MS(11),
   },
   metaValue: {
     color: '#097FEC',

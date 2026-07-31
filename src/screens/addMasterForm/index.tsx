@@ -35,9 +35,17 @@ import {RootStackParamList} from '@navigation/navigator';
 import {Screen} from '@organisms';
 import {COLORS, FONTS, IMAGES, SIZE} from '@res';
 import {StoreDispatch} from '@reducers';
-import {UpdateMasterAPI} from '@slices/route.slice';
-import {Location, Common} from '@utils';
+import {
+  GetNearestPoleTreeDDAPI,
+  UpdateMasterAPI,
+} from '@slices/route.slice';
+import {Location, Common, ImageWatermark} from '@utils';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
+import {
+  saveFreeAirPlacedMaster,
+  saveRecentlyAddedMaster,
+  saveStandalonePlacedMaster,
+} from '../../services/airPlacedMasterStorage';
 
 type AddMasterFormProps = NativeStackScreenProps<
   RootStackParamList,
@@ -59,7 +67,6 @@ const MASTER_TYPE_OPTIONS: MasterTypeOption[] = [
   {label: 'Tree', value: 'tree'},
   {label: 'Building', value: 'building'},
   {label: 'POP', value: 'pop'},
-  {label: 'Splitter', value: 'splitter'},
   {label: 'Tiffin', value: 'tiffin'},
   {label: 'Enclosure', value: 'enclosure'},
 ];
@@ -161,6 +168,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const showAirPlacementNotice = ['tiffin', 'enclosure'].includes(
     (selectedMasterType || selectedMasterLabel).toLowerCase(),
   );
+  const isFreeAirPlacement =
+    showAirPlacementNotice && !isRouteMasterSelectionFlow;
+  const isStandalonePlacement =
+    ['pole', 'tree', 'building'].includes(selectedMasterType) &&
+    !isRouteMasterSelectionFlow;
 
   const selectedCoordinate = useMemo(
     () => parseLatLng(latLngText),
@@ -257,7 +269,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       saveToPhotos: false,
     };
 
-    launchCamera(options, (res: ImagePickerResponse) => {
+    launchCamera(options, async (res: ImagePickerResponse) => {
       if (res.didCancel || res.errorCode || !res.assets?.length) {
         return;
       }
@@ -267,10 +279,19 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         return;
       }
 
-      if (slot === 1) {
-        setImage1(uri);
-      } else {
-        setImage2(uri);
+      try {
+        const watermarkedUri = await ImageWatermark.applyLocationWatermark(uri);
+        if (slot === 1) {
+          setImage1(watermarkedUri);
+        } else {
+          setImage2(watermarkedUri);
+        }
+      } catch (error) {
+        Common.error('Unable to watermark master image:', error);
+        Alert.alert(
+          'Photo Not Added',
+          'The location watermark could not be added. Please capture the photo again.',
+        );
       }
     });
   };
@@ -365,6 +386,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       Landmark: landmark.trim(),
       LatLng: latLngText.trim(),
       Extra1: remarks.trim(),
+      ...(isFreeAirPlacement ? {Extra2: 'Placed in the air'} : {}),
     };
 
     if (image1) {
@@ -385,11 +407,25 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
 
     try {
       setIsSubmitting(true);
-      await dispatch(UpdateMasterAPI(payload)).unwrap();
+      const updateResponse = await dispatch(UpdateMasterAPI(payload)).unwrap();
       Common.showToast(`${selectedMasterLabel} added successfully!`);
+      const createdMasterId = Number(
+        updateResponse?.data?.id ??
+          updateResponse?.data?.Id ??
+          updateResponse?.id ??
+          updateResponse?.Id ??
+          (typeof updateResponse?.data === 'number'
+            ? updateResponse.data
+            : undefined) ??
+          (typeof updateResponse === 'number' ? updateResponse : undefined),
+      );
 
       const addedMaster = {
-        id: 0,
+        ...(updateResponse && typeof updateResponse === 'object'
+          ? updateResponse
+          : {}),
+        id: Number.isFinite(createdMasterId) ? createdMasterId : 0,
+        masterId: Number.isFinite(createdMasterId) ? createdMasterId : 0,
         name: masterName,
         masterType: selectedMasterType || selectedMasterLabel.toLowerCase(),
         MasterType: selectedMasterLabel,
@@ -401,6 +437,12 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         status: true,
         isActive: true,
         extra1: remarks.trim(),
+        extra2: isFreeAirPlacement ? 'Placed in the air' : '',
+        placementMode: isFreeAirPlacement
+          ? 'air'
+          : isStandalonePlacement
+          ? 'standalone'
+          : undefined,
         image1,
         image2,
         imageUrl1: image1,
@@ -409,7 +451,62 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
 
       const addedMasterKey = `${masterName}-${Date.now()}`;
 
+      if (isFreeAirPlacement) {
+        saveFreeAirPlacedMaster(addedMaster);
+      } else if (isStandalonePlacement) {
+        saveStandalonePlacedMaster(addedMaster);
+      } else {
+        saveRecentlyAddedMaster(addedMaster);
+      }
+
+      let nearestApiMasters: any;
+      if (isStandalonePlacement && selectedCoordinate) {
+        try {
+          nearestApiMasters = await dispatch(
+            GetNearestPoleTreeDDAPI({
+              latLng: getLatLngText(selectedCoordinate),
+              labelType: selectedMasterType,
+              range: 200,
+              type: 'master',
+              status: true,
+            }),
+          ).unwrap();
+        } catch (nearestError) {
+          console.warn(
+            '[AddMasterForm] Nearest-master refresh after save failed:',
+            nearestError,
+          );
+        }
+      }
+
       if (isRouteMasterSelectionFlow) {
+        if (route.params?.returnToFiberChange) {
+          (navigation as any).popTo('Fiber-Change', {
+            selectedRoute: route.params?.fiberChangeRoute ?? {},
+            selectedFibers: route.params?.fiberChangeSelectedFibers ?? [],
+            installationScope:
+              route.params?.fiberChangeInstallationScope ?? 'partial',
+            installationProgress:
+              route.params?.fiberChangeInstallationProgress,
+            currentPosition: selectedCoordinate,
+            currentAddress: selectedAddress.trim(),
+            addedMaster,
+            addedMasterKey,
+          });
+          return;
+        }
+
+        if (route.params?.returnToRouteHub) {
+          (navigation as any).popTo('Route-Master-Hub', {
+            currentPosition: selectedCoordinate,
+            currentAddress: selectedAddress.trim(),
+            initialMasters: route.params?.routeInitialMasters ?? [],
+            addedMaster,
+            addedMasterKey,
+          });
+          return;
+        }
+
         navigation.popTo('Select-Route-Master', {
           routeSelectionMode: true,
           routeName: asCleanText(route.params?.routeName) || 'Unnamed Route',
@@ -430,6 +527,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         selectedMasterLabel,
         currentPosition: selectedCoordinate,
         currentAddress: selectedAddress.trim(),
+        initialMasters: nearestApiMasters,
         addedMaster,
         addedMasterKey,
       });
@@ -480,6 +578,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
+      keyboardAvoidingEnabled={Platform.OS === 'ios'}
       statusBgColor={isRouteMasterSelectionFlow ? '#8858F9' : '#F4F7FB'}
       statusBarStyle={isRouteMasterSelectionFlow ? 'light' : 'dark'}>
       <StatusBar

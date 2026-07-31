@@ -19,7 +19,7 @@ import CustomAlert from '../../components/molecules/CustomAlert';
 import {ScreenProps, DataType} from '@types';
 import {COLORS, IMAGES, FONTS, SIZE} from '@res';
 import LinearGradient from 'react-native-linear-gradient';
-import {Location, Common} from '@utils';
+import {Location, Common, ImageWatermark} from '@utils';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
 import {StoreDispatch} from '@reducers';
 import {
@@ -66,7 +66,6 @@ const PICKER_DATA: PickerItem[] = [
   {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
   {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
   {label: 'POP', value: 'POP', icon: IMAGES.FiberEnclosur},
-  {label: 'Splitter', value: 'Splitter', icon: IMAGES.enclosureIcon},
   {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
   {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
 ];
@@ -760,12 +759,21 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       maxHeight: 800,
       saveToPhotos: false,
     };
-    launchCamera(options, (res: ImagePickerResponse) => {
+    launchCamera(options, async (res: ImagePickerResponse) => {
       if (res.didCancel || res.errorCode || !res.assets?.length) return;
       const uri = res.assets[0]?.uri;
       if (!uri) return;
-      if (slot === 1) setImage1(uri);
-      else setImage2(uri);
+      try {
+        const watermarkedUri = await ImageWatermark.applyLocationWatermark(uri);
+        if (slot === 1) setImage1(watermarkedUri);
+        else setImage2(watermarkedUri);
+      } catch (error) {
+        Common.error('Unable to watermark master image:', error);
+        Alert.alert(
+          'Photo Not Added',
+          'The location watermark could not be added. Please capture the photo again.',
+        );
+      }
     });
   };
 
@@ -1332,8 +1340,8 @@ const localStyles = StyleSheet.create({
     marginRight: SIZE.MS(10),
   },
   typeLabel: {
-    fontSize: SIZE.MS(14),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(16),
+    fontFamily: FONTS.BOLD,
     color: '#333',
   },
   typeLabelSelected: {
@@ -1374,8 +1382,8 @@ const localStyles = StyleSheet.create({
     borderRadius: SIZE.MS(25),
   },
   actionBtnText: {
-    fontSize: SIZE.MS(14),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(15),
+    fontFamily: FONTS.BOLD,
     color: COLORS.WHITE,
     letterSpacing: 0.3,
   },
@@ -1404,7 +1412,7 @@ const modalStyles = StyleSheet.create({
     borderBottomColor: '#F0F0F0',
   },
   headerText: {
-    fontSize: SIZE.MS(16),
+    fontSize: SIZE.MS(19),
     fontFamily: FONTS.BOLD,
     color: COLORS.colorDarkslategray,
   },
@@ -1432,17 +1440,17 @@ const modalStyles = StyleSheet.create({
     borderBottomColor: '#F5F5F5',
   },
   masterName: {
-    fontSize: SIZE.MS(14),
+    fontSize: SIZE.MS(16),
     fontWeight: '600',
     color: '#6C4DFF',
     fontFamily: FONTS.SEMI_BOLD,
   },
   masterAddress: {
-    fontSize: SIZE.MS(12),
+    fontSize: SIZE.MS(14),
     color: '#555',
     marginTop: SIZE.MS(4),
-    fontFamily: FONTS.MEDIUM,
-    lineHeight: SIZE.MS(17),
+    fontFamily: FONTS.SEMI_BOLD,
+    lineHeight: SIZE.MS(19),
   },
   emptyBox: {
     paddingVertical: SIZE.MS(40),
@@ -1461,9 +1469,9 @@ const modalStyles = StyleSheet.create({
     borderRadius: SIZE.MS(20),
   },
   closeBtnText: {
-    fontSize: SIZE.MS(13),
+    fontSize: SIZE.MS(15),
     color: '#333',
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.BOLD,
   },
 });
 

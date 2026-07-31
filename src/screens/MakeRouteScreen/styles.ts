@@ -84,19 +84,19 @@ export default StyleSheet.create({
   routeNameLabel: {
     color: '#41464E',
     fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(10),
+    fontSize: SIZE.MS(12),
     marginRight: SIZE.MS(5),
   },
   routeNameText: {
     flex: 1,
     color: '#7145E8',
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(10),
+    fontSize: SIZE.MS(13),
   },
   totalDistanceText: {
     color: '#626872',
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(9),
+    fontSize: SIZE.MS(11),
   },
   routeList: {
     flex: 1,
@@ -136,8 +136,8 @@ export default StyleSheet.create({
   },
   masterTitle: {
     color: '#323740',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(13),
   },
   masterTypeText: {
     color: '#7145E8',
@@ -146,8 +146,8 @@ export default StyleSheet.create({
   masterAddress: {
     marginTop: SIZE.MVS(2),
     color: '#747A84',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(8),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
   },
   loopColumn: {
     width: SIZE.MS(76),
@@ -178,8 +178,8 @@ export default StyleSheet.create({
     paddingVertical: 0,
     paddingHorizontal: 0,
     color: '#41464E',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(8),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
     textAlign: 'right',
   },
   loopInputRow: {
@@ -192,19 +192,19 @@ export default StyleSheet.create({
     marginLeft: SIZE.MS(3),
     color: '#5F6570',
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(8),
+    fontSize: SIZE.MS(10),
   },
   loopLockedText: {
     color: '#686E78',
     fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(7.5),
+    fontSize: SIZE.MS(10),
     textAlign: 'center',
   },
   masterTotalDistance: {
     marginTop: SIZE.MVS(2),
     color: '#5C626C',
     fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(7),
+    fontSize: SIZE.MS(10),
     textAlign: 'right',
   },
   masterThumbnail: {
@@ -222,6 +222,41 @@ export default StyleSheet.create({
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
+  },
+  fiberCameraImage: {
+    resizeMode: 'contain',
+    width: '58%',
+    height: '58%',
+    alignSelf: 'center',
+    marginTop: '21%',
+    tintColor: '#555A62',
+  },
+  fiberPhotoWrap: {
+    position: 'relative',
+    width: SIZE.MS(35),
+    height: SIZE.MS(35),
+    marginRight: SIZE.MS(2),
+  },
+  fiberPhotoDelete: {
+    position: 'absolute',
+    top: -SIZE.MS(5),
+    right: -SIZE.MS(1),
+    zIndex: 4,
+    width: SIZE.MS(16),
+    height: SIZE.MS(16),
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: SIZE.MS(8),
+    borderWidth: 1,
+    borderColor: COLORS.WHITE,
+    backgroundColor: '#E94455',
+  },
+  fiberPhotoDeleteText: {
+    marginTop: -SIZE.MVS(1),
+    color: COLORS.WHITE,
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
+    lineHeight: SIZE.MS(12),
   },
   imageCountBadge: {
     position: 'absolute',
@@ -271,9 +306,18 @@ export default StyleSheet.create({
     borderStyle: 'dashed',
     borderColor: '#A9AFB8',
   },
-  walkingPill: {
+  distanceConnector: {
     alignSelf: 'flex-start',
-    minWidth: SIZE.MS(58),
+    minWidth: SIZE.MS(72),
+    minHeight: SIZE.MVS(25),
+    marginLeft: SIZE.MS(7),
+    paddingHorizontal: SIZE.MS(3),
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  liveWalkingPill: {
+    alignSelf: 'flex-start',
+    minWidth: SIZE.MS(62),
     height: SIZE.MVS(27),
     marginLeft: SIZE.MS(7),
     paddingHorizontal: SIZE.MS(7),
@@ -290,9 +334,22 @@ export default StyleSheet.create({
     resizeMode: 'contain',
     marginRight: SIZE.MS(4),
   },
+  distanceArrow: {
+    width: SIZE.MS(16),
+    marginRight: SIZE.MS(2),
+    color: '#1886F2',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(18),
+    lineHeight: SIZE.MS(20),
+    textAlign: 'center',
+  },
   walkingDistance: {
-    color: '#7145E8',
+    color: '#1886F2',
     fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(10),
+  },
+  liveWalkingDistance: {
+    color: '#7145E8',
     fontSize: SIZE.MS(9),
   },
   drumWarningRow: {
@@ -418,8 +475,8 @@ export default StyleSheet.create({
     marginTop: SIZE.MVS(10),
     marginBottom: SIZE.MVS(12),
     color: '#30353D',
-    fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(14),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(18),
     textAlign: 'center',
   },
   drumFormCard: {
@@ -443,8 +500,8 @@ export default StyleSheet.create({
     minHeight: SIZE.MVS(16),
     marginBottom: SIZE.MVS(5),
     color: '#454A53',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(8.5),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
   },
   drumRequired: {
     color: '#E83D4E',
@@ -470,8 +527,8 @@ export default StyleSheet.create({
   drumSelectText: {
     flex: 1,
     color: '#3D424B',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(8.5),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
   },
   drumPlaceholderText: {
     color: '#9CA3AF',
@@ -494,8 +551,8 @@ export default StyleSheet.create({
   },
   drumAvailableText: {
     color: '#525862',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(8.5),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
   },
   drumLengthInputWrap: {
     height: SIZE.MVS(36),
@@ -513,15 +570,15 @@ export default StyleSheet.create({
     paddingVertical: 0,
     paddingHorizontal: 0,
     color: '#3D424B',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(9),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
     textAlign: 'right',
   },
   drumLengthSuffix: {
     marginLeft: SIZE.MS(3),
     color: '#5F6570',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(8.5),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
   },
   drumOptionsList: {
     maxHeight: SIZE.MVS(150),
@@ -552,14 +609,14 @@ export default StyleSheet.create({
   },
   drumOptionLabel: {
     color: '#353A43',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(9.5),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(13),
   },
   drumOptionMeta: {
     marginTop: SIZE.MVS(2),
     color: '#737984',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(8),
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
   },
   drumRadio: {
     width: SIZE.MS(15),
@@ -638,8 +695,8 @@ export default StyleSheet.create({
   },
   drumSheetActionText: {
     color: COLORS.WHITE,
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(14),
   },
   alertOverlay: {
     flex: 1,

@@ -7,7 +7,7 @@ import React, {useEffect, useRef} from 'react';
 import {StyleSheet} from 'react-native';
 import {Camera, CameraType} from 'react-native-camera-kit';
 import ModalSheet from '../modal-sheet';
-import {Common} from '@utils';
+import {Common, ImageWatermark} from '@utils';
 import {useDispatch} from 'react-redux';
 import {StoreDispatch} from '@reducers';
 import {checkCameraPermission} from '@slices/permission.slice';
@@ -29,13 +29,18 @@ const CameraView: React.FC<CameraView> = ({show, onDone, onClose}) => {
   const captureImage = async () => {
     try {
       const image = await cameraRef.current?.capture();
-      const base64Image = await Common.convertImageToBase64(image.uri);
+      const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+        image.uri,
+      );
+      const base64Image = await Common.convertImageToBase64(watermarkedUri);
 
       if (base64Image) {
         Common.log('Base64 Image', base64Image);
         // <Image source={{ uri: `data:image/jpeg;base64,${base64String}` }} />
         onDone?.({
           ...image,
+          uri: watermarkedUri,
+          path: watermarkedUri,
           base64: base64Image,
         });
       }

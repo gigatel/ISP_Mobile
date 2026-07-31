@@ -1,5 +1,6 @@
 import {APIs, URLs} from '@apis';
 import {createAsyncThunk, createSlice} from '@reduxjs/toolkit';
+import {ensureLocationWatermark} from '../../utils/imageWatermark';
 
 const ROUTE = 'route';
 
@@ -39,20 +40,20 @@ export interface CreateInitialRouteArgs {
 export interface InsertUpdateRouteChamberMappingArgs {
   id?: number;
   routeId: number;
-  masterType: string;
-  masterId: number;
-  distance: number;
-  endLatLng: string;
-  endSelectedAddress: string;
-  endAddress: string;
-  endLandmark: string;
-  endArea: string;
-  endCity: string;
-  endState: string;
-  endPincode: number;
-  endCountry: string;
-  routeLength: number;
-  orderNo: number;
+  masterType?: string;
+  masterId?: number;
+  distance?: number;
+  endLatLng?: string;
+  endSelectedAddress?: string;
+  endAddress?: string;
+  endLandmark?: string;
+  endArea?: string;
+  endCity?: string;
+  endState?: string;
+  endPincode?: number;
+  endCountry?: string;
+  routeLength?: number;
+  orderNo?: number;
   totalLength?: number;
   drumLength?: number;
   drumRemainingLength?: number;
@@ -60,7 +61,28 @@ export interface InsertUpdateRouteChamberMappingArgs {
   fiberId?: string | number;
   fiberType?: string;
   fiberUsedBy?: string;
+  drumId?: string | number;
   drumNo?: string;
+  changeScope?: 'Full' | 'Partial';
+  fiberChangeScope?: 'FullRoute' | 'PartialRoute' | 'WithoutSLD';
+  isPartialChange?: boolean;
+  isStartingPoint?: boolean;
+  fromOrderNo?: number;
+  toOrderNo?: number;
+  fromMasterName?: string;
+  toMasterName?: string;
+  fromMasterType?: string;
+  toMasterType?: string;
+  fromAddress?: string;
+  toAddress?: string;
+  fromLatLng?: string;
+  toLatLng?: string;
+  segmentLength?: number;
+  imageFile?: {
+    uri: string;
+    type: string;
+    fileName: string;
+  };
 }
 export interface GetMasterByNameArgs {
   name?: string;
@@ -79,6 +101,27 @@ export interface GetRouteDetailsPaggiArgs {
   page: number;
   size: number;
   search: string;
+}
+export interface GetRouteFiberAllDataBySLDIdISPArgs {
+  routeId: number;
+}
+export interface InstallFiberBySLDTempItem {
+  sldId: string | number;
+  fiberId: string | number;
+  drumLength: number;
+  drumRemainingLength: number;
+  masterType: string;
+  orderNo: number;
+  loopUsed: number;
+  imageFile: {
+    uri: string;
+    type: string;
+    fileName: string;
+  };
+}
+export interface InstallFiberBySLDTempArgs {
+  routeId: number;
+  installations: InstallFiberBySLDTempItem[];
 }
 export interface UpdateMasterArgs {
   Id?: number;
@@ -324,6 +367,152 @@ export const GetRouteDetailsPaggiAPI = createAsyncThunk<
     });
   }
 });
+
+export const GetRouteFiberAllDataBySLDIdISPAPI = createAsyncThunk<
+  any[],
+  GetRouteFiberAllDataBySLDIdISPArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetRouteFiberAllDataBySLDIdISP`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getRouteFiberAllDataBySLDIdISP,
+      params: `?RouteId=${encodeURIComponent(String(payload.routeId))}`,
+      isAuth: true,
+    });
+
+    if (res?.status === 200 && res?.success) {
+      return Array.isArray(res?.data) ? res.data : [];
+    }
+    if (Array.isArray(res)) {
+      return res;
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load route fiber details',
+      data: error,
+    });
+  }
+});
+
+export const installFiberBySLDTempAPI = createAsyncThunk<
+  any,
+  InstallFiberBySLDTempArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/InstallFiberBySLDTemp`, async (payload, thunkApi) => {
+  try {
+    console.log(
+      '📤 InstallFiberBySLDTemp PAYLOAD:',
+      JSON.stringify(payload, null, 2),
+    );
+
+    const formData = new FormData();
+    formData.append('RouteId', String(payload.routeId));
+
+    const watermarkedInstallations = await Promise.all(
+      payload.installations.map(async item => ({
+        ...item,
+        imageFile: {
+          ...item.imageFile,
+          uri: await ensureLocationWatermark(item.imageFile.uri),
+        },
+      })),
+    );
+
+    watermarkedInstallations.forEach((item, index) => {
+      const key = `Installations[${index}]`;
+      formData.append(`${key}.SLDId`, String(item.sldId));
+      formData.append(`${key}.FiberId`, String(item.fiberId));
+      formData.append(`${key}.DrumLength`, String(item.drumLength));
+      formData.append(
+        `${key}.DrumRemainingLength`,
+        String(item.drumRemainingLength),
+      );
+      formData.append(`${key}.MasterType`, item.masterType);
+      formData.append(`${key}.OrderNo`, String(item.orderNo));
+      formData.append(`${key}.LoopUsed`, String(item.loopUsed));
+      formData.append(`${key}.ImageFile`, {
+        uri: item.imageFile.uri,
+        type: item.imageFile.type,
+        name: item.imageFile.fileName,
+      } as any);
+    });
+
+    const res = await (APIs as any).postRequestWithFormData({
+      path: URLs.installFiberBySLDTemp,
+      body: formData,
+      isAuth: true,
+    });
+
+    console.log(
+      '📥 InstallFiberBySLDTemp RESPONSE:',
+      JSON.stringify(res, null, 2),
+    );
+
+    const successfulStatus =
+      Number(res?.status) >= 200 && Number(res?.status) < 300;
+    if (res?.success === true || (successfulStatus && res?.success !== false)) {
+      return res?.data ?? res;
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    console.error('❌ InstallFiberBySLDTemp ERROR:', error);
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to install the SLD fiber.',
+      data: error,
+    });
+  }
+});
+
+export const GetRouteFiberMappingPaggiISPAPI = createAsyncThunk<
+  any,
+  GetRouteDetailsPaggiArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetRouteFiberMappingPaggiISP`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.postRequestWithJsonWithBody({
+      path: URLs.getRouteFiberMappingPaggiISP,
+      body: {
+        page: Math.max(1, Number(payload.page) || 1),
+        size: Math.max(1, Number(payload.size) || 10),
+        search: String(payload.search ?? '').trim(),
+      },
+      isAuth: true,
+    });
+
+    if (res?.status === 200 && res?.success) {
+      return {
+        recordsTotal: Number(res?.recordsTotal) || 0,
+        recordsFiltered: Number(res?.recordsFiltered) || 0,
+        data: Array.isArray(res?.data) ? res.data : [],
+      };
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load route fiber mappings',
+      data: error,
+    });
+  }
+});
 export const createInitialRouteAPI = createAsyncThunk<
   any,
   CreateInitialRouteArgs,
@@ -378,10 +567,136 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
   {rejectValue: ApiError}
 >(`${ROUTE}/insertUpdateRouteChamberMappingAPI`, async (payload, thunkApi) => {
   try {
+    const requestPath = payload.fiberChangeScope
+      ? URLs.InsertUpdateRouteFiberMappingByRoute
+      : URLs.InsertUpdateRouteChamberMapping;
+
+    if (payload.fiberChangeScope) {
+      const numericFiberId = Number(payload.fiberId);
+      if (!Number.isInteger(numericFiberId) || numericFiberId <= 0) {
+        return thunkApi.rejectWithValue({
+          message: 'FiberId must be a single positive integer.',
+        });
+      }
+
+      const formData = new FormData();
+      const fiberMappingFields: Array<[string, string | number | boolean]> = [
+        ['FiberUsedBy', payload.fiberUsedBy ?? ''],
+        ['LoopUsed', payload.loopUsed ?? 0],
+        ['EndLatLng', payload.endLatLng ?? ''],
+        ['RouteId', payload.routeId],
+        ['FromOrderNo', payload.fromOrderNo ?? 0],
+        ['EndCity', payload.endCity ?? ''],
+        ['FiberType', payload.fiberType ?? ''],
+        ['DrumNo', payload.drumNo ?? ''],
+        ['FiberId', numericFiberId],
+        ['IsPartialChange', payload.isPartialChange ?? false],
+        ['EndPincode', payload.endPincode || ''],
+        ['EndArea', payload.endArea ?? ''],
+        ['TotalLength', payload.totalLength ?? 0],
+        ['DrumLength', payload.drumLength ?? 0],
+        ['OrderNo', payload.orderNo ?? 1],
+        ['RouteLength', payload.routeLength ?? 0],
+        ['EndLandmark', payload.endLandmark ?? ''],
+        ['ToOrderNo', payload.toOrderNo ?? 0],
+        ['Distance', payload.distance ?? 0],
+        ['EndState', payload.endState ?? ''],
+        ['DrumRemainingLength', payload.drumRemainingLength ?? 0],
+        ['FiberChangeScope', payload.fiberChangeScope],
+        ['EndAddress', payload.endAddress ?? ''],
+        ['SegmentLength', payload.segmentLength ?? 0],
+        ['Id', payload.id ?? 0],
+        ['EndCountry', payload.endCountry ?? ''],
+        ['MasterType', payload.masterType ?? ''],
+        ['MasterId', payload.masterId ?? 0],
+      ];
+      if (payload.fiberChangeScope === 'PartialRoute') {
+        fiberMappingFields.push([
+          'IsStartingPoint',
+          payload.isStartingPoint ?? false,
+        ]);
+      }
+      fiberMappingFields.forEach(([key, value]) => {
+        formData.append(key, String(value));
+      });
+
+      if (payload.imageFile) {
+        const watermarkedImageUri = await ensureLocationWatermark(
+          payload.imageFile.uri,
+        );
+        formData.append('ImageFile', {
+          uri: watermarkedImageUri,
+          type: payload.imageFile.type,
+          name: payload.imageFile.fileName,
+        } as any);
+      } else {
+        formData.append('ImageFile', '');
+      }
+
+      const fiberMappingResponse = await (APIs as any).postRequestWithFormData({
+        path: requestPath,
+        body: formData,
+        isAuth: true,
+      });
+      const successfulStatus =
+        Number(fiberMappingResponse?.status) >= 200 &&
+        Number(fiberMappingResponse?.status) < 300;
+      if (
+        fiberMappingResponse?.success === true ||
+        (successfulStatus && fiberMappingResponse?.success !== false)
+      ) {
+        return fiberMappingResponse?.data ?? fiberMappingResponse;
+      }
+      return thunkApi.rejectWithValue({
+        status: fiberMappingResponse?.status,
+        message: extractErrorMessage(fiberMappingResponse),
+        data: fiberMappingResponse,
+      });
+    }
+
+    if (payload.imageFile) {
+      const watermarkedImageUri = await ensureLocationWatermark(
+        payload.imageFile.uri,
+      );
+      const formData = new FormData();
+      Object.entries(payload).forEach(([key, value]) => {
+        if (key === 'imageFile' || value === undefined || value === null) {
+          return;
+        }
+        const apiFieldName = `${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+        formData.append(apiFieldName, String(value));
+      });
+      formData.append('ImageFile', {
+        uri: watermarkedImageUri,
+        type: payload.imageFile.type,
+        name: payload.imageFile.fileName,
+      } as any);
+
+      const multipartResponse = await (APIs as any).postRequestWithFormData({
+        path: requestPath,
+        body: formData,
+        isAuth: true,
+      });
+      const successfulStatus =
+        Number(multipartResponse?.status) >= 200 &&
+        Number(multipartResponse?.status) < 300;
+      if (
+        multipartResponse?.success === true ||
+        (successfulStatus && multipartResponse?.success !== false)
+      ) {
+        return multipartResponse?.data ?? multipartResponse;
+      }
+      return thunkApi.rejectWithValue({
+        status: multipartResponse?.status,
+        message: extractErrorMessage(multipartResponse),
+        data: multipartResponse,
+      });
+    }
+
     const body = {...payload};
 
     const res = await APIs.postRequestWithJsonWithBody({
-      path: URLs.InsertUpdateRouteChamberMapping,
+      path: requestPath,
       body,
       isAuth: true,
     });
@@ -427,16 +742,22 @@ export const UpdateMasterAPI = createAsyncThunk<
     if (payload.Image2) formData.append('Image2', payload.Image2);
 
     if (payload.ImageFile1) {
+      const watermarkedImageUri = await ensureLocationWatermark(
+        payload.ImageFile1.uri,
+      );
       formData.append('ImageFile1', {
-        uri: payload.ImageFile1.uri,
+        uri: watermarkedImageUri,
         type: payload.ImageFile1.type,
         name: payload.ImageFile1.fileName || 'image1.jpg',
       });
     }
 
     if (payload.ImageFile2) {
+      const watermarkedImageUri = await ensureLocationWatermark(
+        payload.ImageFile2.uri,
+      );
       formData.append('ImageFile2', {
-        uri: payload.ImageFile2.uri,
+        uri: watermarkedImageUri,
         type: payload.ImageFile2.type,
         name: payload.ImageFile2.fileName || 'image2.jpg',
       });

@@ -53,9 +53,9 @@ const RadioButton: React.FC<RadioButtonProps> = ({
 export default RadioButton;
 const styles = StyleSheet.create({
   titleText: {
-    fontSize: SIZE.MS(14),
+    fontSize: SIZE.MS(15),
     color: COLORS.TEXT_DARK,
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.SEMI_BOLD,
     marginLeft: SIZE.MS(10),
   },
   mainView: {

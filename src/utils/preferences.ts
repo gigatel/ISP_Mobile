@@ -1,6 +1,5 @@
 import {MMKV, Mode} from 'react-native-mmkv';
-import {log} from './common';
-import {Common} from '@utils';
+import {error, log} from './common';
 
 const storage = new MMKV({
   id: 'gigatel-gtpl-mobileapp',
@@ -53,6 +52,9 @@ export const KEY = {
   PAUSED_ROUTE_DRAFTS: 'PAUSED_ROUTE_DRAFTS',
   COMPLETED_APP_ROUTES: 'COMPLETED_APP_ROUTES',
   ROUTE_FIBER_SELECTIONS: 'ROUTE_FIBER_SELECTIONS',
+  AIR_PLACED_MASTERS: 'AIR_PLACED_MASTERS',
+  STANDALONE_PLACED_MASTERS: 'STANDALONE_PLACED_MASTERS',
+  RECENTLY_ADDED_MASTERS: 'RECENTLY_ADDED_MASTERS',
 } as const;
 export const OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX =
   'OFFLINE_TODAY_WORKING_BEHALKF_OF' as const;
@@ -91,6 +93,9 @@ export const logout = async () => {
   removeData('LAST_FULL_ADDRESS');
   removeData('STORAGE_KEY');
   removeData('OLA_MAPS_API_KEY');
+  removeData('AIR_PLACED_MASTERS');
+  removeData('STANDALONE_PLACED_MASTERS');
+  removeData('RECENTLY_ADDED_MASTERS');
 };
 export type KeyType = keyof typeof KEY;
 export type PreferenceKey =
@@ -113,7 +118,7 @@ export const getData = (key: PreferenceKey) => {
     }
     return JSON.parse(jsonValue);
   } catch (e) {
-    Common.error('Error in Get Data for ->', key, e);
+    error('Error in Get Data for ->', key, e);
     return null; // Return null on error
   }
 };

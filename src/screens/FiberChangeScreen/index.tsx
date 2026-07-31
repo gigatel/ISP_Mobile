@@ -1,7 +1,9 @@
-import React, {FC, useMemo, useRef, useState} from 'react';
+import React, {FC, useEffect, useMemo, useRef, useState} from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -13,11 +15,22 @@ import {
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
+import {
+  check,
+  openSettings,
+  PERMISSIONS,
+  request,
+  RESULTS,
+} from 'react-native-permissions';
 import LinearGradient from 'react-native-linear-gradient';
+import MapView, {Marker, PROVIDER_GOOGLE} from 'react-native-maps';
+import {useDispatch} from 'react-redux';
 import {BackHeader} from '@molecules';
 import type {RootStackParamList} from '@navigation/navigator';
 import {Screen} from '@organisms';
+import {StoreDispatch} from '@reducers';
 import {COLORS, IMAGES, SIZE} from '@res';
+import {GetRouteFiberAllDataBySLDIdISPAPI} from '@slices/route.slice';
 import {Location} from '@utils';
 import {
   getCompletedAppRoute,
@@ -41,12 +54,20 @@ type RouteMaster = {
   address: string;
   latLngText: string;
   coordinate: Coordinate | null;
+  orderNo: number;
   distance: number;
   fiberLabel: string;
+  placedType: string;
   active: boolean;
   images: string[];
   icon: any;
   loopMeters: string;
+};
+
+type RouteFiberSegment = {
+  fromOrderNo: number;
+  toOrderNo: number;
+  fiberLabel: string;
 };
 
 const MASTER_META: Record<string, {label: string; icon: any}> = {
@@ -138,21 +159,241 @@ const requestCurrentPosition = (
   });
 
 const getMasterArrays = (route: any): any[] => {
-  const candidates = [
-    route?.routeChamberMappingVM,
-    route?.routeChamberMappings,
-    route?.routeMasterDetails,
-    route?.routeMasters,
-    route?.masterDetails,
-    route?.masters,
-  ];
-  return candidates.find(Array.isArray) ?? [];
+  const sources = [route, route?.data, route?.routeDetails].filter(Boolean);
+  const candidates = sources.flatMap(source => [
+    source?.routeChamberMappingVM,
+    source?.RouteChamberMappingVM,
+    source?.routeChamberMappingVMs,
+    source?.routeChamberMappings,
+    source?.routeMasterMappingVM,
+    source?.routeMasterMappingVMs,
+    source?.routeMasterDetails,
+    source?.routeMasters,
+    source?.masterDetails,
+    source?.masters,
+    source?.masterList,
+    source?.routePoints,
+    source?.points,
+  ]);
+
+  return (
+    candidates
+      .filter((candidate): candidate is any[] => Array.isArray(candidate))
+      .sort((first, second) => second.length - first.length)[0] ?? []
+  );
+};
+
+const parseMasterDetails = (value: unknown): any[] => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const getMastersFromRouteFiberData = (fiberData: any[]) =>
+  fiberData.flatMap(fiber =>
+    parseMasterDetails(fiber?.masterDetails ?? fiber?.MasterDetails).map(
+      master => ({
+        ...master,
+        fiberId:
+          master?.fiberId ??
+          master?.FiberId ??
+          master?.fiberTypeId ??
+          master?.FiberTypeId ??
+          fiber?.fiberId ??
+          fiber?.FiberId,
+        fiberTypeName:
+          master?.fiberTypeName ?? fiber?.fiberName ?? fiber?.FiberName,
+        loopMeters:
+          master?.loopMeters ??
+          master?.LoopMeters ??
+          master?.Loop ??
+          master?.loop ??
+          master?.LoopUsed ??
+          fiber?.loopMeters ??
+          fiber?.LoopMeters ??
+          fiber?.LoopUsed,
+      }),
+    ),
+  );
+
+const getFibersFromRouteFiberData = (
+  fiberData: any[],
+): StoredRouteFiberSelection[] =>
+  fiberData.map((fiber, index) => {
+    const totalDrumLength = Number(
+      fiber?.totalDrumLength ?? fiber?.TotalDrumLength,
+    );
+    const remainingDrumLength = Number(
+      fiber?.remainingDrumLength ?? fiber?.RemainingDrumLength,
+    );
+    const safeTotalDrumLength = Number.isFinite(totalDrumLength)
+      ? totalDrumLength
+      : 0;
+    const safeRemainingDrumLength = Number.isFinite(remainingDrumLength)
+      ? remainingDrumLength
+      : 0;
+    const sldId = Number(fiber?.sldId ?? fiber?.SLDId);
+    const fiberId = asText(fiber?.fiberId ?? fiber?.FiberId);
+    const fiberCode = asText(fiber?.fiberCode ?? fiber?.FiberCode);
+    const masterDetails = parseMasterDetails(
+      fiber?.masterDetails ?? fiber?.MasterDetails,
+    ).sort(
+      (first, second) =>
+        Number(first?.orderNo ?? first?.OrderNo) -
+        Number(second?.orderNo ?? second?.OrderNo),
+    );
+    const firstMaster = masterDetails[0];
+    const lastMaster = masterDetails[masterDetails.length - 1];
+    const fromOrderNo = Number(
+      fiber?.fromOrderNo ??
+        fiber?.FromOrderNo ??
+        firstMaster?.orderNo ??
+        firstMaster?.OrderNo,
+    );
+    const toOrderNo = Number(
+      fiber?.toOrderNo ??
+        fiber?.ToOrderNo ??
+        lastMaster?.orderNo ??
+        lastMaster?.OrderNo,
+    );
+    const segmentDistance = Math.round(
+      masterDetails.slice(1).reduce((total, master, masterIndex) => {
+        const fromCoordinate = parseCoordinateText(
+          masterDetails[masterIndex]?.latLng ??
+            masterDetails[masterIndex]?.LatLng,
+        );
+        const toCoordinate = parseCoordinateText(
+          master?.latLng ?? master?.LatLng,
+        );
+        return fromCoordinate && toCoordinate
+          ? total + distanceBetween(fromCoordinate, toCoordinate)
+          : total;
+      }, 0),
+    );
+    const fromAddress = asText(
+      fiber?.fromAddress ??
+        fiber?.FromAddress ??
+        firstMaster?.selectedAddress ??
+        firstMaster?.SelectedAddress ??
+        firstMaster?.address ??
+        firstMaster?.Address,
+    );
+    const toAddress = asText(
+      fiber?.toAddress ??
+        fiber?.ToAddress ??
+        lastMaster?.selectedAddress ??
+        lastMaster?.SelectedAddress ??
+        lastMaster?.address ??
+        lastMaster?.Address,
+    );
+
+    return {
+      id: `server-sld-${sldId || index}-${fiberId || fiberCode || index}-${
+        fromOrderNo || 'start'
+      }-${toOrderNo || 'end'}`,
+      fiberId,
+      fiberLabel:
+        asText(fiber?.fiberName ?? fiber?.FiberName) || 'Fiber unavailable',
+      armourLabel: '',
+      tubeCount: '',
+      coreCount: '',
+      drumId: '',
+      drumLabel: '',
+      drumLength: safeTotalDrumLength,
+      lengthToUse: Math.max(0, safeTotalDrumLength - safeRemainingDrumLength),
+      sldId: Number.isFinite(sldId) ? sldId : undefined,
+      sldCode: asText(fiber?.sldCode ?? fiber?.SLDCode),
+      fiberCode,
+      totalDrumLength: safeTotalDrumLength,
+      remainingDrumLength: safeRemainingDrumLength,
+      masterCount: Number(fiber?.masterCount ?? fiber?.MasterCount) || 0,
+      totalDistance: segmentDistance,
+      changeScope:
+        asText(fiber?.changeScope ?? fiber?.ChangeScope).toLowerCase() ===
+          'partial' || fiber?.isPartialChange === true
+          ? 'Partial'
+          : 'Full',
+      fromOrderNo: Number.isFinite(fromOrderNo) ? fromOrderNo : undefined,
+      toOrderNo: Number.isFinite(toOrderNo) ? toOrderNo : undefined,
+      fromMasterName: asText(
+        fiber?.fromMasterName ??
+          fiber?.FromMasterName ??
+          firstMaster?.name ??
+          firstMaster?.Name,
+      ),
+      toMasterName: asText(
+        fiber?.toMasterName ??
+          fiber?.ToMasterName ??
+          lastMaster?.name ??
+          lastMaster?.Name,
+      ),
+      fromAddress,
+      toAddress,
+      addedAt: 0,
+    };
+  });
+
+const getFiberSegmentsFromRouteFiberData = (
+  fiberData: any[],
+): RouteFiberSegment[] =>
+  getFibersFromRouteFiberData(fiberData)
+    .filter(
+      fiber => fiber.fromOrderNo !== undefined && fiber.toOrderNo !== undefined,
+    )
+    .map(fiber => ({
+      fromOrderNo: fiber.fromOrderNo as number,
+      toOrderNo: fiber.toOrderNo as number,
+      fiberLabel: fiber.fiberLabel,
+    }));
+
+const getFiberSegmentsFromSelections = (
+  selections: StoredRouteFiberSelection[],
+): RouteFiberSegment[] =>
+  selections
+    .filter(selection => {
+      const fromOrderNo = Number(selection.fromOrderNo);
+      const toOrderNo = Number(selection.toOrderNo);
+      return (
+        selection.changeScope === 'Partial' &&
+        Number.isFinite(fromOrderNo) &&
+        Number.isFinite(toOrderNo) &&
+        fromOrderNo < toOrderNo &&
+        Boolean(asText(selection.fiberLabel))
+      );
+    })
+    .map(selection => ({
+      fromOrderNo: Number(selection.fromOrderNo),
+      toOrderNo: Number(selection.toOrderNo),
+      fiberLabel: selection.fiberLabel,
+    }))
+    .reverse();
+
+const getRouteRecordId = (value: any) => {
+  const directId = Number(value?.routeId ?? value?.RouteId);
+  if (Number.isFinite(directId) && directId > 0) {
+    return directId;
+  }
+  const routeCodeId = asText(value?.routeIdStr ?? value?.RouteIdStr).match(
+    /\d+/,
+  )?.[0];
+  return Number(routeCodeId || value?.id || value?.Id) || 0;
 };
 
 const getImages = (value: any): string[] => {
   const source = value?.master ?? value;
   const candidates = [
+    value?.__fiberChangePhotoUri,
     value?.imageUrls,
+    source?.__fiberChangePhotoUri,
     source?.images,
     source?.Images,
     source?.imageUrl1,
@@ -182,13 +423,17 @@ const normalizeMaster = (
   index: number,
   defaultFiber: string,
 ): RouteMaster => {
-  const source = item?.master ?? item;
+  const source =
+    item?.master ?? item?.masterData ?? item?.ispMaster ?? item?.Master ?? item;
   const masterType = asText(
     item?.masterType ??
       item?.MasterType ??
+      item?.masterTypeName ??
+      item?.MasterTypeName ??
       source?.__masterType ??
       source?.masterType ??
       source?.MasterType ??
+      source?.masterTypeName ??
       source?.type,
   ).toLowerCase();
   const meta = MASTER_META[masterType] ?? {
@@ -197,24 +442,38 @@ const normalizeMaster = (
     icon: IMAGES.module,
   };
   const coordinate = getCoordinate(item) ?? getCoordinate(source);
+  const orderNoValue = Number(
+    item?.orderNo ?? item?.OrderNo ?? source?.orderNo ?? source?.OrderNo,
+  );
   const masterId = asText(
-    item?.masterId ??
+    item?.ispMasterId ??
+      item?.masterId ??
       item?.MasterId ??
+      item?.code ??
+      item?.Code ??
+      source?.ispMasterId ??
       source?.id ??
       source?.Id ??
-      source?.masterId,
+      source?.masterId ??
+      source?.code ??
+      source?.Code,
   );
   const address =
     asText(
       item?.address ??
         item?.Address ??
+        item?.selectedAddress ??
+        item?.SelectedAddress ??
         source?.address ??
         source?.Address ??
-        source?.selectedAddress,
+        source?.selectedAddress ??
+        source?.SelectedAddress,
     ) || 'Address unavailable';
   const name =
     asText(
       item?.name ??
+        item?.masterName ??
+        item?.MasterName ??
         source?.name ??
         source?.Name ??
         source?.masterName ??
@@ -224,17 +483,28 @@ const normalizeMaster = (
     ? `${coordinate.latitude}, ${coordinate.longitude}`
     : 'Location unavailable';
   const distance = Number(
-    item?.distance ?? item?.Distance ?? source?.distance ?? 0,
+    item?.distance ??
+      item?.Distance ??
+      item?.segmentDistance ??
+      item?.routeDistance ??
+      source?.distance ??
+      0,
   );
+  const masterKey =
+    asText(item?.key) ||
+    `${masterType || 'master'}-${
+      masterId || `${name}-${coordinate?.latitude}-${coordinate?.longitude}`
+    }`;
 
   return {
-    key: asText(item?.key) || `${masterType || 'master'}-${masterId || index}`,
+    key: masterKey || `${masterType || 'master'}-${index}`,
     raw: {
       ...source,
       masterType,
       masterId,
       name,
       address,
+      orderNo: Number.isFinite(orderNoValue) ? orderNoValue : index + 1,
       latLng: coordinate
         ? `${coordinate.latitude}, ${coordinate.longitude}`
         : '',
@@ -246,16 +516,92 @@ const normalizeMaster = (
     address,
     latLngText,
     coordinate,
+    orderNo: Number.isFinite(orderNoValue) ? orderNoValue : index + 1,
     distance: Number.isFinite(distance) ? distance : 0,
     fiberLabel:
       asText(
         item?.fiberTypeName ?? item?.fiberIdStr ?? source?.fiberTypeName,
       ) || defaultFiber,
+    placedType: asText(
+      item?.placedType ?? item?.PlacedType ?? source?.placedType,
+    ),
     active: readField(source, 'isActive', 'IsActive', 'status') !== false,
     images: getImages(item),
     icon: item?.icon ?? meta.icon,
-    loopMeters: asText(item?.loopMeters),
+    loopMeters: asText(
+      item?.loopMeters ??
+        item?.LoopMeters ??
+        item?.Loop ??
+        item?.loop ??
+        item?.LoopUsed ??
+        source?.loopMeters ??
+        source?.LoopMeters ??
+        source?.Loop ??
+        source?.loop ??
+        source?.LoopUsed,
+    ).replace(/\s*m$/i, ''),
   };
+};
+
+const getMasterOrder = (value: any, fallbackIndex: number) => {
+  const order = Number(
+    value?.orderNo ??
+      value?.OrderNo ??
+      value?.sequenceNo ??
+      value?.SequenceNo ??
+      value?.sortOrder,
+  );
+  return Number.isFinite(order) ? order : fallbackIndex;
+};
+
+const normalizeMasters = (source: any[], defaultFiber: string) => {
+  const normalized = source
+    .map((item, index) => ({item, index, order: getMasterOrder(item, index)}))
+    .sort((first, second) =>
+      first.order === second.order
+        ? first.index - second.index
+        : first.order - second.order,
+    )
+    .map(({item}, index) => normalizeMaster(item, index, defaultFiber))
+    .filter(
+      (master, index, values) =>
+        values.findIndex(candidate => {
+          if (master.masterId && candidate.masterId) {
+            return (
+              candidate.masterId === master.masterId &&
+              candidate.masterType === master.masterType
+            );
+          }
+          return candidate.key === master.key;
+        }) === index,
+    );
+
+  return normalized.map((master, index) => {
+    if (index === 0 || master.distance > 0) {
+      return master;
+    }
+    const previousMaster = normalized[index - 1];
+    if (!previousMaster.coordinate || !master.coordinate) {
+      return master;
+    }
+    return {
+      ...master,
+      distance: distanceBetween(previousMaster.coordinate, master.coordinate),
+    };
+  });
+};
+
+const getSegmentDistance = (
+  currentMaster: RouteMaster,
+  nextMaster: RouteMaster,
+) => {
+  if (nextMaster.distance > 0) {
+    return nextMaster.distance;
+  }
+  if (currentMaster.coordinate && nextMaster.coordinate) {
+    return distanceBetween(currentMaster.coordinate, nextMaster.coordinate);
+  }
+  return 0;
 };
 
 const buildFallbackMasters = (route: any, defaultFiber: string) => {
@@ -337,6 +683,7 @@ const getServerFibers = (route: any): StoredRouteFiberSelection[] => {
     drumLabel: asText(item?.drumNo),
     drumLength: Number(item?.drumLength) || 0,
     lengthToUse: Number(item?.lengthToUse) || 0,
+    totalDistance: Number(item?.totalDistance ?? item?.routeLength) || 0,
     addedAt: 0,
   }));
   if (normalized.length > 0) {
@@ -358,6 +705,8 @@ const getServerFibers = (route: any): StoredRouteFiberSelection[] => {
           drumLabel: asText(route?.drumNo),
           drumLength: Number(route?.drumLength) || 0,
           lengthToUse: Number(route?.lengthToUse) || 0,
+          totalDistance:
+            Number(route?.totalDistance ?? route?.routeLength) || 0,
           addedAt: 0,
         },
       ]
@@ -365,45 +714,280 @@ const getServerFibers = (route: any): StoredRouteFiberSelection[] => {
 };
 
 const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
+  const dispatch = useDispatch<StoreDispatch>();
   const selectedRoute = route.params.selectedRoute;
+  const installationMode = route.params.installationScope;
+  const canAddNewMaster = installationMode === 'withoutSld';
   const selectedFibers = useMemo(
     () => route.params.selectedFibers ?? [],
     [route.params.selectedFibers],
   );
   const scrollRef = useRef<ScrollView>(null);
+  const timelineYRef = useRef(0);
   const masterYRef = useRef<Record<string, number>>({});
   const [currentPosition, setCurrentPosition] = useState<Coordinate | null>(
-    null,
+    route.params.currentPosition ??
+      route.params.installationProgress?.currentPosition ??
+      null,
+  );
+  const [currentAddress, setCurrentAddress] = useState(
+    route.params.currentAddress ??
+      route.params.installationProgress?.currentAddress ??
+      '',
   );
   const [isLocating, setIsLocating] = useState(false);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [serverRouteFiberData, setServerRouteFiberData] = useState<any[]>([]);
+  const [isLoadingMasters, setIsLoadingMasters] = useState(true);
+  const [masterLoadError, setMasterLoadError] = useState('');
+
+  useEffect(() => {
+    Keyboard.dismiss();
+    const unsubscribe = navigation.addListener('focus', Keyboard.dismiss);
+    return unsubscribe;
+  }, [navigation]);
+
+  useEffect(() => {
+    let isActive = true;
+    const routeId = getRouteRecordId(selectedRoute);
+    const loadRouteFiberData = async () => {
+      if (!routeId) {
+        setIsLoadingMasters(false);
+        setMasterLoadError('Route ID is unavailable.');
+        return;
+      }
+      try {
+        setServerRouteFiberData([]);
+        setIsLoadingMasters(true);
+        setMasterLoadError('');
+        const fiberDataResponse = await dispatch(
+          GetRouteFiberAllDataBySLDIdISPAPI({routeId}),
+        ).unwrap();
+        if (isActive) {
+          setServerRouteFiberData(
+            Array.isArray(fiberDataResponse) ? fiberDataResponse : [],
+          );
+        }
+      } catch (error: any) {
+        if (isActive) {
+          setMasterLoadError(
+            error?.message || 'Unable to load fiber details for this route.',
+          );
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingMasters(false);
+        }
+      }
+    };
+    loadRouteFiberData();
+    return () => {
+      isActive = false;
+    };
+  }, [dispatch, selectedRoute]);
 
   const completedRoute = useMemo(
     () => getCompletedAppRoute(selectedRoute.routeId, selectedRoute.routeName),
     [selectedRoute.routeId, selectedRoute.routeName],
   );
   const allFibers = useMemo(() => {
-    const combined = [...getServerFibers(selectedRoute), ...selectedFibers];
+    const apiFibers = getFibersFromRouteFiberData(serverRouteFiberData);
+    const serverFibers =
+      apiFibers.length > 0 ? apiFibers : getServerFibers(selectedRoute);
+    const localFibers = apiFibers.length > 0 ? [] : selectedFibers;
+    const combined = [...serverFibers, ...localFibers];
     return combined.filter(
       (fiber, index, values) =>
         values.findIndex(item => item.id === fiber.id) === index,
     );
-  }, [selectedFibers, selectedRoute]);
-  const latestFiber = selectedFibers[selectedFibers.length - 1] ?? null;
+  }, [selectedFibers, selectedRoute, serverRouteFiberData]);
+  const latestServerFiber = allFibers[allFibers.length - 1] ?? null;
+  const latestFiber =
+    selectedFibers[selectedFibers.length - 1] ?? latestServerFiber;
   const defaultFiber =
-    latestFiber?.fiberLabel ?? allFibers[0]?.fiberLabel ?? '--';
+    latestServerFiber?.fiberLabel ?? allFibers[0]?.fiberLabel ?? '--';
   const masters = useMemo(() => {
     const storedMasters = completedRoute?.routePoints ?? [];
-    const serverMasters = getMasterArrays(selectedRoute);
-    const source = storedMasters.length > 0 ? storedMasters : serverMasters;
-    if (source.length > 0) {
-      return source.map((item, index) =>
-        normalizeMaster(item, index, defaultFiber),
+    const selectedRouteMasters = getMasterArrays(selectedRoute);
+    const apiMasters = getMastersFromRouteFiberData(serverRouteFiberData);
+    const routeMasters =
+      apiMasters.length > 0
+        ? apiMasters
+        : storedMasters.length > 0
+        ? storedMasters
+        : selectedRouteMasters;
+    const source = route.params.addedMaster
+      ? [
+          ...routeMasters,
+          {
+            ...route.params.addedMaster,
+            key: route.params.addedMasterKey ?? `fiber-added-${Date.now()}`,
+          },
+        ]
+      : routeMasters;
+    const normalizedMasters =
+      source.length > 0
+        ? normalizeMasters(source, defaultFiber)
+        : buildFallbackMasters(selectedRoute, defaultFiber);
+    const progressPoints = route.params.installationProgress?.routePoints ?? [];
+
+    return normalizedMasters.map(master => {
+      const savedPoint = progressPoints.find(point => {
+        const savedOrderNo = Number(
+          point?.master?.orderNo ?? point?.master?.OrderNo,
+        );
+        if (Number.isFinite(savedOrderNo) && savedOrderNo === master.orderNo) {
+          return true;
+        }
+        return (
+          asText(point?.masterId) === asText(master.masterId) &&
+          asText(point?.masterType).toLowerCase() === master.masterType
+        );
+      });
+      const capturedPhotoUri = asText(
+        savedPoint?.master?.__fiberChangePhotoUri,
       );
+      if (!savedPoint || !capturedPhotoUri) {
+        return master;
+      }
+      return {
+        ...master,
+        raw: {...master.raw, ...savedPoint.master},
+        images: Array.from(new Set([capturedPhotoUri, ...master.images])).slice(
+          0,
+          2,
+        ),
+      };
+    });
+  }, [
+    completedRoute?.routePoints,
+    defaultFiber,
+    route.params.addedMaster,
+    route.params.addedMasterKey,
+    route.params.installationProgress?.routePoints,
+    selectedRoute,
+    serverRouteFiberData,
+  ]);
+  const fiberSegments = useMemo(() => {
+    const savedPartialSegments = getFiberSegmentsFromSelections(selectedFibers);
+    const serverSegments =
+      getFiberSegmentsFromRouteFiberData(serverRouteFiberData);
+    return [...savedPartialSegments, ...serverSegments];
+  }, [selectedFibers, serverRouteFiberData]);
+  const installedFiberSections = useMemo<StoredRouteFiberSelection[]>(() => {
+    if (masters.length < 2 || fiberSegments.length === 0) {
+      return allFibers;
     }
-    return buildFallbackMasters(selectedRoute, defaultFiber);
-  }, [completedRoute?.routePoints, defaultFiber, selectedRoute]);
+
+    const sections: Array<{
+      fiberLabel: string;
+      startIndex: number;
+      endIndex: number;
+      totalDistance: number;
+    }> = [];
+
+    masters.slice(0, -1).forEach((master, index) => {
+      const nextMaster = masters[index + 1];
+      const fiberLabel =
+        fiberSegments.find(
+          segment =>
+            master.orderNo >= segment.fromOrderNo &&
+            nextMaster.orderNo <= segment.toOrderNo,
+        )?.fiberLabel ||
+        master.fiberLabel ||
+        defaultFiber;
+      const segmentDistance = getSegmentDistance(master, nextMaster);
+      const previousSection = sections[sections.length - 1];
+
+      if (
+        previousSection &&
+        previousSection.fiberLabel === fiberLabel &&
+        previousSection.endIndex === index
+      ) {
+        previousSection.endIndex = index + 1;
+        previousSection.totalDistance += segmentDistance;
+        return;
+      }
+
+      sections.push({
+        fiberLabel,
+        startIndex: index,
+        endIndex: index + 1,
+        totalDistance: segmentDistance,
+      });
+    });
+
+    const metadataSources = [...selectedFibers].reverse().concat(allFibers);
+
+    return sections.map((section, index) => {
+      const fromMaster = masters[section.startIndex];
+      const toMaster = masters[section.endIndex];
+      const exactMetadata = metadataSources.find(
+        fiber =>
+          asText(fiber.fiberLabel) === asText(section.fiberLabel) &&
+          Number(fiber.fromOrderNo) === fromMaster.orderNo &&
+          Number(fiber.toOrderNo) === toMaster.orderNo,
+      );
+      const metadata =
+        exactMetadata ??
+        metadataSources.find(
+          fiber => asText(fiber.fiberLabel) === asText(section.fiberLabel),
+        );
+
+      return {
+        fiberId: '',
+        armourLabel: '',
+        tubeCount: '',
+        coreCount: '',
+        drumId: '',
+        drumLabel: '',
+        drumLength: 0,
+        lengthToUse: 0,
+        addedAt: 0,
+        ...metadata,
+        id: `installed-section-${index}-${fromMaster.orderNo}-${toMaster.orderNo}-${section.fiberLabel}`,
+        fiberLabel: section.fiberLabel,
+        totalDistance: Math.round(section.totalDistance),
+        masterCount: section.endIndex - section.startIndex + 1,
+        changeScope:
+          section.startIndex === 0 && section.endIndex === masters.length - 1
+            ? 'Full'
+            : 'Partial',
+        fromOrderNo: fromMaster.orderNo,
+        toOrderNo: toMaster.orderNo,
+        fromMasterName: fromMaster.name,
+        toMasterName: toMaster.name,
+        fromAddress: fromMaster.address,
+        toAddress: toMaster.address,
+      };
+    });
+  }, [allFibers, defaultFiber, fiberSegments, masters, selectedFibers]);
+  const routeMasterDistance = useMemo(
+    () =>
+      masters
+        .slice(1)
+        .reduce(
+          (total, master, index) =>
+            total + getSegmentDistance(masters[index], master),
+          0,
+        ),
+    [masters],
+  );
+  const routeFromAddress =
+    asText(selectedRoute.startAddress) ||
+    masters[0]?.address ||
+    'Address unavailable';
+  const routeToAddress =
+    asText(selectedRoute.endAddress) ||
+    masters[masters.length - 1]?.address ||
+    'Address unavailable';
+  const mapCoordinate = currentPosition ??
+    masters.find(master => master.coordinate)?.coordinate ??
+    parseCoordinateText(selectedRoute.startLatLng) ?? {
+      latitude: 28.6139,
+      longitude: 77.209,
+    };
 
   const nearestMasterIndex = useMemo(() => {
     if (!currentPosition) {
@@ -424,12 +1008,73 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
     return index;
   }, [currentPosition, masters]);
 
+  useEffect(() => {
+    if (!currentPosition || nearestMasterIndex < 0) {
+      return;
+    }
+
+    const nearest = masters[nearestMasterIndex];
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(
+          0,
+          timelineYRef.current +
+            (masterYRef.current[nearest.key] ?? 0) -
+            SIZE.MVS(110),
+        ),
+        animated: true,
+      });
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [currentPosition, masters, nearestMasterIndex]);
+
+  const requestLocationPermission = async () => {
+    const permission =
+      Platform.OS === 'android'
+        ? PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION
+        : PERMISSIONS.IOS.LOCATION_WHEN_IN_USE;
+    let status = await check(permission);
+
+    if (status === RESULTS.DENIED) {
+      status = await request(permission);
+    }
+
+    if (status === RESULTS.BLOCKED) {
+      Alert.alert(
+        'Location Permission Required',
+        'Enable location access in Settings to show your current position on this fiber route.',
+        [
+          {text: 'Not Now', style: 'cancel'},
+          {
+            text: 'Open Settings',
+            onPress: () => openSettings().catch(() => Linking.openSettings()),
+          },
+        ],
+      );
+      return false;
+    }
+
+    if (status !== RESULTS.GRANTED && status !== RESULTS.LIMITED) {
+      Alert.alert(
+        'Location Permission Required',
+        'Location access is required to show your current position.',
+      );
+      return false;
+    }
+
+    return true;
+  };
+
   const showCurrentLocation = async () => {
     if (isLocating) {
       return;
     }
     try {
       setIsLocating(true);
+      if (!(await requestLocationPermission())) {
+        return;
+      }
       if (Platform.OS === 'android' && !(await Location.checkGps())) {
         throw new Error('Location services are disabled.');
       }
@@ -452,26 +1097,19 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
         requestCurrentPosition(true, 20000, 0).then(onSuccess, onFailure);
       });
       setCurrentPosition(position);
-      let nearestIndex = -1;
-      let minimum = Number.POSITIVE_INFINITY;
-      masters.forEach((master, index) => {
-        if (!master.coordinate) {
-          return;
-        }
-        const distance = distanceBetween(position, master.coordinate);
-        if (distance < minimum) {
-          minimum = distance;
-          nearestIndex = index;
-        }
-      });
-      const nearest = masters[nearestIndex];
-      if (nearest) {
-        setTimeout(() => {
-          scrollRef.current?.scrollTo({
-            y: Math.max(0, (masterYRef.current[nearest.key] ?? 0) - 150),
-            animated: true,
-          });
-        }, 160);
+      try {
+        const locationDetails = await Location.getAddressWithLatLong(
+          position.latitude,
+          position.longitude,
+        );
+        setCurrentAddress(
+          asText(locationDetails?.address) ||
+            `${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)}`,
+        );
+      } catch {
+        setCurrentAddress(
+          `${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)}`,
+        );
       }
     } catch (error: any) {
       Alert.alert(
@@ -481,6 +1119,39 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
     } finally {
       setIsLocating(false);
     }
+  };
+
+  const addMasterAtCurrentLocation = () => {
+    if (!canAddNewMaster) {
+      return;
+    }
+    if (!currentPosition) {
+      Alert.alert(
+        'Current Location',
+        'Tap Where I am? before adding a master at your current location.',
+      );
+      return;
+    }
+    navigation.navigate('Add-Master-Form', {
+      routeMasterSelectionMode: true,
+      routeName: asText(selectedRoute.routeName) || 'Fiber Change',
+      routeDraft: {
+        routeId: getRouteRecordId(selectedRoute),
+        fiberChangeMode: installationMode ?? 'partial',
+        fiberTypeId: latestFiber?.fiberId,
+        fiberTypeLabel: latestFiber?.fiberLabel,
+      },
+      routeInitialMasters: masters.map(master => master.raw),
+      returnToFiberChange: true,
+      fiberChangeRoute: selectedRoute,
+      fiberChangeSelectedFibers: selectedFibers,
+      fiberChangeInstallationProgress: route.params.installationProgress,
+      fiberChangeInstallationScope: installationMode ?? 'partial',
+      currentPosition,
+      currentAddress:
+        currentAddress ||
+        `${currentPosition.latitude}, ${currentPosition.longitude}`,
+    });
   };
 
   const openMap = (master: RouteMaster) => {
@@ -493,10 +1164,119 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
     ).catch(() => Alert.alert('Google Maps', 'Unable to open Google Maps.'));
   };
 
-  const openRoutePage = () => {
+  const openRoutePage = (selectedMaster?: RouteMaster) => {
     if (masters.length === 0) {
       return;
     }
+    if (Boolean(installationMode) && selectedMaster?.coordinate) {
+      const now = Date.now();
+      const progress = route.params.installationProgress;
+      const savedPartialStartOrderNo = Number(
+        progress?.routeDraft?.partialStartOrderNo,
+      );
+      const routeDraft = {
+        ...(progress?.routeDraft ?? {}),
+        routeId: getRouteRecordId(selectedRoute),
+        fiberChangeMode: installationMode ?? 'partial',
+        fiberTypeId: latestFiber?.fiberId,
+        fiberTypeLabel: latestFiber?.fiberLabel,
+        drumId: latestFiber?.drumId,
+        drumNo: latestFiber?.drumLabel,
+        drumLength: latestFiber?.drumLength,
+        lengthToUse: latestFiber?.lengthToUse,
+        ...(installationMode === 'partial'
+          ? {
+              partialStartOrderNo:
+                Number.isFinite(savedPartialStartOrderNo) &&
+                savedPartialStartOrderNo > 0
+                  ? savedPartialStartOrderNo
+                  : selectedMaster.orderNo,
+            }
+          : {}),
+      };
+      const existingPointIndex =
+        progress?.routePoints.findIndex(point => {
+          const pointOrderNo = Number(
+            point?.master?.orderNo ?? point?.master?.OrderNo,
+          );
+          if (
+            Number.isFinite(pointOrderNo) &&
+            pointOrderNo === selectedMaster.orderNo
+          ) {
+            return true;
+          }
+          return (
+            asText(point?.masterId) === asText(selectedMaster.masterId) &&
+            asText(point?.masterType).toLowerCase() ===
+              selectedMaster.masterType
+          );
+        }) ?? -1;
+      const existingPoint =
+        existingPointIndex >= 0
+          ? progress?.routePoints[existingPointIndex]
+          : undefined;
+      const routePoint = {
+        key: existingPoint?.key ?? `partial-fiber-${selectedMaster.key}-${now}`,
+        master: {
+          ...(existingPoint?.master ?? {}),
+          ...selectedMaster.raw,
+          orderNo: selectedMaster.orderNo,
+        },
+        masterId: selectedMaster.masterId,
+        masterType: selectedMaster.masterType,
+        masterTypeLabel: selectedMaster.masterTypeLabel,
+        name: selectedMaster.name,
+        address: selectedMaster.address,
+        coordinate: selectedMaster.coordinate,
+        loopMeters: existingPoint?.loopMeters ?? selectedMaster.loopMeters,
+        isLocked: false,
+        isServerSaved: false,
+      };
+      const nextRoutePoints =
+        existingPointIndex >= 0
+          ? (progress?.routePoints ?? []).map((point, index) =>
+              index === existingPointIndex ? routePoint : point,
+            )
+          : [...(progress?.routePoints ?? []), routePoint];
+      nextRoutePoints.sort(
+        (first, second) =>
+          Number(first?.master?.orderNo ?? first?.master?.OrderNo ?? 0) -
+          Number(second?.master?.orderNo ?? second?.master?.OrderNo ?? 0),
+      );
+      navigation.navigate('Make-Route', {
+        routeName: asText(selectedRoute.routeName) || 'Fiber Change',
+        routeDraft,
+        currentPosition: selectedMaster.coordinate,
+        currentAddress: selectedMaster.address,
+        fiberChangeMode: installationMode ?? 'partial',
+        fiberChangeRoute: selectedRoute,
+        fiberChangeSelectedFibers: selectedFibers,
+        fiberChangeActiveMasterKey: routePoint.key,
+        resumeSnapshot: {
+          id:
+            progress?.id ??
+            `partial-fiber-${selectedRoute.routeId}-${selectedMaster.key}-${now}`,
+          routeName: asText(selectedRoute.routeName) || 'Fiber Change',
+          routeDraft,
+          currentPosition: selectedMaster.coordinate,
+          currentAddress: selectedMaster.address,
+          routePoints: nextRoutePoints,
+          routePath: progress?.routePath?.length
+            ? progress.routePath
+            : [selectedMaster.coordinate],
+          walkingSegments: progress?.walkingSegments ?? [],
+          segmentDistance: 0,
+          trackingState: 'idle',
+          drumAllocations: progress?.drumAllocations ?? [],
+          totalDistance: progress?.totalDistance ?? 0,
+          status: 'stopped',
+          createdAt: progress?.createdAt ?? now,
+          updatedAt: now,
+        },
+      });
+      return;
+    }
+
     const firstCoordinate =
       masters.find(item => item.coordinate)?.coordinate ??
       parseCoordinateText(selectedRoute.startLatLng);
@@ -572,6 +1352,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
   return (
     <Screen
       preset="fixed"
+      keyboardAvoidingEnabled={false}
       statusBgColor={COLORS.PRIMARY}
       navBarColor={COLORS.WHITE}>
       <View style={styles.screen}>
@@ -580,6 +1361,26 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
           showGps={false}
           onBackPress={() => navigation.goBack()}
         />
+
+        <View style={styles.mapContainer}>
+          <MapView
+            provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+            style={styles.map}
+            region={{
+              ...mapCoordinate,
+              latitudeDelta: 0.015,
+              longitudeDelta: 0.015,
+            }}
+            showsCompass
+            showsMyLocationButton={false}
+            toolbarEnabled={false}>
+            {currentPosition ? (
+              <Marker coordinate={currentPosition} title="You are here">
+                <PointerSvg width={SIZE.MS(34)} height={SIZE.MS(34)} />
+              </Marker>
+            ) : null}
+          </MapView>
+        </View>
 
         <ScrollView
           ref={scrollRef}
@@ -608,7 +1409,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
           <Text style={styles.sectionLabel}>
             Current Fiber Types Installed:
           </Text>
-          {allFibers.length === 0 ? (
+          {installedFiberSections.length === 0 ? (
             <View style={styles.emptyFiberCard}>
               <Text style={styles.emptyFiberTitle}>No fiber added yet</Text>
               <Text style={styles.emptyFiberText}>
@@ -616,7 +1417,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
               </Text>
             </View>
           ) : null}
-          {allFibers.map((fiber, index) => (
+          {installedFiberSections.map((fiber, index) => (
             <View key={fiber.id || `fiber-${index}`} style={styles.fiberCard}>
               <View style={styles.fiberLine}>
                 <Text style={styles.fiberMeta}>
@@ -624,43 +1425,125 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
                   <Text style={styles.valueText}>{fiber.fiberLabel}</Text>
                 </Text>
                 <Text style={styles.fiberMeta}>
-                  Cable Length:{' '}
+                  Total Distance:{' '}
                   <Text style={styles.valueText}>
-                    {fiber.lengthToUse || fiber.drumLength || 0}m
+                    {Math.round(
+                      fiber.totalDistance ||
+                        routeMasterDistance ||
+                        Number(selectedRoute.totalDistance) ||
+                        0,
+                    )}{' '}
+                    meters
                   </Text>
                 </Text>
                 <Text style={styles.fiberMeta}>
-                  Masters:{' '}
-                  <Text style={styles.valueText}>{masters.length}</Text>
+                  Total Masters:{' '}
+                  <Text style={styles.valueText}>
+                    {fiber.masterCount || masters.length}
+                  </Text>
                 </Text>
               </View>
               <Text numberOfLines={1} style={styles.fiberAddress}>
-                From: {asText(selectedRoute.startAddress) || 'Unavailable'}
+                From: {fiber.fromAddress || routeFromAddress}
               </Text>
               <Text numberOfLines={1} style={styles.fiberAddress}>
-                To: {asText(selectedRoute.endAddress) || 'Unavailable'}
+                To: {fiber.toAddress || routeToAddress}
               </Text>
-              <Text style={styles.fiberSpecification}>
-                {fiber.armourLabel || 'Cable specification unavailable'}
-                {fiber.drumLabel ? ` • Drum ${fiber.drumLabel}` : ''}
-              </Text>
+              {fiber.sldCode || fiber.fiberCode ? (
+                <>
+                  <Text style={styles.fiberSpecification}>
+                    {fiber.sldCode ? `SLD: ${fiber.sldCode}` : ''}
+                    {fiber.sldCode && fiber.fiberCode ? ' • ' : ''}
+                    {fiber.fiberCode ? `Fiber Code: ${fiber.fiberCode}` : ''}
+                  </Text>
+                  <Text style={styles.fiberDrumSpecification}>
+                    Total Drum: {fiber.totalDrumLength || 0}m • Remaining:{' '}
+                    {fiber.remainingDrumLength || 0}m
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.fiberSpecification}>
+                  {fiber.armourLabel || 'Cable specification unavailable'}
+                  {fiber.drumLabel ? ` • Drum ${fiber.drumLabel}` : ''}
+                </Text>
+              )}
+              {fiber.fromOrderNo !== undefined &&
+              fiber.toOrderNo !== undefined ? (
+                <Text style={styles.fiberRangeSpecification}>
+                  {fiber.changeScope === 'Partial'
+                    ? 'Installed section'
+                    : 'Route range'}
+                  : Order {fiber.fromOrderNo} → Order {fiber.toOrderNo}
+                </Text>
+              ) : null}
             </View>
           ))}
 
           <View style={styles.selectedFiberBar}>
-            <Text style={styles.selectedFiberLabel}>Fiber added: </Text>
+            <Text style={styles.selectedFiberLabel}>
+              Fiber Type to be changed:{' '}
+            </Text>
             <Text numberOfLines={1} style={styles.selectedFiberValue}>
               {latestFiber
-                ? `${latestFiber.fiberLabel}, ${latestFiber.armourLabel}`
+                ? [latestFiber.fiberLabel, latestFiber.fiberCode]
+                    .filter(Boolean)
+                    .join(' • ')
                 : '--'}
             </Text>
           </View>
 
-          <View style={styles.masterTimeline}>
+          {isLoadingMasters ? (
+            <View style={styles.masterLoadState}>
+              <ActivityIndicator size="small" color="#7546E7" />
+              <Text style={styles.masterLoadText}>
+                Loading route fiber details...
+              </Text>
+            </View>
+          ) : null}
+          {!isLoadingMasters && masterLoadError ? (
+            <View style={styles.masterErrorState}>
+              <Text style={styles.masterErrorText}>{masterLoadError}</Text>
+            </View>
+          ) : null}
+
+          <View
+            onLayout={event => {
+              timelineYRef.current = event.nativeEvent.layout.y;
+            }}
+            style={styles.masterTimeline}>
             <View style={styles.timelineLine} />
             {masters.map((master, index) => {
               const showPointer =
                 Boolean(currentPosition) && index === nearestMasterIndex;
+              const currentDistance =
+                showPointer && currentPosition && master.coordinate
+                  ? distanceBetween(currentPosition, master.coordinate)
+                  : null;
+              const nextMaster = masters[index + 1];
+              const segmentDistance = nextMaster
+                ? getSegmentDistance(master, nextMaster)
+                : 0;
+              const outgoingFiber = nextMaster
+                ? fiberSegments.find(
+                    segment =>
+                      master.orderNo >= segment.fromOrderNo &&
+                      nextMaster.orderNo <= segment.toOrderNo,
+                  )?.fiberLabel
+                : undefined;
+              const incomingFiber =
+                index > 0
+                  ? fiberSegments.find(
+                      segment =>
+                        masters[index - 1].orderNo >= segment.fromOrderNo &&
+                        master.orderNo <= segment.toOrderNo,
+                    )?.fiberLabel
+                  : undefined;
+              const displayedFiber =
+                incomingFiber &&
+                outgoingFiber &&
+                incomingFiber !== outgoingFiber
+                  ? `${incomingFiber} → ${outgoingFiber}`
+                  : outgoingFiber || incomingFiber || master.fiberLabel;
               return (
                 <View
                   key={master.key}
@@ -669,14 +1552,38 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
                   }}
                   style={styles.masterRow}>
                   {showPointer ? (
-                    <View style={styles.currentLocationMarker}>
+                    <View
+                      accessibilityLabel={`Your current location is nearest to ${master.name}`}
+                      style={styles.currentLocationMarker}>
                       <PointerSvg width={SIZE.MS(25)} height={SIZE.MS(25)} />
                     </View>
                   ) : null}
                   <TouchableOpacity
                     activeOpacity={0.82}
-                    onPress={openRoutePage}
-                    style={styles.masterCard}>
+                    accessibilityState={{selected: showPointer}}
+                    onPress={() => openRoutePage(master)}
+                    style={[
+                      styles.masterCard,
+                      showPointer && styles.currentMasterCard,
+                    ]}>
+                    {showPointer && currentPosition && !installationMode ? (
+                      <View style={styles.currentLocationBanner}>
+                        <Text style={styles.currentLocationTitle}>
+                          You are here
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={styles.currentLocationText}>
+                          {currentPosition.latitude.toFixed(6)},{' '}
+                          {currentPosition.longitude.toFixed(6)}
+                          {currentDistance !== null
+                            ? ` • ${Math.round(
+                                currentDistance,
+                              )}m from this master`
+                            : ''}
+                        </Text>
+                      </View>
+                    ) : null}
                     <View style={styles.masterTitleRow}>
                       <Text numberOfLines={1} style={styles.masterName}>
                         {master.name}
@@ -684,6 +1591,13 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
                       <Text numberOfLines={1} style={styles.masterId}>
                         {master.masterTypeLabel}#{master.masterId || 'ID'}
                       </Text>
+                      {master.placedType ? (
+                        <Text numberOfLines={1} style={styles.placedTypeText}>
+                          {/^on\s/i.test(master.placedType)
+                            ? master.placedType
+                            : `On ${master.placedType}`}
+                        </Text>
+                      ) : null}
                       <View
                         style={[
                           styles.masterStatus,
@@ -711,9 +1625,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
                       </Text>
                       <Text style={styles.masterMeta}>
                         Fiber Type:{' '}
-                        <Text style={styles.valueText}>
-                          {master.fiberLabel}
-                        </Text>
+                        <Text style={styles.valueText}>{displayedFiber}</Text>
                       </Text>
                       <TouchableOpacity
                         activeOpacity={0.75}
@@ -750,6 +1662,32 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
                       </TouchableOpacity>
                     </View>
                   </TouchableOpacity>
+                  {showPointer && currentPosition && canAddNewMaster ? (
+                    <View style={styles.currentAddRow}>
+                      <Text numberOfLines={2} style={styles.currentAddAddress}>
+                        Current Address:{' '}
+                        {currentAddress ||
+                          `${currentPosition.latitude.toFixed(
+                            6,
+                          )}, ${currentPosition.longitude.toFixed(6)}`}
+                      </Text>
+                      <TouchableOpacity
+                        activeOpacity={0.82}
+                        onPress={addMasterAtCurrentLocation}
+                        style={styles.currentAddButton}>
+                        <Text style={styles.currentAddButtonText}>Add</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  {nextMaster ? (
+                    <View style={styles.segmentDistanceRow}>
+                      <Text style={styles.segmentArrow}>↕</Text>
+                      <Text style={styles.segmentDistanceText}>
+                        {Math.round(segmentDistance)} meters
+                        {outgoingFiber ? ` • ${outgoingFiber}` : ''}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
               );
             })}
@@ -758,7 +1696,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
 
         <TouchableOpacity
           activeOpacity={0.86}
-          disabled={isLocating || masters.length === 0}
+          disabled={isLocating}
           onPress={showCurrentLocation}
           style={styles.whereTouchable}>
           <LinearGradient
