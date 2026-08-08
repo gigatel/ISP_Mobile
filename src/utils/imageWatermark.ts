@@ -16,6 +16,11 @@ type WatermarkLocation = {
   address?: string;
 };
 
+type WatermarkImageSize = {
+  width?: number;
+  height?: number;
+};
+
 const validCoordinate = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
@@ -23,6 +28,7 @@ const withFileScheme = (path: string) =>
   /^(file|content):\/\//i.test(path) ? path : `file://${path}`;
 
 const WATERMARK_FILE_PREFIX = 'GTPL_';
+const MAX_WATERMARK_IMAGE_DIMENSION = 1280;
 
 export const isLocationWatermarked = (imageUri: string) => {
   const cleanUri = decodeURIComponent(imageUri || '').split(/[?#]/)[0];
@@ -190,6 +196,7 @@ export const buildLocationWatermarkText = async (
 export const applyLocationWatermark = async (
   imageUri: string,
   location?: WatermarkLocation,
+  imageSize?: WatermarkImageSize,
 ): Promise<string> => {
   if (!imageUri) {
     throw new Error('A camera image is required for watermarking.');
@@ -264,9 +271,29 @@ export const applyLocationWatermark = async (
     },
   });
 
+  const sourceWidth = Number(imageSize?.width);
+  const sourceHeight = Number(imageSize?.height);
+  const sourceMaxDimension = Math.max(sourceWidth, sourceHeight);
+  const processingScale =
+    Number.isFinite(sourceMaxDimension) && sourceMaxDimension > 0
+      ? Math.min(1, MAX_WATERMARK_IMAGE_DIMENSION / sourceMaxDimension)
+      : 1;
+  const processingSource = {
+    uri: imageUri,
+    ...(Number.isFinite(sourceWidth) &&
+    sourceWidth > 0 &&
+    Number.isFinite(sourceHeight) &&
+    sourceHeight > 0
+      ? {
+          width: Math.max(1, Math.round(sourceWidth * processingScale)),
+          height: Math.max(1, Math.round(sourceHeight * processingScale)),
+        }
+      : {}),
+  };
+
   const markedPath = await ImageMarker.mark({
     backgroundImage: {
-      src: {uri: imageUri},
+      src: processingSource,
       scale: 1,
     },
     watermarks,

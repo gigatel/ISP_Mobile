@@ -25,6 +25,7 @@ import {
 import LinearGradient from 'react-native-linear-gradient';
 import MapView, {Marker, PROVIDER_GOOGLE} from 'react-native-maps';
 import {useDispatch} from 'react-redux';
+import {URLs} from '@apis';
 import {BackHeader} from '@molecules';
 import type {RootStackParamList} from '@navigation/navigator';
 import {Screen} from '@organisms';
@@ -85,9 +86,73 @@ const MASTER_META: Record<string, {label: string; icon: any}> = {
 
 const asText = (value: unknown) => String(value ?? '').trim();
 
+const joinedFiberLabel = (...values: unknown[]) =>
+  Array.from(
+    new Set(
+      values
+        .map(asText)
+        .filter(Boolean)
+        .map(value => value.trim()),
+    ),
+  ).join(' • ');
+
 const readField = (value: any, ...keys: string[]) => {
   const key = keys.find(item => value?.[item] !== undefined);
   return key ? value?.[key] : undefined;
+};
+
+const getRouteChamberMappingId = (item: any, source: any) => {
+  const explicitId = Number(
+    readField(
+      item,
+      'routeChamberMappingId',
+      'RouteChamberMappingId',
+      'routeMasterMappingId',
+      'RouteMasterMappingId',
+      'routeFiberMappingId',
+      'RouteFiberMappingId',
+      'mappingId',
+      'MappingId',
+    ) ??
+      readField(
+        source,
+        'routeChamberMappingId',
+        'RouteChamberMappingId',
+        'routeMasterMappingId',
+        'RouteMasterMappingId',
+        'routeFiberMappingId',
+        'RouteFiberMappingId',
+        'mappingId',
+        'MappingId',
+      ),
+  );
+  if (Number.isInteger(explicitId) && explicitId > 0) {
+    return explicitId;
+  }
+
+  // Route APIs commonly wrap a master in a mapping record whose Id is the
+  // update key. Only infer that Id when a separate MasterId is also present,
+  // so a standalone master's own Id is never mistaken for a mapping Id.
+  const recordId = Number(readField(item, 'id', 'Id'));
+  const recordMasterId = Number(
+    readField(item, 'IspMasterId', 'ispMasterId', 'masterId', 'MasterId') ??
+      readField(
+        source,
+        'IspMasterId',
+        'ispMasterId',
+        'masterId',
+        'MasterId',
+        'id',
+        'Id',
+      ),
+  );
+  return Number.isInteger(recordId) &&
+    recordId > 0 &&
+    Number.isInteger(recordMasterId) &&
+    recordMasterId > 0 &&
+    recordId !== recordMasterId
+    ? recordId
+    : 0;
 };
 
 const parseCoordinateText = (value: unknown): Coordinate | null => {
@@ -210,8 +275,11 @@ const getMastersFromRouteFiberData = (fiberData: any[]) =>
           master?.FiberTypeId ??
           fiber?.fiberId ??
           fiber?.FiberId,
-        fiberTypeName:
-          master?.fiberTypeName ?? fiber?.fiberName ?? fiber?.FiberName,
+        fiberTypeName: joinedFiberLabel(
+          master?.fiberTypeName ?? master?.FiberTypeName,
+          fiber?.fiberTypeName ?? fiber?.FiberTypeName,
+          fiber?.fiberName ?? fiber?.FiberName,
+        ),
         loopMeters:
           master?.loopMeters ??
           master?.LoopMeters ??
@@ -302,7 +370,10 @@ const getFibersFromRouteFiberData = (
       }-${toOrderNo || 'end'}`,
       fiberId,
       fiberLabel:
-        asText(fiber?.fiberName ?? fiber?.FiberName) || 'Fiber unavailable',
+        joinedFiberLabel(
+          fiber?.fiberTypeName ?? fiber?.FiberTypeName ?? fiber?.fiberType,
+          fiber?.fiberName ?? fiber?.FiberName,
+        ) || 'Fiber unavailable',
       armourLabel: '',
       tubeCount: '',
       coreCount: '',
@@ -318,8 +389,12 @@ const getFibersFromRouteFiberData = (
       masterCount: Number(fiber?.masterCount ?? fiber?.MasterCount) || 0,
       totalDistance: segmentDistance,
       changeScope:
-        asText(fiber?.changeScope ?? fiber?.ChangeScope).toLowerCase() ===
-          'partial' || fiber?.isPartialChange === true
+        asText(fiber?.fiberChangeScope ?? fiber?.FiberChangeScope)
+          .toLowerCase()
+          .replace(/[^a-z]/g, '') === 'withoutsld'
+          ? 'Discrete'
+          : asText(fiber?.changeScope ?? fiber?.ChangeScope).toLowerCase() ===
+              'partial' || fiber?.isPartialChange === true
           ? 'Partial'
           : 'Full',
       fromOrderNo: Number.isFinite(fromOrderNo) ? fromOrderNo : undefined,
@@ -347,7 +422,10 @@ const getFiberSegmentsFromRouteFiberData = (
 ): RouteFiberSegment[] =>
   getFibersFromRouteFiberData(fiberData)
     .filter(
-      fiber => fiber.fromOrderNo !== undefined && fiber.toOrderNo !== undefined,
+      fiber =>
+        fiber.changeScope !== 'Discrete' &&
+        fiber.fromOrderNo !== undefined &&
+        fiber.toOrderNo !== undefined,
     )
     .map(fiber => ({
       fromOrderNo: fiber.fromOrderNo as number,
@@ -388,6 +466,48 @@ const getRouteRecordId = (value: any) => {
   return Number(routeCodeId || value?.id || value?.Id) || 0;
 };
 
+const getImageValue = (value: any): string => {
+  if (!value) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(getImageValue).find(Boolean) || '';
+  }
+  if (typeof value === 'object') {
+    return getImageValue(
+      value.uri ?? value.url ?? value.imageUrl ?? value.path ?? value.filePath,
+    );
+  }
+
+  const raw = asText(value);
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    try {
+      return getImageValue(JSON.parse(raw));
+    } catch {
+      // Treat non-JSON values as regular server image paths.
+    }
+  }
+
+  const image = raw.replace(/^['"]|['"]$/g, '');
+  if (!image || ['null', 'undefined'].includes(image.toLowerCase())) {
+    return '';
+  }
+  if (/^(https?:\/\/|file:\/\/|content:\/\/|data:image\/)/i.test(image)) {
+    return image;
+  }
+
+  const compact = image.replace(/\s/g, '');
+  if (compact.startsWith('/9j/')) {
+    return `data:image/jpeg;base64,${compact}`;
+  }
+  if (compact.startsWith('iVBOR')) {
+    return `data:image/png;base64,${compact}`;
+  }
+
+  const baseUrl = URLs.BASE_URL_2.replace(/\/api\/?$/i, '/');
+  return `${baseUrl}${image.replace(/\\/g, '/').replace(/^~?\//, '')}`;
+};
+
 const getImages = (value: any): string[] => {
   const source = value?.master ?? value;
   const candidates = [
@@ -406,15 +526,7 @@ const getImages = (value: any): string[] => {
     source?.Image2,
   ].flatMap(item => (Array.isArray(item) ? item : [item]));
   return Array.from(
-    new Set(
-      candidates
-        .map(item =>
-          typeof item === 'object'
-            ? asText(item?.uri ?? item?.url ?? item?.imageUrl)
-            : asText(item),
-        )
-        .filter(item => /^(https?:|file:|content:|data:image)/i.test(item)),
-    ),
+    new Set(candidates.map(getImageValue).filter(Boolean)),
   ).slice(0, 2);
 };
 
@@ -426,11 +538,15 @@ const normalizeMaster = (
   const source =
     item?.master ?? item?.masterData ?? item?.ispMaster ?? item?.Master ?? item;
   const masterType = asText(
-    item?.masterType ??
+    item?.point ??
+      item?.Point ??
+      item?.masterType ??
       item?.MasterType ??
       item?.masterTypeName ??
       item?.MasterTypeName ??
       source?.__masterType ??
+      source?.point ??
+      source?.Point ??
       source?.masterType ??
       source?.MasterType ??
       source?.masterTypeName ??
@@ -446,11 +562,13 @@ const normalizeMaster = (
     item?.orderNo ?? item?.OrderNo ?? source?.orderNo ?? source?.OrderNo,
   );
   const masterId = asText(
-    item?.ispMasterId ??
+    item?.IspMasterId ??
+      item?.ispMasterId ??
       item?.masterId ??
       item?.MasterId ??
       item?.code ??
       item?.Code ??
+      source?.IspMasterId ??
       source?.ispMasterId ??
       source?.id ??
       source?.Id ??
@@ -495,6 +613,7 @@ const normalizeMaster = (
     `${masterType || 'master'}-${
       masterId || `${name}-${coordinate?.latitude}-${coordinate?.longitude}`
     }`;
+  const routeChamberMappingId = getRouteChamberMappingId(item, source);
 
   return {
     key: masterKey || `${masterType || 'master'}-${index}`,
@@ -508,6 +627,7 @@ const normalizeMaster = (
       latLng: coordinate
         ? `${coordinate.latitude}, ${coordinate.longitude}`
         : '',
+      ...(routeChamberMappingId ? {routeChamberMappingId} : {}),
     },
     masterId,
     masterType,
@@ -817,11 +937,19 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
         : storedMasters.length > 0
         ? storedMasters
         : selectedRouteMasters;
+    const addedMasterId = asText(
+      route.params.addedMaster?.masterId ??
+        route.params.addedMaster?.MasterId ??
+        route.params.addedMaster?.id ??
+        route.params.addedMaster?.Id,
+    );
     const source = route.params.addedMaster
       ? [
           ...routeMasters,
           {
             ...route.params.addedMaster,
+            id: addedMasterId,
+            masterId: addedMasterId,
             key: route.params.addedMasterKey ?? `fiber-added-${Date.now()}`,
           },
         ]
@@ -974,6 +1102,8 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
         ),
     [masters],
   );
+  const explicitlyInstalledMasterCount =
+    route.params.installationProgress?.routePoints?.length ?? 0;
   const routeFromAddress =
     asText(selectedRoute.startAddress) ||
     masters[0]?.address ||
@@ -1165,6 +1295,14 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
   };
 
   const openRoutePage = (selectedMaster?: RouteMaster) => {
+    // Full/partial SLD master cards are informational. Without-SLD cards keep
+    // their route-builder navigation so users can update discrete masters.
+    if (
+      selectedMaster &&
+      (installationMode === 'full' || installationMode === 'partial')
+    ) {
+      return;
+    }
     if (masters.length === 0) {
       return;
     }
@@ -1183,6 +1321,9 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
         drumId: latestFiber?.drumId,
         drumNo: latestFiber?.drumLabel,
         drumLength: latestFiber?.drumLength,
+        totalDrumLength:
+          latestFiber?.totalDrumLength ?? latestFiber?.drumLength,
+        remainingDrumLength: latestFiber?.remainingDrumLength,
         lengthToUse: latestFiber?.lengthToUse,
         ...(installationMode === 'partial'
           ? {
@@ -1406,9 +1547,16 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.sectionLabel}>
-            Current Fiber Types Installed:
-          </Text>
+          <View style={styles.fiberSectionHeader}>
+            <Text style={styles.sectionLabel}>
+              Current Fiber Types Installed
+            </Text>
+            <View style={styles.fiberCountBadge}>
+              <Text style={styles.fiberCountText}>
+                {installedFiberSections.length} Installed
+              </Text>
+            </View>
+          </View>
           {installedFiberSections.length === 0 ? (
             <View style={styles.emptyFiberCard}>
               <Text style={styles.emptyFiberTitle}>No fiber added yet</Text>
@@ -1419,61 +1567,96 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
           ) : null}
           {installedFiberSections.map((fiber, index) => (
             <View key={fiber.id || `fiber-${index}`} style={styles.fiberCard}>
-              <View style={styles.fiberLine}>
-                <Text style={styles.fiberMeta}>
-                  Fiber Type:{' '}
-                  <Text style={styles.valueText}>{fiber.fiberLabel}</Text>
-                </Text>
-                <Text style={styles.fiberMeta}>
-                  Total Distance:{' '}
-                  <Text style={styles.valueText}>
+              <View style={styles.fiberCardHeader}>
+                <View style={styles.fiberIconBox}>
+                  <Image
+                    source={IMAGES.FiberEnclosur}
+                    style={styles.fiberIcon}
+                  />
+                </View>
+                <View style={styles.fiberTitleBlock}>
+                  <Text style={styles.fiberEyebrow}>FIBER {index + 1}</Text>
+                  <Text style={styles.fiberName}>{fiber.fiberLabel}</Text>
+                </View>
+                <View style={styles.installedBadge}>
+                  <View style={styles.installedDot} />
+                  <Text style={styles.installedText}>Installed</Text>
+                </View>
+              </View>
+
+              <View style={styles.fiberMetricsRow}>
+                <View style={styles.fiberMetric}>
+                  <Text style={styles.fiberMetricLabel}>TOTAL DISTANCE</Text>
+                  <Text style={styles.fiberMetricValue}>
                     {Math.round(
                       fiber.totalDistance ||
                         routeMasterDistance ||
                         Number(selectedRoute.totalDistance) ||
                         0,
-                    )}{' '}
-                    meters
+                    )}
+                    m
                   </Text>
-                </Text>
-                <Text style={styles.fiberMeta}>
-                  Total Masters:{' '}
-                  <Text style={styles.valueText}>
-                    {fiber.masterCount || masters.length}
+                </View>
+                <View style={styles.fiberMetricDivider} />
+                <View style={styles.fiberMetric}>
+                  <Text style={styles.fiberMetricLabel}>TOTAL MASTERS</Text>
+                  <Text style={styles.fiberMetricValue}>
+                    {fiber.changeScope === 'Discrete'
+                      ? Math.max(
+                          fiber.masterCount || 0,
+                          explicitlyInstalledMasterCount,
+                        )
+                      : fiber.masterCount || masters.length}
                   </Text>
-                </Text>
+                </View>
               </View>
-              <Text numberOfLines={1} style={styles.fiberAddress}>
-                From: {fiber.fromAddress || routeFromAddress}
-              </Text>
-              <Text numberOfLines={1} style={styles.fiberAddress}>
-                To: {fiber.toAddress || routeToAddress}
-              </Text>
-              {fiber.sldCode || fiber.fiberCode ? (
-                <>
-                  <Text style={styles.fiberSpecification}>
-                    {fiber.sldCode ? `SLD: ${fiber.sldCode}` : ''}
-                    {fiber.sldCode && fiber.fiberCode ? ' • ' : ''}
-                    {fiber.fiberCode ? `Fiber Code: ${fiber.fiberCode}` : ''}
+
+              {fiber.changeScope === 'Discrete' ? (
+                <View style={styles.fiberAddressBox}>
+                  <Text style={styles.fiberAddressLabel}>INSTALLATION</Text>
+                  <Text style={styles.fiberAddressValue}>
+                    User-selected masters only
                   </Text>
-                  <Text style={styles.fiberDrumSpecification}>
-                    Total Drum: {fiber.totalDrumLength || 0}m • Remaining:{' '}
-                    {fiber.remainingDrumLength || 0}m
-                  </Text>
-                </>
+                </View>
               ) : (
-                <Text style={styles.fiberSpecification}>
-                  {fiber.armourLabel || 'Cable specification unavailable'}
-                  {fiber.drumLabel ? ` • Drum ${fiber.drumLabel}` : ''}
-                </Text>
+                <View style={styles.fiberAddressBox}>
+                  <Text style={styles.fiberAddressLabel}>FROM</Text>
+                  <Text numberOfLines={2} style={styles.fiberAddressValue}>
+                    {fiber.fromAddress || routeFromAddress || '--'}
+                  </Text>
+                  <View style={styles.fiberAddressDivider} />
+                  <Text style={styles.fiberAddressLabel}>TO</Text>
+                  <Text numberOfLines={2} style={styles.fiberAddressValue}>
+                    {fiber.toAddress || routeToAddress || '--'}
+                  </Text>
+                </View>
               )}
-              {fiber.fromOrderNo !== undefined &&
-              fiber.toOrderNo !== undefined ? (
-                <Text style={styles.fiberRangeSpecification}>
-                  {fiber.changeScope === 'Partial'
-                    ? 'Installed section'
-                    : 'Route range'}
-                  : Order {fiber.fromOrderNo} → Order {fiber.toOrderNo}
+
+              <View style={styles.fiberTagRow}>
+                {fiber.sldCode ? (
+                  <Text style={styles.fiberTag}>SLD {fiber.sldCode}</Text>
+                ) : null}
+                {fiber.fiberCode ? (
+                  <Text style={styles.fiberTag}>Fiber {fiber.fiberCode}</Text>
+                ) : null}
+                {!fiber.sldCode && !fiber.fiberCode ? (
+                  <Text style={styles.fiberTag}>
+                    {fiber.armourLabel || 'Cable specification unavailable'}
+                    {fiber.drumLabel ? ` • Drum ${fiber.drumLabel}` : ''}
+                  </Text>
+                ) : null}
+                {fiber.changeScope !== 'Discrete' &&
+                fiber.fromOrderNo !== undefined &&
+                fiber.toOrderNo !== undefined ? (
+                  <Text style={styles.fiberTag}>
+                    Order {fiber.fromOrderNo} → {fiber.toOrderNo}
+                  </Text>
+                ) : null}
+              </View>
+              {fiber.sldCode || fiber.fiberCode ? (
+                <Text style={styles.fiberDrumSpecification}>
+                  Total Drum: {fiber.totalDrumLength || 0}m · Remaining:{' '}
+                  {fiber.remainingDrumLength || 0}m
                 </Text>
               ) : null}
             </View>
@@ -1483,7 +1666,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
             <Text style={styles.selectedFiberLabel}>
               Fiber Type to be changed:{' '}
             </Text>
-            <Text numberOfLines={1} style={styles.selectedFiberValue}>
+            <Text style={styles.selectedFiberValue}>
               {latestFiber
                 ? [latestFiber.fiberLabel, latestFiber.fiberCode]
                     .filter(Boolean)
@@ -1616,16 +1799,16 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
                       <Text style={styles.boldText}>Lat/Lng: </Text>
                       {master.latLngText}
                     </Text>
+                    <Text style={styles.masterFiberMeta}>
+                      Fiber Type:{' '}
+                      <Text style={styles.valueText}>{displayedFiber}</Text>
+                    </Text>
                     <View style={styles.masterFooter}>
                       <Text style={styles.masterMeta}>
                         Distance:{' '}
                         <Text style={styles.valueText}>
                           {Math.round(master.distance)}m
                         </Text>
-                      </Text>
-                      <Text style={styles.masterMeta}>
-                        Fiber Type:{' '}
-                        <Text style={styles.valueText}>{displayedFiber}</Text>
                       </Text>
                       <TouchableOpacity
                         activeOpacity={0.75}

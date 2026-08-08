@@ -38,13 +38,16 @@ import {BackHeader} from '@molecules';
 import {RootStackParamList} from '@navigation/navigator';
 import {Screen} from '@organisms';
 import {StoreDispatch} from '@reducers';
-import {COLORS, IMAGES} from '@res';
+import {COLORS, IMAGES, SIZE} from '@res';
 import {
   GetDrumNumbersByFiberTypeAPI,
   GetFiberMasterListAPI,
+  GetSLDDetailsPaggiISPAPI,
 } from '@slices/route.slice';
 import {Common, Location, Preferences} from '@utils';
 import {useDispatch} from 'react-redux';
+import PointerSvg from '../../res/images/pointer.svg';
+import GoogleMapsIconSvg from '../../res/images/Google_Maps_icon.svg';
 import styles from './styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddRouteFiberScreen'>;
@@ -73,6 +76,56 @@ type PickerKey =
   | 'address';
 
 type FormField = PickerKey | 'routeName' | 'lengthToUse' | 'location';
+type RouteMode = 'withSld' | 'withoutSld';
+
+const parseLatLng = (value: any): Coordinate | null => {
+  const [latitude, longitude] = String(value ?? '')
+    .split(',')
+    .map(Number);
+  return Number.isFinite(latitude) && Number.isFinite(longitude)
+    ? {latitude, longitude}
+    : null;
+};
+
+const distanceBetween = (first: Coordinate, second: Coordinate) => {
+  const radians = (value: number) => (value * Math.PI) / 180;
+  const lat = radians(second.latitude - first.latitude);
+  const lng = radians(second.longitude - first.longitude);
+  const calculation =
+    Math.sin(lat / 2) ** 2 +
+    Math.cos(radians(first.latitude)) *
+      Math.cos(radians(second.latitude)) *
+      Math.sin(lng / 2) ** 2;
+  return (
+    6371000 * 2 * Math.atan2(Math.sqrt(calculation), Math.sqrt(1 - calculation))
+  );
+};
+
+const getSldFiberLabel = (item: any) => {
+  const fiberType = String(
+    item?.fiberTypeName ??
+      item?.FiberTypeName ??
+      item?.fiberIdStr ??
+      item?.FiberIdStr ??
+      item?.fiberNameStr ??
+      '',
+  ).trim();
+  const specification = String(
+    item?.fiberSpecificationName ??
+      item?.FiberSpecificationName ??
+      item?.fiberName ??
+      item?.FiberName ??
+      '',
+  ).trim();
+  const values = [fiberType, specification].filter(
+    (value, index, all) =>
+      value &&
+      all.findIndex(
+        candidate => candidate.toLowerCase() === value.toLowerCase(),
+      ) === index,
+  );
+  return values.join(' ') || '--';
+};
 
 const ROUTE_TYPES: PickerOption[] = [
   {label: 'New Route', value: 'new-route'},
@@ -321,6 +374,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const focusedInputRef = useRef<'routeName' | 'lengthToUse' | null>(null);
   const fiberRequestInFlightRef = useRef(false);
   const drumRequestIdRef = useRef(0);
+  const sldListRef = useRef<FlatList<any>>(null);
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
   const [routeType, setRouteType] = useState<string | null>('new-route');
@@ -346,12 +400,25 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     route.params?.currentAddress ?? '',
   );
   const [addressOptions, setAddressOptions] = useState<PickerOption[]>([]);
-  const [_isLocating, setIsLocating] = useState(
-    !route.params?.currentPosition,
-  );
+  const [_isLocating, setIsLocating] = useState(!route.params?.currentPosition);
   const [_locationError, setLocationError] = useState('');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<FormField, string>>>({});
+  const [routeMode, setRouteMode] = useState<RouteMode>(
+    route.params?.asBottomSheet ? 'withSld' : 'withoutSld',
+  );
+  const [sldRoutes, setSldRoutes] = useState<any[]>([]);
+  const [sldSearch, setSldSearch] = useState('');
+  const [sldPage, setSldPage] = useState(1);
+  const [sldTotal, setSldTotal] = useState(0);
+  const [sldLoading, setSldLoading] = useState(false);
+  const [sldLoadingMore, setSldLoadingMore] = useState(false);
+  const [sldError, setSldError] = useState('');
+  const [locationRange, setLocationRange] = useState(200);
+  const [sldRefreshingLocation, setSldRefreshingLocation] = useState(false);
+  const [sldScrollRequest, setSldScrollRequest] = useState(0);
+  const sldRequestRef = useRef(0);
+  const didStartSldSearchRef = useRef(false);
 
   const scrollToInput = useCallback(
     (field: 'routeName' | 'lengthToUse' | null, animated = true) => {
@@ -616,6 +683,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       return;
     }
 
+    let resolvedCoordinate: Coordinate | null = null;
     setIsLocating(true);
     setLocationError('');
 
@@ -628,6 +696,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       }
 
       const coordinate = await getCurrentCoordinate();
+      resolvedCoordinate = coordinate;
       if (!mountedRef.current) {
         return;
       }
@@ -662,6 +731,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
 
       setAddressOptions(nextOptions);
       setCurrentAddress(nextOptions[0].label);
+      return coordinate;
     } catch (error: any) {
       if (!mountedRef.current) {
         return;
@@ -669,6 +739,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       setLocationError(
         error?.message || 'Unable to get your current location. Tap retry.',
       );
+      return resolvedCoordinate;
     } finally {
       if (mountedRef.current) {
         setIsLocating(false);
@@ -681,6 +752,95 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       loadCurrentLocation();
     }
   }, [loadCurrentLocation, route.params?.currentPosition]);
+
+  const loadSldRoutes = useCallback(
+    async (page: number, search: string) => {
+      const requestId = ++sldRequestRef.current;
+      page === 1 ? setSldLoading(true) : setSldLoadingMore(true);
+      setSldError('');
+      try {
+        const response = await dispatch(
+          GetSLDDetailsPaggiISPAPI({page, size: 10, search}),
+        ).unwrap();
+        if (!mountedRef.current || requestId !== sldRequestRef.current) {
+          return null;
+        }
+        const rows = Array.isArray(response?.data) ? response.data : [];
+        const total = Number(response?.recordsFiltered) || rows.length;
+        setSldRoutes(previous =>
+          page === 1
+            ? rows
+            : [...previous, ...rows].filter(
+                (item, index, all) =>
+                  all.findIndex(value => value.id === item.id) === index,
+              ),
+        );
+        setSldPage(page);
+        setSldTotal(total);
+        return {rows, total};
+      } catch (error: any) {
+        if (mountedRef.current && requestId === sldRequestRef.current) {
+          const message = error?.message || 'Unable to load SLD routes.';
+          if (page === 1) {
+            setSldError(message);
+            setSldRoutes([]);
+          } else {
+            Common.showToast(message);
+          }
+        }
+        return null;
+      } finally {
+        if (mountedRef.current && requestId === sldRequestRef.current) {
+          setSldLoading(false);
+          setSldLoadingMore(false);
+        }
+      }
+    },
+    [dispatch],
+  );
+
+  useEffect(() => {
+    loadSldRoutes(1, '');
+  }, [loadSldRoutes]); // Load the With SLD tab immediately when the sheet opens.
+
+  useEffect(() => {
+    const timer = setTimeout(() => loadSldRoutes(1, sldSearch), 350);
+    if (!didStartSldSearchRef.current) {
+      didStartSldSearchRef.current = true;
+      clearTimeout(timer);
+      return;
+    }
+    return () => clearTimeout(timer);
+  }, [loadSldRoutes, sldSearch]);
+
+  const refreshSldAtCurrentLocation = useCallback(async () => {
+    if (sldRefreshingLocation) {
+      return;
+    }
+    setSldRefreshingLocation(true);
+    try {
+      const coordinate = await loadCurrentLocation();
+      if (!coordinate) {
+        return;
+      }
+      const firstPage = await loadSldRoutes(1, sldSearch);
+      if (!firstPage) {
+        return;
+      }
+      const totalPages = Math.ceil(firstPage.total / 10);
+      for (let page = 2; page <= totalPages; page += 1) {
+        const nextPage = await loadSldRoutes(page, sldSearch);
+        if (!nextPage) {
+          break;
+        }
+      }
+      setSldScrollRequest(value => value + 1);
+    } finally {
+      if (mountedRef.current) {
+        setSldRefreshingLocation(false);
+      }
+    }
+  }, [loadCurrentLocation, loadSldRoutes, sldRefreshingLocation, sldSearch]);
 
   const selectedDrum = useMemo(
     () => getOption(drumOptions, drum),
@@ -995,6 +1155,144 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     }
   };
   const isBottomSheet = Boolean(route.params?.asBottomSheet);
+  const openSldInstallation = (item: any) => {
+    navigation.navigate('Install-Fiber-With-SLD', {
+      selectedSld: item,
+      ...(currentPosition ? {currentPosition} : {}),
+      ...(currentAddress ? {currentAddress} : {}),
+    });
+  };
+
+  const openSldRouteMap = (item: any) => {
+    const target = parseLatLng(item.toLatLng) ?? parseLatLng(item.fromLatLng);
+    if (!target) {
+      Common.showToast('Route location is unavailable');
+      return;
+    }
+    Linking.openURL(
+      `https://www.google.com/maps/search/?api=1&query=${target.latitude},${target.longitude}`,
+    ).catch(() => Common.showToast('Unable to open Google Maps'));
+  };
+
+  const nearestSldRouteIndex = useMemo(() => {
+    if (!currentPosition || sldRoutes.length === 0) {
+      return -1;
+    }
+
+    let nearestIndex = -1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    sldRoutes.forEach((item, index) => {
+      const endpoints = [
+        parseLatLng(item.fromLatLng),
+        parseLatLng(item.toLatLng),
+      ].filter((value): value is Coordinate => value !== null);
+      if (endpoints.length === 0) {
+        return;
+      }
+      const routeDistance = Math.min(
+        ...endpoints.map(value => distanceBetween(currentPosition, value)),
+      );
+      if (routeDistance < nearestDistance) {
+        nearestDistance = routeDistance;
+        nearestIndex = index;
+      }
+    });
+    return nearestIndex;
+  }, [currentPosition, sldRoutes]);
+
+  useEffect(() => {
+    if (nearestSldRouteIndex < 0 || routeMode !== 'withSld') {
+      return;
+    }
+    const timer = setTimeout(() => {
+      sldListRef.current?.scrollToOffset({
+        offset: Math.max(
+          0,
+          nearestSldRouteIndex * SIZE.MVS(118) - SIZE.MVS(80),
+        ),
+        animated: true,
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [nearestSldRouteIndex, routeMode, sldScrollRequest]);
+
+  const renderSldRoute = ({item, index}: {item: any; index: number}) => {
+    const showLocationPointer = index === nearestSldRouteIndex;
+    const fiberLabel = getSldFiberLabel(item);
+    return (
+      <View style={styles.sldCardRow}>
+        {showLocationPointer ? (
+          <View
+            accessibilityLabel={`Your current location is nearest to ${
+              item.routeName || 'this route'
+            }`}
+            style={styles.sldPointer}>
+            <PointerSvg width={SIZE.MS(25)} height={SIZE.MS(25)} />
+          </View>
+        ) : null}
+        <TouchableOpacity
+          activeOpacity={0.82}
+          accessibilityState={{selected: showLocationPointer}}
+          onPress={() => openSldInstallation(item)}
+          style={[
+            styles.sldCard,
+            showLocationPointer && styles.sldCurrentCard,
+          ]}>
+          <View style={styles.sldTitleRow}>
+            <Text numberOfLines={1} style={styles.sldRouteName}>
+              {item.routeName || item.sldCode || 'Unnamed Route'}
+            </Text>
+            <Text numberOfLines={1} style={styles.sldRouteId}>
+              {item.routeIdStr || item.sldCode || `SLD#${item.id}`}
+            </Text>
+            <View
+              style={[
+                styles.sldStatus,
+                item.isActive === false && styles.sldStatusInactive,
+              ]}>
+              <Text style={styles.sldStatusText}>
+                {item.isActive === false ? 'Inactive' : 'Active'}
+              </Text>
+            </View>
+          </View>
+          <Text numberOfLines={2} style={styles.sldAddress}>
+            From: {item.fromAddress || '--'}
+          </Text>
+          <Text numberOfLines={2} style={styles.sldAddress}>
+            To: {item.toAddress || '--'}
+          </Text>
+          <View style={styles.sldFooterRow}>
+            <Text style={[styles.sldMeta, styles.sldMetaCompact]}>
+              Total Dist:{' '}
+              <Text style={styles.sldMetaValue}>
+                {Math.round(Number(item.totalDistance) || 0)}m
+              </Text>
+            </Text>
+            <Text style={[styles.sldMeta, styles.sldMetaCompact]}>
+              Drum no.{' '}
+              <Text style={styles.sldMetaValue}>{item.drumNo || '--'}</Text>
+            </Text>
+            <Text numberOfLines={1} style={styles.sldFiberMeta}>
+              Fiber Type: <Text style={styles.sldMetaValue}>{fiberLabel}</Text>
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${
+                item.routeName || 'route'
+              } in Google Maps`}
+              onPress={event => {
+                event.stopPropagation();
+                openSldRouteMap(item);
+              }}
+              style={styles.sldMapIcon}>
+              <GoogleMapsIconSvg width={SIZE.MS(27)} height={SIZE.MS(27)} />
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  };
 
   return (
     <Screen
@@ -1026,6 +1324,9 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
             styles.screen,
             isBottomSheet && styles.bottomSheetCard,
             isBottomSheet &&
+              routeMode === 'withSld' &&
+              styles.bottomSheetCardSld,
+            isBottomSheet &&
               isKeyboardVisible &&
               styles.bottomSheetCardKeyboard,
           ]}>
@@ -1042,323 +1343,459 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
             />
           )}
 
-        <ScrollView
-          ref={formScrollRef}
-          style={[
-            styles.formArea,
-            isBottomSheet && styles.bottomSheetFormArea,
-          ]}
-          contentContainerStyle={[
-            styles.formScrollContent,
-            isKeyboardVisible && styles.formScrollContentKeyboard,
-          ]}
-          keyboardDismissMode={
-            Platform.OS === 'ios' ? 'interactive' : 'on-drag'
-          }
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.formCard}>
-            <View style={styles.fullField}>
-              <FieldLabel>Route Name</FieldLabel>
-              <View
-                style={[
-                  styles.inputShell,
-                  errors.routeName && styles.inputShellError,
-                ]}>
-                <TextInput
-                  value={routeName}
-                  onChangeText={value => {
-                    setRouteName(value);
-                    clearError('routeName');
+          {isBottomSheet ? (
+            <View style={styles.sldTabs}>
+              {(
+                [
+                  ['withSld', 'With SLD'],
+                  ['withoutSld', 'Without SLD'],
+                ] as [RouteMode, string][]
+              ).map(([value, label]) => (
+                <TouchableOpacity
+                  key={value}
+                  activeOpacity={0.84}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setRouteMode(value);
                   }}
-                  placeholder="Enter Route Name"
-                  placeholderTextColor="#92969D"
-                  style={styles.textInput}
-                  maxLength={80}
-                  onFocus={() => handleInputFocus('routeName')}
-                  onSubmitEditing={Keyboard.dismiss}
-                  returnKeyType="done"
-                />
-              </View>
-              {errors.routeName ? (
-                <Text style={styles.errorText}>{errors.routeName}</Text>
-              ) : null}
+                  style={[
+                    styles.sldTab,
+                    routeMode === value && styles.sldTabActive,
+                  ]}>
+                  <Text
+                    style={[
+                      styles.sldTabText,
+                      routeMode === value && styles.sldTabTextActive,
+                    ]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
+          ) : null}
 
-            <View style={styles.twoColumnRow}>
-              <View style={styles.column}>
-                <FieldLabel>Select Fiber Type</FieldLabel>
-                <SelectField
-                  value={getOption(fiberOptions, fiberType)?.label}
-                  placeholder="Select Fiber Type"
-                  accessibilityLabel="Select fiber type"
-                  error={errors.fiberType}
-                  onPress={() => openPicker('fiberType')}
-                />
-              </View>
-              <View style={styles.column}>
-                <FieldLabel>Armoured/Unarmoured</FieldLabel>
-                <SelectField
-                  value={getOption(ARMOUR_TYPES, armourType)?.label}
-                  placeholder="Select"
-                  accessibilityLabel="Select armoured or unarmoured cable"
-                  error={errors.armourType}
-                  onPress={() => openPicker('armourType')}
-                />
-              </View>
-            </View>
-
-            <View style={styles.twoColumnRow}>
-              <View style={styles.column}>
-                <FieldLabel required={false}>No. of Tubes</FieldLabel>
-                <SelectField
-                  value={getOption(TUBE_COUNTS, tubeCount)?.label}
-                  placeholder="Select"
-                  accessibilityLabel="Number of tubes, read only"
-                  error={errors.tubeCount}
-                  disabled
-                  onPress={() => openPicker('tubeCount')}
-                />
-              </View>
-              <View style={styles.column}>
-                <FieldLabel required={false}>No. of Cores</FieldLabel>
-                <SelectField
-                  value={getOption(CORE_COUNTS, coreCount)?.label}
-                  placeholder="Select"
-                  accessibilityLabel="Number of cores, read only"
-                  error={errors.coreCount}
-                  disabled
-                  onPress={() => openPicker('coreCount')}
-                />
-              </View>
-            </View>
-
-            <View style={styles.drumLengthRow}>
-              <View style={styles.drumColumn}>
-                <FieldLabel>Available Drum Name / No.</FieldLabel>
-                <View style={styles.drumControlRow}>
-                  <View style={styles.drumPickerWrap}>
-                    <SelectField
-                      value={selectedDrum?.label}
-                      placeholder="Select Drum"
-                      accessibilityLabel="Select available fiber drum"
-                      error={errors.drum}
-                      onPress={() => openPicker('drum')}
-                    />
-                  </View>
-                  {selectedDrum?.meta ? (
-                    <View style={styles.stockPill}>
-                      <Text style={styles.stockText}>{selectedDrum.meta}m</Text>
-                    </View>
+          {routeMode === 'withSld' && isBottomSheet ? (
+            <View style={styles.sldContent}>
+              <View style={styles.sldTools}>
+                <View style={styles.sldSearchShell}>
+                  <Image source={IMAGES.search} style={styles.sldSearchIcon} />
+                  <TextInput
+                    value={sldSearch}
+                    onChangeText={setSldSearch}
+                    placeholder="Search Route"
+                    placeholderTextColor="#9398A0"
+                    returnKeyType="search"
+                    style={styles.sldSearchInput}
+                  />
+                  {sldSearch ? (
+                    <TouchableOpacity onPress={() => setSldSearch('')}>
+                      <Text style={styles.sldSearchClear}>×</Text>
+                    </TouchableOpacity>
                   ) : null}
                 </View>
+                <View style={styles.sldRangeControl}>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setLocationRange(value => Math.max(50, value - 50))
+                    }
+                    style={styles.sldRangeButton}>
+                    <Text style={styles.sldRangeButtonText}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.sldRangeText}>{locationRange}m</Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setLocationRange(value => Math.min(1000, value + 50))
+                    }
+                    style={styles.sldRangeButton}>
+                    <Text style={styles.sldRangeButtonText}>＋</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-
-              <View style={styles.lengthColumn}>
-                <FieldLabel>Length to Use</FieldLabel>
-                <View
-                  style={[
-                    styles.inputShell,
-                    styles.lengthInputShell,
-                    errors.lengthToUse && styles.inputShellError,
-                  ]}>
-                  <TextInput
-                    value={lengthToUse}
-                    onChangeText={value => {
-                      setLengthToUse(value.replace(/[^0-9]/g, ''));
-                      clearError('lengthToUse');
+              {sldLoading ? (
+                <View style={styles.sldState}>
+                  <ActivityIndicator color={COLORS.PRIMARY} />
+                  <Text style={styles.sldStateText}>Loading SLD routes...</Text>
+                </View>
+              ) : sldError ? (
+                <View style={styles.sldState}>
+                  <Text style={styles.sldStateText}>{sldError}</Text>
+                  <TouchableOpacity onPress={() => loadSldRoutes(1, sldSearch)}>
+                    <Text style={styles.sldRetryText}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.sldListWrap}>
+                  <View pointerEvents="none" style={styles.sldTimelineLine} />
+                  <FlatList
+                    ref={sldListRef}
+                    data={sldRoutes}
+                    renderItem={renderSldRoute}
+                    keyExtractor={item => String(item.id)}
+                    contentContainerStyle={styles.sldList}
+                    showsVerticalScrollIndicator={false}
+                    onScrollToIndexFailed={() => undefined}
+                    onEndReachedThreshold={0.35}
+                    onEndReached={() => {
+                      if (!sldLoadingMore && sldRoutes.length < sldTotal) {
+                        loadSldRoutes(sldPage + 1, sldSearch);
+                      }
                     }}
-                    keyboardType="number-pad"
-                    placeholder="0"
-                    placeholderTextColor="#92969D"
-                    style={styles.lengthInput}
-                    maxLength={5}
-                    onFocus={() => handleInputFocus('lengthToUse')}
-                    onSubmitEditing={Keyboard.dismiss}
-                    returnKeyType="done"
+                    ListEmptyComponent={
+                      <Text style={styles.sldEmptyText}>
+                        No SLD routes found.
+                      </Text>
+                    }
+                    ListFooterComponent={
+                      sldLoadingMore ? (
+                        <ActivityIndicator color={COLORS.PRIMARY} />
+                      ) : null
+                    }
                   />
-                  <Text style={styles.unitText}>m</Text>
                 </View>
-                {errors.lengthToUse ? (
-                  <Text style={styles.errorText}>{errors.lengthToUse}</Text>
-                ) : null}
-              </View>
+              )}
+              <TouchableOpacity
+                activeOpacity={0.84}
+                disabled={_isLocating || sldRefreshingLocation}
+                onPress={refreshSldAtCurrentLocation}
+                style={styles.sldWhereButton}>
+                <LinearGradient
+                  colors={['#8B59F8', '#6036C4']}
+                  style={styles.sldWhereGradient}>
+                  <Text style={styles.sldWhereText}>
+                    {sldRefreshingLocation || _isLocating
+                      ? 'Refreshing location...'
+                      : 'Where I am?'}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
-          </View>
-        </ScrollView>
+          ) : (
+            <>
+              <ScrollView
+                ref={formScrollRef}
+                style={[
+                  styles.formArea,
+                  isBottomSheet && styles.bottomSheetFormArea,
+                ]}
+                contentContainerStyle={[
+                  styles.formScrollContent,
+                  isKeyboardVisible && styles.formScrollContentKeyboard,
+                ]}
+                keyboardDismissMode={
+                  Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+                }
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}>
+                <View style={styles.formCard}>
+                  <View style={styles.fullField}>
+                    <FieldLabel>Route Name</FieldLabel>
+                    <View
+                      style={[
+                        styles.inputShell,
+                        errors.routeName && styles.inputShellError,
+                      ]}>
+                      <TextInput
+                        value={routeName}
+                        onChangeText={value => {
+                          setRouteName(value);
+                          clearError('routeName');
+                        }}
+                        placeholder="Enter Route Name"
+                        placeholderTextColor="#92969D"
+                        style={styles.textInput}
+                        maxLength={80}
+                        onFocus={() => handleInputFocus('routeName')}
+                        onSubmitEditing={Keyboard.dismiss}
+                        returnKeyType="done"
+                      />
+                    </View>
+                    {errors.routeName ? (
+                      <Text style={styles.errorText}>{errors.routeName}</Text>
+                    ) : null}
+                  </View>
 
-        {!isKeyboardVisible ? (
-          <View style={styles.footer}>
-            <TouchableOpacity
-              activeOpacity={0.82}
-              onPress={() => navigation.goBack()}
-              style={styles.footerButton}>
-              <LinearGradient
-                colors={['#777A7E', '#4C4F52']}
-                style={styles.footerGradient}>
-                <Text style={styles.footerButtonText}>Back</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.82}
-              onPress={submitRoute}
-              style={styles.footerButton}>
-              <LinearGradient
-                colors={['#8B59F8', '#6036C4']}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 1}}
-                style={styles.footerGradient}>
-                <Text style={styles.footerButtonText}>
-                  {routeType === 'change-fiber' ? 'Change Fiber' : 'Add Route'}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
+                  <View style={styles.twoColumnRow}>
+                    <View style={styles.column}>
+                      <FieldLabel>Select Fiber Type</FieldLabel>
+                      <SelectField
+                        value={getOption(fiberOptions, fiberType)?.label}
+                        placeholder="Select Fiber Type"
+                        accessibilityLabel="Select fiber type"
+                        error={errors.fiberType}
+                        onPress={() => openPicker('fiberType')}
+                      />
+                    </View>
+                    <View style={styles.column}>
+                      <FieldLabel>Armoured/Unarmoured</FieldLabel>
+                      <SelectField
+                        value={getOption(ARMOUR_TYPES, armourType)?.label}
+                        placeholder="Select"
+                        accessibilityLabel="Select armoured or unarmoured cable"
+                        error={errors.armourType}
+                        onPress={() => openPicker('armourType')}
+                      />
+                    </View>
+                  </View>
 
-      <Modal
-        visible={activePicker !== null}
-        transparent
-        animationType="slide"
-        statusBarTranslucent
-        onRequestClose={closePicker}>
-        <Pressable style={styles.modalOverlay} onPress={closePicker}>
-          <Pressable
-            style={[
-              styles.pickerSheet,
-              activePicker === 'routeType' && styles.routeTypePickerSheet,
-            ]}
-            onPress={() => undefined}>
-            {activePicker === 'routeType' ? (
-              <>
-                <View style={styles.routeTypeHeader}>
-                  <Text style={styles.routeTypeTitle}>Select Route Type</Text>
-                </View>
+                  <View style={styles.twoColumnRow}>
+                    <View style={styles.column}>
+                      <FieldLabel required={false}>No. of Tubes</FieldLabel>
+                      <SelectField
+                        value={getOption(TUBE_COUNTS, tubeCount)?.label}
+                        placeholder="Select"
+                        accessibilityLabel="Number of tubes, read only"
+                        error={errors.tubeCount}
+                        disabled
+                        onPress={() => openPicker('tubeCount')}
+                      />
+                    </View>
+                    <View style={styles.column}>
+                      <FieldLabel required={false}>No. of Cores</FieldLabel>
+                      <SelectField
+                        value={getOption(CORE_COUNTS, coreCount)?.label}
+                        placeholder="Select"
+                        accessibilityLabel="Number of cores, read only"
+                        error={errors.coreCount}
+                        disabled
+                        onPress={() => openPicker('coreCount')}
+                      />
+                    </View>
+                  </View>
 
-                <View style={styles.routeTypeOptionsCard}>
-                  {ROUTE_TYPES.map((option, index) => {
-                    const selected = draftRouteType === option.value;
-                    return (
-                      <TouchableOpacity
-                        key={option.value}
-                        activeOpacity={0.7}
-                        onPress={() => setDraftRouteType(option.value)}
-                        style={[
-                          styles.routeTypeOptionRow,
-                          index < ROUTE_TYPES.length - 1 &&
-                            styles.routeTypeOptionBorder,
-                        ]}>
-                        <View
-                          style={[
-                            styles.routeTypeRadio,
-                            selected && styles.routeTypeRadioSelected,
-                          ]}>
-                          {selected ? (
-                            <View style={styles.routeTypeRadioInner} />
-                          ) : null}
+                  <View style={styles.drumLengthRow}>
+                    <View style={styles.drumColumn}>
+                      <FieldLabel>Available Drum Name / No.</FieldLabel>
+                      <View style={styles.drumControlRow}>
+                        <View style={styles.drumPickerWrap}>
+                          <SelectField
+                            value={selectedDrum?.label}
+                            placeholder="Select Drum"
+                            accessibilityLabel="Select available fiber drum"
+                            error={errors.drum}
+                            onPress={() => openPicker('drum')}
+                          />
                         </View>
-                        <Text style={styles.routeTypeOptionText}>
-                          {option.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                        {selectedDrum?.meta ? (
+                          <View style={styles.stockPill}>
+                            <Text style={styles.stockText}>
+                              {selectedDrum.meta}m
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
 
-                <View style={styles.routeTypeActions}>
+                    <View style={styles.lengthColumn}>
+                      <FieldLabel>Length to Use</FieldLabel>
+                      <View
+                        style={[
+                          styles.inputShell,
+                          styles.lengthInputShell,
+                          errors.lengthToUse && styles.inputShellError,
+                        ]}>
+                        <TextInput
+                          value={lengthToUse}
+                          onChangeText={value => {
+                            setLengthToUse(value.replace(/[^0-9]/g, ''));
+                            clearError('lengthToUse');
+                          }}
+                          keyboardType="number-pad"
+                          placeholder="0"
+                          placeholderTextColor="#92969D"
+                          style={styles.lengthInput}
+                          maxLength={5}
+                          onFocus={() => handleInputFocus('lengthToUse')}
+                          onSubmitEditing={Keyboard.dismiss}
+                          returnKeyType="done"
+                        />
+                        <Text style={styles.unitText}>m</Text>
+                      </View>
+                      {errors.lengthToUse ? (
+                        <Text style={styles.errorText}>
+                          {errors.lengthToUse}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                </View>
+              </ScrollView>
+
+              {!isKeyboardVisible ? (
+                <View style={styles.footer}>
                   <TouchableOpacity
                     activeOpacity={0.82}
-                    onPress={closePicker}
-                    style={styles.routeTypeActionButton}>
+                    onPress={() => navigation.goBack()}
+                    style={styles.footerButton}>
                     <LinearGradient
-                      colors={['#73777A', '#4D5053']}
-                      style={styles.routeTypeActionGradient}>
-                      <Text style={styles.routeTypeActionText}>Close</Text>
+                      colors={['#777A7E', '#4C4F52']}
+                      style={styles.footerGradient}>
+                      <Text style={styles.footerButtonText}>Back</Text>
                     </LinearGradient>
                   </TouchableOpacity>
                   <TouchableOpacity
                     activeOpacity={0.82}
-                    onPress={confirmRouteType}
-                    style={styles.routeTypeActionButton}>
+                    onPress={submitRoute}
+                    style={styles.footerButton}>
                     <LinearGradient
                       colors={['#8B59F8', '#6036C4']}
                       start={{x: 0, y: 0}}
                       end={{x: 1, y: 1}}
-                      style={styles.routeTypeActionGradient}>
-                      <Text style={styles.routeTypeActionText}>Select</Text>
+                      style={styles.footerGradient}>
+                      <Text style={styles.footerButtonText}>
+                        {routeType === 'change-fiber'
+                          ? 'Change Fiber'
+                          : 'Add Route'}
+                      </Text>
                     </LinearGradient>
                   </TouchableOpacity>
                 </View>
-              </>
-            ) : (
-              <>
-                <View style={styles.sheetHandle} />
-                <View style={styles.pickerHeader}>
-                  <View style={styles.pickerTitleRow}>
-                    <Image
-                      source={
-                        activePicker === 'address'
-                          ? IMAGES.mapLocation
-                          : IMAGES.FiberEnclosur
-                      }
-                      style={styles.pickerTitleIcon}
-                      resizeMode="contain"
-                    />
-                    <Text style={styles.pickerTitle}>
-                      {activePicker ? pickerTitle[activePicker] : ''}
-                    </Text>
+              ) : null}
+            </>
+          )}
+        </View>
+
+        <Modal
+          visible={activePicker !== null}
+          transparent
+          animationType="slide"
+          statusBarTranslucent
+          onRequestClose={closePicker}>
+          <Pressable style={styles.modalOverlay} onPress={closePicker}>
+            <Pressable
+              style={[
+                styles.pickerSheet,
+                activePicker === 'routeType' && styles.routeTypePickerSheet,
+              ]}
+              onPress={() => undefined}>
+              {activePicker === 'routeType' ? (
+                <>
+                  <View style={styles.routeTypeHeader}>
+                    <Text style={styles.routeTypeTitle}>Select Route Type</Text>
                   </View>
-                  <TouchableOpacity
-                    hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
-                    onPress={closePicker}>
-                    <Image
-                      source={IMAGES.close}
-                      style={styles.pickerCloseIcon}
-                      resizeMode="contain"
-                    />
-                  </TouchableOpacity>
-                </View>
-                {isPickerLoading ? (
-                  <View style={styles.pickerFeedback}>
-                    <ActivityIndicator size="small" color={COLORS.PRIMARY} />
-                    <Text style={styles.pickerFeedbackText}>
-                      {pickerLoadingText}
-                    </Text>
+
+                  <View style={styles.routeTypeOptionsCard}>
+                    {ROUTE_TYPES.map((option, index) => {
+                      const selected = draftRouteType === option.value;
+                      return (
+                        <TouchableOpacity
+                          key={option.value}
+                          activeOpacity={0.7}
+                          onPress={() => setDraftRouteType(option.value)}
+                          style={[
+                            styles.routeTypeOptionRow,
+                            index < ROUTE_TYPES.length - 1 &&
+                              styles.routeTypeOptionBorder,
+                          ]}>
+                          <View
+                            style={[
+                              styles.routeTypeRadio,
+                              selected && styles.routeTypeRadioSelected,
+                            ]}>
+                            {selected ? (
+                              <View style={styles.routeTypeRadioInner} />
+                            ) : null}
+                          </View>
+                          <Text style={styles.routeTypeOptionText}>
+                            {option.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
-                ) : pickerLoadError ? (
-                  <View style={styles.pickerFeedback}>
-                    <Text style={styles.pickerFeedbackText}>
-                      {pickerLoadError}
-                    </Text>
+
+                  <View style={styles.routeTypeActions}>
                     <TouchableOpacity
-                      activeOpacity={0.75}
-                      onPress={retryActivePicker}
-                      style={styles.pickerRetryButton}>
-                      <Text style={styles.pickerRetryText}>Retry</Text>
+                      activeOpacity={0.82}
+                      onPress={closePicker}
+                      style={styles.routeTypeActionButton}>
+                      <LinearGradient
+                        colors={['#73777A', '#4D5053']}
+                        style={styles.routeTypeActionGradient}>
+                        <Text style={styles.routeTypeActionText}>Close</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.82}
+                      onPress={confirmRouteType}
+                      style={styles.routeTypeActionButton}>
+                      <LinearGradient
+                        colors={['#8B59F8', '#6036C4']}
+                        start={{x: 0, y: 0}}
+                        end={{x: 1, y: 1}}
+                        style={styles.routeTypeActionGradient}>
+                        <Text style={styles.routeTypeActionText}>Select</Text>
+                      </LinearGradient>
                     </TouchableOpacity>
                   </View>
-                ) : (
-                  <FlatList
-                    data={activeOptions}
-                    renderItem={renderPickerItem}
-                    keyExtractor={item => item.value}
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={[
-                      styles.optionsList,
-                      activeOptions.length === 0 && styles.optionsListEmpty,
-                    ]}
-                    ListEmptyComponent={
-                      <Text style={styles.pickerFeedbackText}>
-                        No options available
+                </>
+              ) : (
+                <>
+                  <View style={styles.sheetHandle} />
+                  <View style={styles.pickerHeader}>
+                    <View style={styles.pickerTitleRow}>
+                      <Image
+                        source={
+                          activePicker === 'address'
+                            ? IMAGES.mapLocation
+                            : IMAGES.FiberEnclosur
+                        }
+                        style={styles.pickerTitleIcon}
+                        resizeMode="contain"
+                      />
+                      <Text style={styles.pickerTitle}>
+                        {activePicker ? pickerTitle[activePicker] : ''}
                       </Text>
-                    }
-                  />
-                )}
-              </>
-            )}
+                    </View>
+                    <TouchableOpacity
+                      hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+                      onPress={closePicker}>
+                      <Image
+                        source={IMAGES.close}
+                        style={styles.pickerCloseIcon}
+                        resizeMode="contain"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  {isPickerLoading ? (
+                    <View style={styles.pickerFeedback}>
+                      <ActivityIndicator size="small" color={COLORS.PRIMARY} />
+                      <Text style={styles.pickerFeedbackText}>
+                        {pickerLoadingText}
+                      </Text>
+                    </View>
+                  ) : pickerLoadError ? (
+                    <View style={styles.pickerFeedback}>
+                      <Text style={styles.pickerFeedbackText}>
+                        {pickerLoadError}
+                      </Text>
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        onPress={retryActivePicker}
+                        style={styles.pickerRetryButton}>
+                        <Text style={styles.pickerRetryText}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <FlatList
+                      data={activeOptions}
+                      renderItem={renderPickerItem}
+                      keyExtractor={item => item.value}
+                      showsVerticalScrollIndicator={false}
+                      contentContainerStyle={[
+                        styles.optionsList,
+                        activeOptions.length === 0 && styles.optionsListEmpty,
+                      ]}
+                      ListEmptyComponent={
+                        <Text style={styles.pickerFeedbackText}>
+                          No options available
+                        </Text>
+                      }
+                    />
+                  )}
+                </>
+              )}
+            </Pressable>
           </Pressable>
-        </Pressable>
         </Modal>
       </View>
     </Screen>

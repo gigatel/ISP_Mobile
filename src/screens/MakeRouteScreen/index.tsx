@@ -23,11 +23,7 @@ import {
   View,
 } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
-import {
-  CameraOptions,
-  ImagePickerResponse,
-  launchCamera,
-} from 'react-native-image-picker';
+import {Camera, CameraType, type CameraApi} from 'react-native-camera-kit';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import LinearGradient from 'react-native-linear-gradient';
 import MapView, {
@@ -75,6 +71,16 @@ type Coordinate = {
 };
 
 type TrackingState = 'idle' | 'walking' | 'paused';
+type RouteMapDisplayType = 'standard' | 'satellite' | 'threeDimensional';
+
+const ROUTE_MAP_DISPLAY_OPTIONS: {
+  type: RouteMapDisplayType;
+  label: string;
+}[] = [
+  {type: 'standard', label: 'Standard'},
+  {type: 'satellite', label: 'Satellite'},
+  {type: 'threeDimensional', label: '3D'},
+];
 
 type RouteAlertTone =
   | 'info'
@@ -256,7 +262,9 @@ const normalizeMasterType = (value: unknown) => {
 
 const getMasterType = (master: any) =>
   normalizeMasterType(
-    master?.__masterType ??
+    master?.point ??
+      master?.Point ??
+      master?.__masterType ??
       master?.masterType ??
       master?.MasterType ??
       master?.type ??
@@ -264,7 +272,14 @@ const getMasterType = (master: any) =>
   );
 
 const getMasterId = (master: any) =>
-  asText(master?.id ?? master?.Id ?? master?.masterId ?? master?.MasterId);
+  asText(
+    master?.IspMasterId ??
+      master?.ispMasterId ??
+      master?.masterId ??
+      master?.MasterId ??
+      master?.id ??
+      master?.Id,
+  );
 
 const getMasterName = (master: any) =>
   asText(
@@ -748,6 +763,8 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       : 'paused'
     : 'idle';
   const mapRef = useRef<MapView>(null);
+  const expandedMapRef = useRef<MapView>(null);
+  const fiberCameraRef = useRef<CameraApi>(null);
   const watchIdRef = useRef<number | null>(null);
   const currentPositionRef = useRef<Coordinate>(initialCurrentPosition);
   const lastAcceptedPositionRef = useRef<Coordinate>(initialCurrentPosition);
@@ -794,10 +811,17 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const [isSelectingMaster, setIsSelectingMaster] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
   const [capturingMasterKey, setCapturingMasterKey] = useState('');
+  const [fiberCameraPoint, setFiberCameraPoint] = useState<RoutePoint | null>(
+    null,
+  );
+  const [isProcessingFiberPhoto, setIsProcessingFiberPhoto] = useState(false);
   const [capturedFiberMasterKeys, setCapturedFiberMasterKeys] = useState<
     Set<string>
   >(() => new Set());
   const [serverRouteId, setServerRouteId] = useState(initialServerRouteId);
+  const [isMapExpanded, setIsMapExpanded] = useState(false);
+  const [mapDisplayType, setMapDisplayType] =
+    useState<RouteMapDisplayType>('standard');
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewImageIndex, setPreviewImageIndex] = useState(0);
   const [previewTitle, setPreviewTitle] = useState('Master Images');
@@ -1052,7 +1076,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   );
 
   const captureFiberChangeMaster = async (point: RoutePoint) => {
-    if (capturingMasterKey) {
+    if (!isFiberChange || capturingMasterKey) {
       return;
     }
     try {
@@ -1089,68 +1113,12 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         return;
       }
 
+      // Full Route, Partial Route and Without SLD all use this in-app camera.
+      // Keeping capture inside the current React Native activity preserves the
+      // mounted map and route draft on devices that recreate external cameras.
+      setIsMapExpanded(false);
       setCapturingMasterKey(point.key);
-      const options: CameraOptions = {
-        mediaType: 'photo',
-        cameraType: 'back',
-        quality: 0.7,
-        maxWidth: 1000,
-        maxHeight: 1000,
-        saveToPhotos: false,
-      };
-      launchCamera(options, async (response: ImagePickerResponse) => {
-        if (response.didCancel || response.errorCode) {
-          setCapturingMasterKey('');
-          return;
-        }
-        const capturedAsset = response.assets?.[0];
-        const uri = capturedAsset?.uri;
-        if (!uri) {
-          setCapturingMasterKey('');
-          return;
-        }
-        let watermarkedUri: string;
-        try {
-          watermarkedUri =
-            await ImageWatermark.applyLocationWatermark(uri);
-        } catch (error) {
-          setCapturingMasterKey('');
-          Common.error('Unable to watermark fiber-change image:', error);
-          showRouteAlert({
-            title: 'Photo Not Added',
-            message:
-              'The location watermark could not be added. Please capture the photo again.',
-            tone: 'camera',
-          });
-          return;
-        }
-        setCapturingMasterKey('');
-        setRoutePoints(previous =>
-          previous.map(routePoint =>
-            routePoint.key === point.key
-              ? {
-                  ...routePoint,
-                  master: {
-                    ...routePoint.master,
-                    __fiberChangePhotoUri: watermarkedUri,
-                    __fiberChangePhotoType: capturedAsset?.type || 'image/jpeg',
-                    __fiberChangePhotoName:
-                      capturedAsset?.fileName ||
-                      `fiber-master-${
-                        point.masterId || point.key
-                      }-${Date.now()}.jpg`,
-                  },
-                  imageUrls: [watermarkedUri],
-                }
-              : routePoint,
-          ),
-        );
-        setCapturedFiberMasterKeys(previous => {
-          const next = new Set(previous);
-          next.add(point.key);
-          return next;
-        });
-      });
+      setFiberCameraPoint(point);
     } catch (error: any) {
       setCapturingMasterKey('');
       showRouteAlert({
@@ -1158,6 +1126,100 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         message: error?.message || 'Unable to open the camera.',
         tone: 'camera',
       });
+    }
+  };
+
+  const closeFiberCamera = () => {
+    if (isProcessingFiberPhoto) {
+      return;
+    }
+    setFiberCameraPoint(null);
+    setCapturingMasterKey('');
+  };
+
+  const handleFiberCameraError = (message?: string) => {
+    setFiberCameraPoint(null);
+    setCapturingMasterKey('');
+    setIsProcessingFiberPhoto(false);
+    showRouteAlert({
+      title: 'Camera',
+      message: message || 'Unable to start the camera on this device.',
+      tone: 'camera',
+    });
+  };
+
+  const takeFiberChangePhoto = async () => {
+    const point = fiberCameraPoint;
+    if (!point || isProcessingFiberPhoto) {
+      return;
+    }
+
+    try {
+      setIsProcessingFiberPhoto(true);
+      const capturedImage = await fiberCameraRef.current?.capture();
+      if (!capturedImage?.uri) {
+        throw new Error('The camera did not return a photo.');
+      }
+
+      // Unmount the live camera before decoding and watermarking the bitmap.
+      // This keeps peak native memory low on devices with smaller heaps.
+      setFiberCameraPoint(null);
+      await new Promise<void>(resolve =>
+        requestAnimationFrame(() => resolve()),
+      );
+
+      const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+        capturedImage.uri,
+        point.coordinate
+          ? {
+              latitude: point.coordinate.latitude,
+              longitude: point.coordinate.longitude,
+              address: point.address,
+            }
+          : undefined,
+        {
+          width: capturedImage.width,
+          height: capturedImage.height,
+        },
+      );
+      const fileName =
+        capturedImage.name ||
+        `fiber-master-${point.masterId || point.key}-${Date.now()}.jpg`;
+
+      setRoutePoints(previous =>
+        previous.map(routePoint =>
+          routePoint.key === point.key
+            ? {
+                ...routePoint,
+                master: {
+                  ...routePoint.master,
+                  __fiberChangePhotoUri: watermarkedUri,
+                  __fiberChangePhotoType: 'image/jpeg',
+                  __fiberChangePhotoName: fileName,
+                },
+                imageUrls: [watermarkedUri],
+              }
+            : routePoint,
+        ),
+      );
+      setCapturedFiberMasterKeys(previous => {
+        const next = new Set(previous);
+        next.add(point.key);
+        return next;
+      });
+    } catch (error: any) {
+      Common.error('Unable to capture fiber-change image:', error);
+      showRouteAlert({
+        title: 'Photo Not Added',
+        message:
+          error?.message ||
+          'The photo could not be processed. Please capture it again.',
+        tone: 'camera',
+      });
+    } finally {
+      setFiberCameraPoint(null);
+      setCapturingMasterKey('');
+      setIsProcessingFiberPhoto(false);
     }
   };
 
@@ -1399,13 +1461,15 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         lastAcceptedPositionRef.current = coordinate;
       }
 
-      mapRef.current?.animateToRegion(
-        {
-          ...coordinate,
-          latitudeDelta: 0.006,
-          longitudeDelta: 0.006,
-        },
-        350,
+      [mapRef.current, expandedMapRef.current].forEach(map =>
+        map?.animateToRegion(
+          {
+            ...coordinate,
+            latitudeDelta: 0.006,
+            longitudeDelta: 0.006,
+          },
+          350,
+        ),
       );
     },
     [appendCoordinate],
@@ -1499,10 +1563,12 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       setTimeout(() => {
         const coordinates = routePathRef.current;
         if (coordinates.length > 1) {
-          mapRef.current?.fitToCoordinates(coordinates, {
-            animated: true,
-            edgePadding: {top: 50, right: 45, bottom: 50, left: 45},
-          });
+          [mapRef.current, expandedMapRef.current].forEach(map =>
+            map?.fitToCoordinates(coordinates, {
+              animated: true,
+              edgePadding: {top: 50, right: 45, bottom: 50, left: 45},
+            }),
+          );
         }
       }, 180);
     };
@@ -1641,14 +1707,36 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   };
 
   const getMappingFiberDetails = (point: RoutePoint) => {
-    const toSingleFiberId = (value: unknown) => {
+    const toSingleFiberId = (value: unknown): number | undefined => {
+      if (Array.isArray(value)) {
+        return value.length === 1 ? toSingleFiberId(value[0]) : undefined;
+      }
+      if (value && typeof value === 'object') {
+        const source = value as Record<string, unknown>;
+        return toSingleFiberId(
+          source.fiberId ??
+            source.FiberId ??
+            source.fiberTypeId ??
+            source.FiberTypeId ??
+            source.value ??
+            source.id,
+        );
+      }
       const text = asText(value);
-      if (!/^\d+$/.test(text)) {
+      if (!/^\d+(?:\.0+)?$/.test(text)) {
         return undefined;
       }
       const id = Number(text);
       return Number.isInteger(id) && id > 0 ? id : undefined;
     };
+    const selectedFiber = [...(route.params.fiberChangeSelectedFibers ?? [])]
+      .reverse()
+      .find(
+        fiber =>
+          toSingleFiberId(
+            fiber?.fiberId ?? fiber?.FiberId ?? fiber?.fiberTypeId ?? fiber?.id,
+          ) !== undefined,
+      );
     const masterFiberId = [
       point.master?.fiberId,
       point.master?.FiberId,
@@ -1657,18 +1745,36 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     ]
       .map(toSingleFiberId)
       .find((value): value is number => value !== undefined);
-    const routeFiberId = toSingleFiberId(route.params.routeDraft?.fiberTypeId);
-    const fiberIdText = asText(route.params.routeDraft?.fiberTypeId);
+    const routeFiberId = [
+      selectedFiber?.fiberId,
+      selectedFiber?.FiberId,
+      selectedFiber?.fiberTypeId,
+      selectedFiber?.id,
+      route.params.routeDraft?.fiberTypeId,
+      route.params.routeDraft?.fiberId,
+      route.params.fiberChangeRoute?.fiberTypeId,
+      route.params.fiberChangeRoute?.fiberId,
+      masterFiberId,
+    ]
+      .map(toSingleFiberId)
+      .find((value): value is number => value !== undefined);
+    const fiberIdText = asText(
+      route.params.routeDraft?.fiberTypeId ?? selectedFiber?.fiberId,
+    );
     const numericFiberId = Number(fiberIdText);
     const rawFiberType =
       asText(route.params.routeDraft?.fiberType) ||
-      asText(route.params.routeDraft?.fiberTypeName);
+      asText(route.params.routeDraft?.fiberTypeName) ||
+      asText(
+        selectedFiber?.fiberLabel ??
+          selectedFiber?.fiberTypeName ??
+          selectedFiber?.fiberType,
+      );
     const fiberCapacity = rawFiberType.match(/(\d+)\s*F\b/i)?.[1];
 
     return {
       fiberId:
-        masterFiberId ??
-        routeFiberId ??
+        (isFiberChange ? routeFiberId : masterFiberId) ??
         (!isFiberChange && fiberIdText && Number.isFinite(numericFiberId)
           ? numericFiberId
           : !isFiberChange
@@ -1681,10 +1787,20 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
   const getMappingDrumDetails = (totalLength: number) => {
     if (drumAllocations.length === 0) {
-      const drumLength = asPositiveNumber(route.params.routeDraft?.drumLength);
+      const drumLength = asPositiveNumber(
+        route.params.routeDraft?.totalDrumLength ??
+          route.params.routeDraft?.drumLength,
+      );
+      const currentRemainingLength = Number(
+        route.params.routeDraft?.remainingDrumLength,
+      );
+      const remainingBeforeChange =
+        Number.isFinite(currentRemainingLength) && currentRemainingLength >= 0
+          ? currentRemainingLength
+          : drumLength;
       return {
         drumLength,
-        drumRemainingLength: Math.max(0, drumLength - totalLength),
+        drumRemainingLength: Math.max(0, remainingBeforeChange - totalLength),
         drumId: asText(route.params.routeDraft?.drumId),
         drumNo: asText(route.params.routeDraft?.drumNo),
       };
@@ -1814,17 +1930,80 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       ? Number(getMasterField(point.master, 'orderNo', 'OrderNo')) ||
         pointIndex + 1
       : pointIndex + 1;
+    const routeChamberMappingId = Number(
+      getMasterField(
+        point.master,
+        'routeChamberMappingId',
+        'RouteChamberMappingId',
+        'routeMasterMappingId',
+        'RouteMasterMappingId',
+        'routeFiberMappingId',
+        'RouteFiberMappingId',
+        'mappingId',
+        'MappingId',
+      ),
+    );
+    const pointLatLng = getPointLatLng(point);
     const partialStartOrderNo = Number(
       route.params.routeDraft?.partialStartOrderNo,
     );
+    const pointMasterId = Number(point.masterId);
+    const sourceMasterId = Number(
+      getMasterField(
+        point.master,
+        'IspMasterId',
+        'ispMasterId',
+        'masterId',
+        'MasterId',
+        'id',
+        'Id',
+      ),
+    );
+    const resolvedMasterId =
+      Number.isInteger(pointMasterId) && pointMasterId > 0
+        ? pointMasterId
+        : Number.isInteger(sourceMasterId) && sourceMasterId > 0
+        ? sourceMasterId
+        : 0;
+    const sourceMasterType = asText(
+      getMasterField(
+        point.master,
+        'point',
+        'Point',
+        'masterType',
+        'MasterType',
+        'masterTypeName',
+        'MasterTypeName',
+        'type',
+        'Type',
+      ),
+    );
+    const normalizedSourceMasterType = normalizeMasterType(sourceMasterType);
+    const resolvedMasterType =
+      MASTER_META[normalizedSourceMasterType]?.label ||
+      sourceMasterType ||
+      point.masterTypeLabel;
+    if (
+      route.params.fiberChangeMode === 'withoutSld' &&
+      resolvedMasterId === 0
+    ) {
+      throw new Error(`MasterId is unavailable for ${point.name}.`);
+    }
+
     await dispatch(
       insertUpdateRouteChamberMappingAPI({
-        id: 0,
+        id:
+          Number.isInteger(routeChamberMappingId) && routeChamberMappingId > 0
+            ? routeChamberMappingId
+            : 0,
         routeId,
-        masterType: point.masterTypeLabel,
-        masterId: Number(point.masterId) || 0,
+        masterType:
+          route.params.fiberChangeMode === 'withoutSld'
+            ? resolvedMasterType
+            : point.masterTypeLabel,
+        masterId: resolvedMasterId,
         distance: Math.round(mappedSegmentDistance),
-        endLatLng: getPointLatLng(point),
+        endLatLng: pointLatLng,
         endSelectedAddress:
           asText(
             getMasterField(point.master, 'selectedAddress', 'SelectedAddress'),
@@ -1865,6 +2044,25 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
               isStartingPoint:
                 Number.isFinite(partialStartOrderNo) &&
                 routeOrderNo === partialStartOrderNo,
+            }
+          : {}),
+        ...(isFiberChange
+          ? {
+              // Every installation mode updates only the photographed master.
+              // Equal boundaries stop skipped route orders from being inferred
+              // and inserted between masters that the user explicitly chose.
+              isPartialChange: route.params.fiberChangeMode === 'partial',
+              fromOrderNo: routeOrderNo,
+              toOrderNo: routeOrderNo,
+              fromMasterName: point.name,
+              toMasterName: point.name,
+              fromMasterType: point.masterTypeLabel,
+              toMasterType: point.masterTypeLabel,
+              fromAddress: point.address,
+              toAddress: point.address,
+              fromLatLng: pointLatLng,
+              toLatLng: pointLatLng,
+              segmentLength: 0,
             }
           : {}),
         drumId: drumDetails.drumId,
@@ -2022,25 +2220,60 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       return;
     }
 
+    const lockLoopImmediately = route.params.fiberChangeMode === 'withoutSld';
     try {
-      await ensureMasterSavedToServer(
-        activePoint,
-        currentPositionRef.current,
-      );
-      await saveRoutePathProgress(currentPositionRef.current);
+      // Fiber-change mappings require the master photo, which is captured
+      // after tracking starts. Save those mappings on Stop & Add Master so
+      // Start never attempts a duplicate, photo-less route chamber update.
+      if (!isFiberChange) {
+        await ensureMasterSavedToServer(
+          activePoint,
+          currentPositionRef.current,
+        );
+      }
+      if (route.params.fiberChangeMode !== 'withoutSld') {
+        await saveRoutePathProgress(currentPositionRef.current);
+      }
       segmentDistanceRef.current = 0;
       setSegmentDistance(0);
-      const started = await startLocationWatch();
-      if (started) {
+      if (lockLoopImmediately) {
         setRoutePoints(previous =>
           previous.map(point =>
             point.key === activePoint.key ? {...point, isLocked: true} : point,
           ),
         );
+      }
+      const started = await startLocationWatch();
+      if (started) {
+        if (!lockLoopImmediately) {
+          setRoutePoints(previous =>
+            previous.map(point =>
+              point.key === activePoint.key
+                ? {...point, isLocked: true}
+                : point,
+            ),
+          );
+        }
       } else {
+        if (lockLoopImmediately) {
+          setRoutePoints(previous =>
+            previous.map(point =>
+              point.key === activePoint.key
+                ? {...point, isLocked: false}
+                : point,
+            ),
+          );
+        }
         setTrackingStateValue('idle');
       }
     } catch (error: any) {
+      if (lockLoopImmediately) {
+        setRoutePoints(previous =>
+          previous.map(point =>
+            point.key === activePoint.key ? {...point, isLocked: false} : point,
+          ),
+        );
+      }
       setTrackingStateValue('idle');
       showRouteAlert({
         title: 'Start Route',
@@ -2125,8 +2358,22 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       }
       setCurrentAddress(stopAddress);
 
-      await ensureMasterSavedToServer(activePoint, stopPosition);
-      await saveRoutePathProgress(stopPosition);
+      if (route.params.fiberChangeMode === 'withoutSld') {
+        const photographedUnsavedMasters = routePoints.filter(
+          point =>
+            !savedMasterKeysRef.current.has(point.key) &&
+            Boolean(asText(point.master?.__fiberChangePhotoUri)),
+        );
+        for (const point of photographedUnsavedMasters) {
+          await ensureMasterSavedToServer(point, stopPosition);
+        }
+        await ensureMasterSavedToServer(activePoint, stopPosition);
+      } else {
+        await ensureMasterSavedToServer(activePoint, stopPosition);
+      }
+      if (route.params.fiberChangeMode !== 'withoutSld') {
+        await saveRoutePathProgress(stopPosition);
+      }
       failureStage = 'masters';
 
       if (isFiberChange && route.params.fiberChangeRoute) {
@@ -2329,7 +2576,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     });
   };
 
-  const handleEndRoute = () => {
+  const handleEndRoute = async () => {
     if (isFiberChange && route.params.fiberChangeRoute) {
       if (trackingState !== 'idle') {
         showRouteAlert({
@@ -2340,6 +2587,37 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         });
         return;
       }
+
+      if (route.params.fiberChangeMode === 'withoutSld') {
+        const photographedUnsavedMasters = routePoints.filter(
+          point =>
+            !savedMasterKeysRef.current.has(point.key) &&
+            Boolean(asText(point.master?.__fiberChangePhotoUri)),
+        );
+        if (photographedUnsavedMasters.length > 0) {
+          try {
+            setIsEnding(true);
+            for (const point of photographedUnsavedMasters) {
+              await ensureMasterSavedToServer(
+                point,
+                currentPositionRef.current,
+              );
+            }
+          } catch (error: any) {
+            showRouteAlert({
+              title: 'Fiber Change Save Failed',
+              message:
+                error?.message ||
+                'Unable to save the photographed route masters.',
+              tone: 'error',
+            });
+            return;
+          } finally {
+            setIsEnding(false);
+          }
+        }
+      }
+
       routeCompletedRef.current = true;
       Keyboard.dismiss();
       navigation.replace('Fiber-Change', {
@@ -2459,10 +2737,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const renderWalkingRow = (distance: number, key: string, isLive = false) => (
     <View key={key} style={styles.walkingRow}>
       <View style={styles.walkingLine} />
-      <View
-        style={
-          isLive ? styles.liveWalkingPill : styles.distanceConnector
-        }>
+      <View style={isLive ? styles.liveWalkingPill : styles.distanceConnector}>
         {isLive ? (
           <Image
             source={
@@ -2486,6 +2761,117 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     </View>
   );
 
+  const fitExpandedMapToRoute = () => {
+    const coordinates =
+      routePolylineCoordinates.length > 1
+        ? routePolylineCoordinates
+        : [currentPosition, ...masterMarkers.map(point => point.coordinate)];
+
+    if (coordinates.length > 1) {
+      expandedMapRef.current?.fitToCoordinates(coordinates, {
+        animated: false,
+        edgePadding: {top: 100, right: 65, bottom: 120, left: 65},
+      });
+      return;
+    }
+
+    expandedMapRef.current?.animateToRegion(
+      {
+        ...currentPosition,
+        latitudeDelta: 0.006,
+        longitudeDelta: 0.006,
+      },
+      0,
+    );
+  };
+
+  const handleRouteMapDisplayTypeChange = (type: RouteMapDisplayType) => {
+    setMapDisplayType(type);
+    requestAnimationFrame(() => {
+      expandedMapRef.current?.animateCamera(
+        type === 'threeDimensional'
+          ? {pitch: 60, heading: 0, zoom: 18, altitude: 350}
+          : {pitch: 0, heading: 0},
+        {duration: type === 'threeDimensional' ? 650 : 350},
+      );
+    });
+  };
+
+  const renderRouteMap = (
+    mapReference: React.RefObject<MapView>,
+    expanded = false,
+  ) => (
+    <MapView
+      ref={mapReference}
+      provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+      mapType={mapDisplayType === 'satellite' ? 'satellite' : 'standard'}
+      style={styles.map}
+      showsUserLocation={false}
+      showsMyLocationButton={false}
+      showsCompass={expanded}
+      toolbarEnabled={false}
+      cacheEnabled={false}
+      loadingEnabled={mapDisplayType === 'satellite'}
+      loadingIndicatorColor={COLORS.PRIMARY}
+      maxZoomLevel={20}
+      pitchEnabled
+      rotateEnabled
+      showsBuildings
+      zoomEnabled
+      onMapReady={expanded ? fitExpandedMapToRoute : undefined}
+      initialRegion={{
+        ...route.params.currentPosition,
+        latitudeDelta: 0.012,
+        longitudeDelta: 0.012,
+      }}>
+      {routePolylineCoordinates.length > 1 ? (
+        <>
+          <Polyline
+            coordinates={routePolylineCoordinates}
+            strokeColor="rgba(255,255,255,0.9)"
+            strokeWidth={9}
+            lineCap="round"
+            lineJoin="round"
+            geodesic
+            zIndex={19}
+          />
+          <Polyline
+            coordinates={routePolylineCoordinates}
+            strokeColor="#6D43E5"
+            strokeWidth={5}
+            lineCap="round"
+            lineJoin="round"
+            geodesic
+            zIndex={20}
+          />
+        </>
+      ) : null}
+
+      {masterMarkers.map((point, index) => {
+        const overlapsCurrentLocation =
+          distanceBetween(point.coordinate, currentPosition) <= 4;
+        const isActiveMarker = point.key === activePoint?.key;
+
+        return (
+          <RouteMasterMapMarker
+            key={`master-${point.key}`}
+            point={point}
+            index={index}
+            isActive={isActiveMarker}
+            overlapsCurrentLocation={overlapsCurrentLocation}
+          />
+        );
+      })}
+
+      <Marker
+        coordinate={currentPosition}
+        anchor={{x: 0.5, y: 0.82}}
+        zIndex={100}>
+        <StartingPointSvg width={30} height={48} />
+      </Marker>
+    </MapView>
+  );
+
   return (
     <Screen
       preset="fixed"
@@ -2505,64 +2891,26 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         />
 
         <View style={styles.mapContainer}>
-          <MapView
-            ref={mapRef}
-            provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-            style={styles.map}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            toolbarEnabled={false}
-            initialRegion={{
-              ...route.params.currentPosition,
-              latitudeDelta: 0.012,
-              longitudeDelta: 0.012,
-            }}>
-            {routePolylineCoordinates.length > 1 ? (
-              <>
-                <Polyline
-                  coordinates={routePolylineCoordinates}
-                  strokeColor="rgba(255,255,255,0.9)"
-                  strokeWidth={9}
-                  lineCap="round"
-                  lineJoin="round"
-                  geodesic
-                  zIndex={19}
-                />
-                <Polyline
-                  coordinates={routePolylineCoordinates}
-                  strokeColor="#6D43E5"
-                  strokeWidth={5}
-                  lineCap="round"
-                  lineJoin="round"
-                  geodesic
-                  zIndex={20}
-                />
-              </>
-            ) : null}
-
-            {masterMarkers.map((point, index) => {
-              const overlapsCurrentLocation =
-                distanceBetween(point.coordinate, currentPosition) <= 4;
-              const isActiveMarker = point.key === activePoint?.key;
-
-              return (
-                <RouteMasterMapMarker
-                  key={`master-${point.key}`}
-                  point={point}
-                  index={index}
-                  isActive={isActiveMarker}
-                  overlapsCurrentLocation={overlapsCurrentLocation}
-                />
-              );
-            })}
-
-            <Marker
-              coordinate={currentPosition}
-              anchor={{x: 0.5, y: 0.82}}
-              zIndex={100}>
-              <StartingPointSvg width={30} height={48} />
-            </Marker>
-          </MapView>
+          {renderRouteMap(mapRef)}
+          <TouchableOpacity
+            activeOpacity={0.82}
+            accessibilityRole="button"
+            accessibilityLabel="Expand route map"
+            onPress={() => setIsMapExpanded(true)}
+            style={styles.mapExpandButton}>
+            <View style={styles.expandIcon}>
+              <View style={[styles.expandCorner, styles.expandCornerTopLeft]} />
+              <View
+                style={[styles.expandCorner, styles.expandCornerTopRight]}
+              />
+              <View
+                style={[styles.expandCorner, styles.expandCornerBottomLeft]}
+              />
+              <View
+                style={[styles.expandCorner, styles.expandCornerBottomRight]}
+              />
+            </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.addressBar}>
@@ -2869,6 +3217,121 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
             </TouchableOpacity>
           </View>
         ) : null}
+
+        <Modal
+          visible={Boolean(fiberCameraPoint)}
+          statusBarTranslucent
+          presentationStyle="overFullScreen"
+          animationType="fade"
+          onRequestClose={closeFiberCamera}>
+          <View style={styles.fiberCameraContainer}>
+            {fiberCameraPoint ? (
+              <Camera
+                ref={fiberCameraRef}
+                cameraType={CameraType.Back}
+                flashMode="auto"
+                resizeMode="cover"
+                maxPhotoQualityPrioritization="speed"
+                shutterPhotoSound
+                onError={event =>
+                  handleFiberCameraError(event.nativeEvent.errorMessage)
+                }
+                style={styles.fiberCameraPreview}
+              />
+            ) : null}
+
+            <View style={styles.fiberCameraHeader}>
+              <View style={styles.fiberCameraTitlePill}>
+                <Text numberOfLines={1} style={styles.fiberCameraTitle}>
+                  {fiberCameraPoint
+                    ? `Capture ${fiberCameraPoint.name}`
+                    : 'Capture Master Photo'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Close camera"
+                disabled={isProcessingFiberPhoto}
+                onPress={closeFiberCamera}
+                style={styles.fiberCameraCloseButton}>
+                <Text style={styles.fiberCameraCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.fiberCameraFooter}>
+              <Text style={styles.fiberCameraHint}>
+                Keep the route master clearly visible in the frame
+              </Text>
+              <TouchableOpacity
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Take photo"
+                disabled={isProcessingFiberPhoto}
+                onPress={takeFiberChangePhoto}
+                style={styles.fiberCameraShutter}>
+                {isProcessingFiberPhoto ? (
+                  <ActivityIndicator color={COLORS.WHITE} />
+                ) : (
+                  <View style={styles.fiberCameraShutterInner} />
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={isMapExpanded}
+          statusBarTranslucent
+          animationType="fade"
+          onRequestClose={() => setIsMapExpanded(false)}>
+          <View style={styles.expandedMapContainer}>
+            {renderRouteMap(expandedMapRef, true)}
+
+            <View style={styles.expandedMapHeader} pointerEvents="box-none">
+              <View style={styles.expandedMapTitlePill}>
+                <Text numberOfLines={1} style={styles.expandedMapTitle}>
+                  {route.params.routeName || 'Route Map'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Close fullscreen route map"
+                onPress={() => setIsMapExpanded(false)}
+                style={styles.expandedMapCloseButton}>
+                <Text style={styles.expandedMapCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.expandedMapTypeControl}>
+              {ROUTE_MAP_DISPLAY_OPTIONS.map(({type, label}) => {
+                const isSelected = mapDisplayType === type;
+                return (
+                  <TouchableOpacity
+                    key={type}
+                    activeOpacity={0.82}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show ${label.toLowerCase()} map`}
+                    accessibilityState={{selected: isSelected}}
+                    onPress={() => handleRouteMapDisplayTypeChange(type)}
+                    style={[
+                      styles.expandedMapTypeOption,
+                      isSelected && styles.expandedMapTypeOptionSelected,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.expandedMapTypeText,
+                        isSelected && styles.expandedMapTypeTextSelected,
+                      ]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </Modal>
 
         <Modal
           visible={isDrumSheetVisible}

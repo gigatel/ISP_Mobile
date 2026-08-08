@@ -35,10 +35,7 @@ import {RootStackParamList} from '@navigation/navigator';
 import {Screen} from '@organisms';
 import {COLORS, FONTS, IMAGES, SIZE} from '@res';
 import {StoreDispatch} from '@reducers';
-import {
-  GetNearestPoleTreeDDAPI,
-  UpdateMasterAPI,
-} from '@slices/route.slice';
+import {GetNearestPoleTreeDDAPI, UpdateMasterAPI} from '@slices/route.slice';
 import {Location, Common, ImageWatermark} from '@utils';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
 import {
@@ -410,7 +407,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       const updateResponse = await dispatch(UpdateMasterAPI(payload)).unwrap();
       Common.showToast(`${selectedMasterLabel} added successfully!`);
       const createdMasterId = Number(
-        updateResponse?.data?.id ??
+        updateResponse?.data?.masterId ??
+          updateResponse?.data?.MasterId ??
+          updateResponse?.masterId ??
+          updateResponse?.MasterId ??
+          updateResponse?.data?.id ??
           updateResponse?.data?.Id ??
           updateResponse?.id ??
           updateResponse?.Id ??
@@ -486,8 +487,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
             selectedFibers: route.params?.fiberChangeSelectedFibers ?? [],
             installationScope:
               route.params?.fiberChangeInstallationScope ?? 'partial',
-            installationProgress:
-              route.params?.fiberChangeInstallationProgress,
+            installationProgress: route.params?.fiberChangeInstallationProgress,
             currentPosition: selectedCoordinate,
             currentAddress: selectedAddress.trim(),
             addedMaster,

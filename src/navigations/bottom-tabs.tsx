@@ -217,8 +217,8 @@ const BottomTab: React.FC = () => {
 
 const TabBar: React.FC<any> = ({state, descriptors, navigation}) => {
   return (
-    <>
-      <View style={[styles.tabView]}>
+    <View style={styles.tabShell}>
+      <View style={styles.tabView}>
         {state.routes.map((route: any, index: number) => {
           const {options} = descriptors[route.key];
           const isFocused = state.index === index;
@@ -252,12 +252,13 @@ const TabBar: React.FC<any> = ({state, descriptors, navigation}) => {
               style={styles.buttonsView}>
               <TabIcons index={index} active={isFocused} />
               <TabLabel title={TAB_NAMES[index]} active={isFocused} />
+              {isFocused && <View style={styles.activeIndicator} />}
             </TouchableOpacity>
           );
         })}
       </View>
-      <SafeAreaView style={[styles.safearea]} />
-    </>
+      <SafeAreaView style={styles.safearea} />
+    </View>
   );
 };
 
@@ -299,7 +300,7 @@ const TabIcons: React.FC<{index: number; active: boolean}> = ({
 const TabIcon: React.FC<{icon: number; color: string; active: boolean}> = ({
   icon,
   color,
-  active,
+  active: _active,
 }) => {
   return (
     <Image
@@ -321,32 +322,60 @@ const TabLabel: React.FC<{title: string; active: boolean}> = ({
 }) => {
   return (
     <Text
-      style={
-        (styles.tabLabel, {color: active ? COLORS.PRIMARY : COLORS.TEXT_DARK})
-      }>
+      style={[
+        styles.tabLabel,
+        {color: active ? '#6D20D8' : '#4D5063'},
+        active && styles.tabLabelActive,
+      ]}>
       {title}
     </Text>
   );
 };
 
 const styles = StyleSheet.create({
+  tabShell: {
+    backgroundColor: '#F8F8FB',
+    paddingHorizontal: SIZE.MS(15),
+    paddingTop: SIZE.MVS(4),
+  },
   tabView: {
     flexDirection: 'row',
-    height: SIZE.MVS(60),
+    height: SIZE.MVS(66),
     borderTopWidth: 1,
-    borderColor: COLORS.TEXT_PLACEHOLDER,
-    backgroundColor: COLORS.BACKGROUND_DEFAULT,
+    borderWidth: 1,
+    borderColor: '#E2E1E8',
+    borderRadius: SIZE.MS(18),
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#201547',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.09,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  buttonsView: {flex: 1, justifyContent: 'center', alignItems: 'center'},
+  buttonsView: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
   tabLabel: {
     fontFamily: FONTS.MEDIUM,
     fontSize: SIZE.MS(12),
     textAlign: 'center',
-
     marginTop: SIZE.MVS(2),
+  },
+  tabLabelActive: {fontFamily: FONTS.SEMI_BOLD},
+  activeIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    width: SIZE.MS(48),
+    height: SIZE.MVS(3),
+    borderRadius: SIZE.MS(2),
+    backgroundColor: '#6D20D8',
   },
   safearea: {
     flex: 0,
+    backgroundColor: '#F8F8FB',
   },
 });
 

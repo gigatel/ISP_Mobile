@@ -18,7 +18,7 @@ export type StoredRouteFiberSelection = {
   totalDrumLength?: number;
   remainingDrumLength?: number;
   masterCount?: number;
-  changeScope?: 'Full' | 'Partial';
+  changeScope?: 'Full' | 'Partial' | 'Discrete';
   fromOrderNo?: number;
   toOrderNo?: number;
   fromMasterName?: string;
@@ -57,7 +57,7 @@ const normalize = (value: unknown) =>
     .trim()
     .toLowerCase();
 
-const getCompletedRoutes = (): CompletedAppRouteSnapshot[] => {
+export const getCompletedAppRoutes = (): CompletedAppRouteSnapshot[] => {
   const value = getData('COMPLETED_APP_ROUTES');
   return Array.isArray(value) ? value : [];
 };
@@ -82,7 +82,7 @@ const matchesRoute = (
 };
 
 export const saveCompletedAppRoute = (snapshot: CompletedAppRouteSnapshot) => {
-  const existing = getCompletedRoutes();
+  const existing = getCompletedAppRoutes();
   const next = [
     snapshot,
     ...existing.filter(
@@ -98,8 +98,9 @@ export const getCompletedAppRoute = (
   routeId: unknown,
   routeName: unknown,
 ): CompletedAppRouteSnapshot | null =>
-  getCompletedRoutes().find(item => matchesRoute(item, routeId, routeName)) ??
-  null;
+  getCompletedAppRoutes().find(item =>
+    matchesRoute(item, routeId, routeName),
+  ) ?? null;
 
 export const getRouteFiberSelections = (
   routeId: unknown,

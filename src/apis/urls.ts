@@ -1,7 +1,7 @@
 // Base URL Dev
 export const BASE_URL = 'http://mob.gigatel.me:7003/api/'; //hrms_ios
 export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/'; //isp
-export const BASE_URL_4 = 'http://mob.gigatel.me:7004/api/'; //isp-local
+// export const BASE_URL_2 = 'http://10.100.2.38:6102/api/'; //isp-local
 export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/'; //locationISP
 const apiBase = (url: string) => url.replace(/api\/?.*$/i, 'api/');
 //Base URL PROD
@@ -58,7 +58,7 @@ export const updateMobileAddress = BASE_URL + 'Employee/UpdateMobileAddress';
 export const getISPMasterListByname =
   BASE_URL_2 + 'ISPMaster/GetMasterByNameDDISP';
 export const getNearestPoleTreeDD =
-  apiBase(BASE_URL_4) + 'ISPMaster/GetNearestPoleTreeDD';
+  apiBase(BASE_URL_2) + 'ISPMaster/GetNearestPoleTreeDD';
 export const getDataCenterList =
   BASE_URL_2 + 'DataCenterMaster/GetDataCenterMasterDDISP';
 export const getRackMasterList = BASE_URL_2 + 'RackMaster/GetRackMasterDDISP';
@@ -83,6 +83,7 @@ export const UpadteChamberPathDetails =
   BASE_URL_2 + 'RouteMasterMob/UpdateRoutePathDetails';
 export const getRouteDetailsPaggi =
   BASE_URL_2 + 'RouteMasterMob/GetRouteDetailsPaggi';
+export const getSLDDetailsPaggiISP = BASE_URL_2 + 'SLD/GetSLDDetailsPaggiISP';
 export const getRouteFiberMappingPaggiISP =
   BASE_URL_2 + 'RouteFiberMapping/GetRouteFiberMappingPaggiISP';
 export const getRouteFiberAllDataBySLDIdISP =

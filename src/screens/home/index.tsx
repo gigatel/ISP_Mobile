@@ -1,21 +1,15 @@
 import {APIs, URLs} from '@apis';
-import {AnimImage, Buttons, ListView} from '@atoms';
-import {DEVELOPER_NAME} from '@env';
-import {
-  LocationPermission,
-  SyncOfflineDataSheet,
-  UserNameDesigRow,
-} from '@molecules';
+import {Buttons} from '@atoms';
+import {LocationPermission, SyncOfflineDataSheet} from '@molecules';
 import {RootStackParamList} from '@navigation/navigator';
 import {Screen} from '@organisms';
-import Geolocation from '@react-native-community/geolocation';
 import NetInfo from '@react-native-community/netinfo';
 import {useFocusEffect} from '@react-navigation/native';
 import {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {RootState, StoreDispatch} from '@reducers';
-import {COLORS, CONSTANT, FONTS, IMAGES, SIZE, STYLES} from '@res';
-import {todayAttendanceApi} from '@slices/attendance.slice';
-import {getLoginTokenApi} from '@slices/dashboard.slice'; // ← dashboardListApi removed
+import {COLORS, FONTS, SIZE, STYLES} from '@res';
+import {dashboardListApi, getLoginTokenApi} from '@slices/dashboard.slice';
+import {GetMasterByNameAPI, GetRouteDetailsPaggiAPI} from '@slices/route.slice';
 import {DataType, ScreenProps} from '@types';
 import {
   attachPosterDispatch,
@@ -23,28 +17,12 @@ import {
 } from '../../services/LocationPosterCore';
 import {startForegroundPoster} from '../../services/ForegroundLocationPoster';
 import {attachDispatch} from '../../services/LocationBatteryService';
-import WelcomeModal from '../../components/molecules/WelcomeModal';
-import {
-  FontSize,
-  LineHeight,
-  Padding,
-  FontFamily,
-  Height,
-  Width,
-  BoxShadow,
-  Border,
-} from '../../res/globalStyle';
-import {
-  Common,
-  Location,
-  Permissions,
-  Preferences,
-  Services,
-  Voice,
-} from '@utils';
+import {loadRecentlyAddedMasters} from '../../services/airPlacedMasterStorage';
+import {getCompletedAppRoutes} from '../../services/routeFiberChangeStorage';
+import {FontSize, LineHeight, Padding, FontFamily} from '../../res/globalStyle';
+import {Common, Location, Permissions, Preferences, Services} from '@utils';
 import React, {
   FC,
-  memo,
   useRef,
   useCallback,
   useEffect,
@@ -53,9 +31,6 @@ import React, {
 } from 'react';
 import {
   AppState,
-  Image,
-  ImageSourcePropType,
-  ScrollView,
   StyleSheet,
   Text,
   Platform,
@@ -64,12 +39,10 @@ import {
   StatusBar,
   NativeModules,
   NativeEventEmitter,
-  TouchableOpacity,
-  Alert,
 } from 'react-native';
-import * as Animiatable from 'react-native-animatable';
 import {connect, useDispatch} from 'react-redux';
 import DeviceInfo from 'react-native-device-info';
+import {HomeDashboard} from './home-dashboard';
 
 // ===== Types =====
 type MobileVersion = {
@@ -79,51 +52,96 @@ type MobileVersion = {
   version_code?: string | number;
   description?: string;
 };
-export interface ProjectListItemProps {
-  data: DataType.Project;
-  index?: number;
-}
-export interface ModuleListItemProps {
-  data: DataType.Module;
-}
-export interface SubModuleListItemProps {
-  item: DataType.SubModule;
-}
-interface ModuleCardProps {
-  title: string;
-  image: string;
-  onPress?: () => void;
-}
 
-// ===== Dummy module data =====
-const DUMMY_MODULES: {
-  name: string;
-  bg: string;
-  emoji?: string;
-  icon?: ImageSourcePropType;
-  screen: Extract<keyof RootStackParamList, string>;
-}[] = [
-  {name: 'Add Master', bg: '#E6F1FB', emoji: '🗼', screen: 'addMaster'},
-  // {name: 'Add Route', bg: '#FCEBEB', emoji: '🛣️', screen: 'AddRouteScreen'},
-  {
-    name: 'Add Route/Change Fiber',
-    bg: '#EAF6EF',
-    icon: IMAGES.FiberEnclosur,
-    screen: 'Route-Master-Hub',
-  },
-];
+type OperationalCounts = {
+  totalMasters: number;
+  routesAdded: number;
+  buildings: number;
+};
 
+type CachedOperationalCounts = OperationalCounts & {
+  masterTypeCounts?: Record<string, number>;
+};
+
+const ISP_MASTER_TYPES = [
+  'Pole',
+  'Tree',
+  'Building',
+  'POP',
+  'Tiffin',
+  'Enclosure',
+] as const;
+const HOME_OPERATIONAL_COUNTS = Preferences.KEY.HOME_OPERATIONAL_COUNTS;
+
+const asArray = (response: any): any[] => {
+  if (Array.isArray(response)) {
+    return response;
+  }
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+  const nested =
+    response?.data?.data ??
+    response?.data?.result ??
+    response?.data?.items ??
+    response?.data?.records ??
+    response?.result ??
+    response?.items ??
+    response?.records ??
+    response?.list ??
+    response?.values;
+  return Array.isArray(nested) ? nested : [];
+};
+
+const normalizedText = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase();
+
+const getMasterType = (master: any, fallback = '') =>
+  normalizedText(
+    master?.masterType ?? master?.MasterType ?? master?.type ?? fallback,
+  );
+
+const getMasterIdentity = (master: any, fallbackType = '') => {
+  const type = getMasterType(master, fallbackType);
+  const id = normalizedText(
+    master?.id ?? master?.Id ?? master?.masterId ?? master?.MasterId,
+  );
+  if (id && id !== '0') {
+    return `${type}:id:${id}`;
+  }
+  const name = normalizedText(
+    master?.name ?? master?.Name ?? master?.masterName ?? master?.MasterName,
+  );
+  const latLng = normalizedText(
+    master?.latLng ?? master?.LatLng ?? master?.latlng,
+  ).replace(/\s/g, '');
+  return `${type}:value:${name}:${latLng}`;
+};
+
+const uniqueMasters = (masters: any[], fallbackType: string) =>
+  Array.from(
+    new Map(
+      masters.map(master => [getMasterIdentity(master, fallbackType), master]),
+    ).values(),
+  );
+
+const getCachedOperationalCounts = (): CachedOperationalCounts => {
+  const cached = Preferences.getData(HOME_OPERATIONAL_COUNTS);
+  return {
+    totalMasters: Number(cached?.totalMasters) || 0,
+    routesAdded: Number(cached?.routesAdded) || 0,
+    buildings: Number(cached?.buildings) || 0,
+    masterTypeCounts:
+      cached?.masterTypeCounts && typeof cached.masterTypeCounts === 'object'
+        ? cached.masterTypeCounts
+        : {},
+  };
+};
 let navigator: NativeStackNavigationProp<RootStackParamList>;
-
-function getRandomDelay() {
-  return Math.floor(Math.random() * (10000 - 2000 + 1)) + 2000;
-}
 const check = (name: string, lName: string) =>
   Common.isEqualIgnoreCase(name, lName);
-const pickGoogleMapKey = (r: any) =>
-  r?.googleMapKey ?? r?.data?.googleMapKey ?? null;
-const employeeId = (r: any) =>
-  r?.employeeDetails?.id ?? r?.data?.employeeDetails?.id ?? null;
 
 const formatBytes = (n?: number) => {
   if (!n || n <= 0) return '0 B';
@@ -349,210 +367,6 @@ const moduleNavigation = (item: DataType.SubModule) => {
   }
 };
 
-// ===== ModuleCard (real API modules) =====
-const ModuleCard: FC<ModuleCardProps> = ({title, image, onPress}) => (
-  <TouchableOpacity
-    style={styles.moduleCardContainer}
-    activeOpacity={CONSTANT.BUTTON_OPACITY}
-    onPress={onPress}>
-    <View style={styles.moduleCardImageContainer}>
-      <AnimImage
-        animation={'rubberBand'}
-        useNativeDriver={true}
-        iterationCount={'infinite'}
-        duration={getRandomDelay()}
-        source={{uri: image}}
-        style={styles.moduleCardImage}
-      />
-    </View>
-  </TouchableOpacity>
-);
-
-// ===== Dummy Module Tile =====
-const DummyModuleTile: FC<{
-  name: string;
-  bg: string;
-  emoji?: string;
-  icon?: ImageSourcePropType;
-  onPress: () => void;
-}> = ({name, bg, emoji, icon, onPress}) => {
-  const cardWidth = (Common.width - 90) / 4;
-  return (
-    <Animiatable.View
-      animation="zoomIn"
-      style={[styles.subModuleItemView, {width: cardWidth}]}>
-      <TouchableOpacity
-        style={styles.moduleCardContainer}
-        activeOpacity={CONSTANT.BUTTON_OPACITY}
-        onPress={onPress}>
-        <View style={[styles.dummyIconContainer, {backgroundColor: bg}]}>
-          {icon ? (
-            <Image
-              source={icon}
-              style={styles.dummyImageIcon}
-              resizeMode="contain"
-            />
-          ) : (
-            <Text style={styles.dummyEmoji}>{emoji}</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-      <Text style={styles.moduleCardTitleText}>{name}</Text>
-    </Animiatable.View>
-  );
-};
-// ===== LogoView =====
-const LogoView: FC<{
-  desc?: string;
-  verCode?: string;
-  employeeName?: string;
-  showWelcome?: boolean;
-}> = ({desc = '', verCode = '', employeeName = '', showWelcome = false}) => {
-  const appVersion = DeviceInfo.getVersion();
-  const buildNumber = DeviceInfo.getBuildNumber();
-  return (
-    <>
-      <Animiatable.Image
-        useNativeDriver
-        iterationCount="infinite"
-        animation="pulse"
-        source={IMAGES.globe}
-        style={styles.globe}
-      />
-      {/* //{showWelcome && <WelcomeModal name={user?.userFullName || ''} />} */}
-      <View style={styles.parent}>
-        <View style={[styles.logoBarRow, styles.viewFlexBox]}>
-          <View style={[styles.technosoftParent, styles.viewFlexBox]}>
-            <Text style={[styles.technosoft, styles.devTypo]}>GIGA ISP</Text>
-            <View
-              style={[
-                styles.crown24dp1f1f1fFill1Wght20Parent,
-                styles.parentFlexBox,
-              ]}>
-              <Image
-                style={styles.crown24dp1f1f1fFill1Wght20Icon}
-                resizeMode="cover"
-                source={IMAGES.crown}
-              />
-              <Text style={[styles.dev, styles.devTypo]}>
-                {/* {__DEV__ ? 'DEV' : desc || 'DEV'} */}
-                PROD
-              </Text>
-            </View>
-          </View>
-
-          <View
-            style={[
-              styles.android24dp1f1f1fFill0WghtParent,
-              styles.parentFlexBox,
-            ]}>
-            <Image
-              style={styles.android24dp1f1f1fFill0WghtIcon}
-              resizeMode="cover"
-              source={IMAGES.android}
-            />
-            <View style={{marginLeft: 4}}>
-              <Text style={[styles.v21, styles.devTypo2]}>v{appVersion}</Text>
-              {verCode ? (
-                <Text style={styles.verCodeText}>code {verCode}</Text>
-              ) : null}
-            </View>
-          </View>
-        </View>
-      </View>
-    </>
-  );
-};
-
-// ===== StatsDashboard =====
-const StatsDashboard: FC<{dashboardList?: any; employeeName: string}> = ({
-  dashboardList,
-  employeeName,
-}) => (
-  <View>
-    <View style={styles.sectionRow}>
-      <View style={styles.sectionLine} />
-      <Text style={styles.sectionLabel}>MODULES</Text>
-      <View style={styles.sectionLine} />
-    </View>
-    <View style={styles.subModuleListContainer}>
-      {DUMMY_MODULES.map(m => (
-        <DummyModuleTile
-          key={m.name}
-          name={m.name}
-          bg={m.bg}
-          emoji={m.emoji}
-          icon={m.icon}
-          onPress={() => {
-            navigator?.getParent()?.navigate(m.screen);
-          }}
-        />
-      ))}
-    </View>
-  </View>
-);
-
-// ===== Real API-driven lists =====
-const ProjectList = memo(
-  ({data, onRefresh}: {data: DataType.Project[]; onRefresh: () => void}) => (
-    <ListView
-      data={data}
-      bounces
-      isRefreshable
-      onRefresh={onRefresh}
-      renderItem={({item}) => <ProjectListItem data={item} />}
-    />
-  ),
-);
-
-const ProjectListItem: FC<ProjectListItemProps> = ({data}) => (
-  <View>
-    <ModuleList data={data.modules} />
-  </View>
-);
-
-const ModuleList = memo(({data}: {data: DataType.Module[]}) => (
-  <View>
-    <ListView
-      data={data}
-      renderItem={({item}) => <ModuleListItem data={item} />}
-    />
-  </View>
-));
-
-const ModuleListItem = memo(({data}: {data: DataType.Module}) => (
-  <View>
-    <View style={[styles.view2, styles.viewBg]} />
-    <Text style={styles.moduleTitleText}>{data?.moduleName}</Text>
-    <SubModuleList data={data.subModules} />
-  </View>
-));
-
-const SubModuleList = memo(({data}: {data: DataType.SubModule[]}) => (
-  <View style={styles.subModuleListContainer}>
-    {data.map(item => (
-      <SubModuleListItem item={item} key={item?.subModuleName} />
-    ))}
-  </View>
-));
-
-const SubModuleListItem: FC<SubModuleListItemProps> = ({item}) => {
-  const cardWidth = (Common.width - 90) / 4;
-  return (
-    <Animiatable.View
-      animation={'zoomIn'}
-      key={item?.subModuleName}
-      style={[styles.subModuleItemView, {width: cardWidth}]}>
-      <ModuleCard
-        title={item.subModuleName}
-        image={item.subModuleImage ?? ''}
-        onPress={() => moduleNavigation(item)}
-      />
-      <Text style={styles.moduleCardTitleText}>{item?.subModuleName}</Text>
-    </Animiatable.View>
-  );
-};
-
 // ===== Update Gate =====
 const UpdateGateScreen = ({children}: {children: React.ReactNode}) => (
   <View style={styles.updateScreen}>
@@ -619,18 +433,11 @@ const UpdateRequiredCard = ({
 );
 
 // ===== HOME SCREEN =====
-const Home: FC<ScreenProps.Home> = ({
-  loading,
-  dashboardList,
-  navigation,
-  employeeDetails,
-}) => {
+const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
   navigator = navigation;
 
   const [showLocationSheet, setShowLocationSheet] = useState(false);
   const [isLoading, setisLoading] = useState(false);
-  const [locationError, setLocationError] = useState('');
-  const [showWelcome, setShowWelcome] = useState(false);
   const [showSync, setShowSync] = useState(false);
   const [currentAddress, setCurrentAddress] = useState('');
   const locationTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -639,26 +446,157 @@ const Home: FC<ScreenProps.Home> = ({
   const [dlDownloaded, setDlDownloaded] = useState<number>(0);
   const [dlTotal, setDlTotal] = useState<number>(-1);
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [address, setAddress] = useState('');
+  const [dashboardRefreshing, setDashboardRefreshing] = useState(false);
+  const [lastSyncLabel, setLastSyncLabel] = useState(
+    Preferences.getData('LAST_HOME_SYNC') ?? 'Not synced yet',
+  );
+  const [syncCompletedCount, setSyncCompletedCount] = useState(
+    Number(Preferences.getData('HOME_SYNC_COUNT') ?? 0),
+  );
+  const [syncSuccessful, setSyncSuccessful] = useState(false);
+  const [operationalCounts, setOperationalCounts] = useState<OperationalCounts>(
+    () => {
+      const cached = getCachedOperationalCounts();
+      return {
+        totalMasters: cached.totalMasters,
+        routesAdded: cached.routesAdded,
+        buildings: cached.buildings,
+      };
+    },
+  );
   const loginData = Preferences.getData('LOGIN_RESPONSE');
   const user = loginData;
 
   const dispatch = useDispatch<StoreDispatch>();
 
-  const employeeName = useMemo(() => {
-    const e = dashboardList?.employeeDetails;
-    return `${e?.firstName ?? ''} ${e?.middleName ?? ''} ${
-      e?.lastName ?? ''
-    }`.trim();
-  }, [dashboardList]);
+  const refreshDashboard = useCallback(
+    async (force = true) => {
+      setDashboardRefreshing(true);
+      try {
+        await dispatch(dashboardListApi({isRefresh: force})).unwrap();
+        const label = new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        Preferences.setData('LAST_HOME_SYNC', label);
+        setLastSyncLabel(label);
+        return true;
+      } catch (error) {
+        __DEV__ && console.warn('[Home] dashboard refresh failed', error);
+        Common.showToast('Unable to refresh dashboard. Please try again.');
+        return false;
+      } finally {
+        setDashboardRefreshing(false);
+      }
+    },
+    [dispatch],
+  );
+
+  const refreshOperationalCounts = useCallback(async () => {
+    const cached = getCachedOperationalCounts();
+    const recentMasters = loadRecentlyAddedMasters();
+    const masterRequests = ISP_MASTER_TYPES.map(masterType =>
+      dispatch(GetMasterByNameAPI({name: masterType})).unwrap(),
+    );
+    const routeRequest = dispatch(
+      GetRouteDetailsPaggiAPI({page: 1, size: 1000, search: ''}),
+    ).unwrap();
+    const [routeResult, ...masterResults] = await Promise.allSettled([
+      routeRequest,
+      ...masterRequests,
+    ]);
+
+    const nextTypeCounts: Record<string, number> = {
+      ...(cached.masterTypeCounts ?? {}),
+    };
+
+    ISP_MASTER_TYPES.forEach((masterType, index) => {
+      const normalizedType = normalizedText(masterType);
+      const localMasters = recentMasters.filter(
+        master => getMasterType(master) === normalizedType,
+      );
+      const result = masterResults[index];
+      if (result?.status === 'fulfilled') {
+        const apiMasters = asArray(result.value);
+        nextTypeCounts[normalizedType] = uniqueMasters(
+          [...apiMasters, ...localMasters],
+          masterType,
+        ).length;
+      } else {
+        nextTypeCounts[normalizedType] = Math.max(
+          Number(nextTypeCounts[normalizedType]) || 0,
+          uniqueMasters(localMasters, masterType).length,
+        );
+      }
+    });
+
+    const localCompletedRoutes = getCompletedAppRoutes().length;
+    let routesAdded = Math.max(cached.routesAdded, localCompletedRoutes);
+    if (routeResult.status === 'fulfilled') {
+      routesAdded = Math.max(
+        Number(routeResult.value?.recordsFiltered) || 0,
+        Number(routeResult.value?.recordsTotal) || 0,
+        asArray(routeResult.value).length,
+        localCompletedRoutes,
+      );
+    }
+
+    const nextCounts: OperationalCounts = {
+      totalMasters: ISP_MASTER_TYPES.reduce(
+        (total, masterType) =>
+          total + (Number(nextTypeCounts[normalizedText(masterType)]) || 0),
+        0,
+      ),
+      routesAdded,
+      buildings: Number(nextTypeCounts.building) || 0,
+    };
+    setOperationalCounts(nextCounts);
+    Preferences.setData(HOME_OPERATIONAL_COUNTS, {
+      ...nextCounts,
+      masterTypeCounts: nextTypeCounts,
+    });
+    return (
+      routeResult.status === 'fulfilled' &&
+      masterResults.every(result => result.status === 'fulfilled')
+    );
+  }, [dispatch]);
+
+  const refreshHomeData = useCallback(
+    async (force = true) => {
+      const [dashboardUpdated] = await Promise.all([
+        refreshDashboard(force),
+        refreshOperationalCounts(),
+      ]);
+      return dashboardUpdated;
+    },
+    [refreshDashboard, refreshOperationalCounts],
+  );
+
+  const serverSyncCompleted = Number(
+    (dashboardList as any)?.syncCompleted ??
+      (dashboardList as any)?.syncCount ??
+      (dashboardList as any)?.data?.syncCompleted ??
+      0,
+  );
+
+  useEffect(() => {
+    if (serverSyncCompleted > syncCompletedCount) {
+      setSyncCompletedCount(serverSyncCompleted);
+      Preferences.setData('HOME_SYNC_COUNT', serverSyncCompleted);
+    }
+  }, [serverSyncCompleted, syncCompletedCount]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshHomeData(false);
+    }, [refreshHomeData]),
+  );
 
   const serverVersionCode: string = String(
     dashboardList?.mobileAppVersion1?.version_code ??
       dashboardList?.mobileAppVersion?.version_code ??
       '',
   );
-
-  const appDesc: string = dashboardList?.mobileAppVersion1?.description ?? '';
 
   // ── Forced update gate ───────────────────────────────────────────────────────
   const [forcedUpdateRequired, setForcedUpdateRequired] = useState(false);
@@ -849,8 +787,6 @@ const Home: FC<ScreenProps.Home> = ({
   }, [ensurePostingServices]);
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
-
       const startInterval = () => {
         if (locationTimerRef.current) clearInterval(locationTimerRef.current);
         locationTimerRef.current = setInterval(async () => {
@@ -874,15 +810,10 @@ const Home: FC<ScreenProps.Home> = ({
       startLocationFlow();
 
       return () => {
-        isMounted = false;
         if (locationTimerRef.current) clearInterval(locationTimerRef.current);
       };
     }, [ensurePostingServices, dispatch]),
   );
-
-  useEffect(() => {
-    if (employeeName.length > 0) setShowWelcome(true);
-  }, [employeeName]);
 
   // ── APK installer events ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -988,23 +919,19 @@ const Home: FC<ScreenProps.Home> = ({
       });
       setisLoading(false);
       if (res?.status === 200 && res.success) {
-        const msg = 'ऑफलाइन डेटा सर्वर पर सिंक हो चुका है।';
-        Common.alert({
-          title: 'Sync Successful',
-          msg: 'Offline data sync successfully to server. \n\n' + msg,
-        });
-        Voice.speak(msg);
         Preferences.removeData('OFFLINE_ATTENDANCE');
+        return true;
       } else {
-        Common.alert({
-          title: 'Alert',
-          msg: res?.messege ?? 'Something went wrong in offline sync.',
-        });
+        Common.showToast(
+          res?.messege ?? 'Something went wrong in offline sync.',
+        );
+        return false;
       }
     } catch (err) {
       Common.error('Error in Sync at Home', err);
       setShowSync(false);
       setisLoading(false);
+      return false;
     }
   };
 
@@ -1015,6 +942,25 @@ const Home: FC<ScreenProps.Home> = ({
         setShowSync(true);
       }
     });
+  };
+
+  const handleSyncNow = async () => {
+    setSyncSuccessful(false);
+    const offlineAttendance = Preferences.getData('OFFLINE_ATTENDANCE');
+    if (Array.isArray(offlineAttendance) && offlineAttendance.length > 0) {
+      const offlineSynced = await syncOfflineData();
+      if (!offlineSynced) {
+        return;
+      }
+    }
+    const dashboardSynced = await refreshDashboard(true);
+    if (dashboardSynced) {
+      await refreshOperationalCounts();
+      const nextCount = Math.max(syncCompletedCount, serverSyncCompleted) + 1;
+      setSyncCompletedCount(nextCount);
+      Preferences.setData('HOME_SYNC_COUNT', nextCount);
+      setSyncSuccessful(true);
+    }
   };
   useFocusEffect(
     useCallback(() => {
@@ -1068,7 +1014,6 @@ const Home: FC<ScreenProps.Home> = ({
 
   const appVersionName = DeviceInfo.getVersion();
   const appBuildNumber = DeviceInfo.getBuildNumber();
-  const hasApiModules = (dashboardList?.projectListAll?.length ?? 0) > 0;
   return (
     <Screen
       loading={loading || isLoading}
@@ -1091,43 +1036,22 @@ const Home: FC<ScreenProps.Home> = ({
         </UpdateGateScreen>
       ) : (
         <>
-          {/* 1. Header bar */}
-          <UserNameDesigRow
-            name={user?.userFullName ?? ''}
-            designation={user?.designaionName ?? ''}
-            onBellPress={() => {}}
+          <HomeDashboard
+            dashboardList={dashboardList}
+            user={user}
+            refreshing={dashboardRefreshing}
+            lastSyncLabel={lastSyncLabel}
+            syncCompletedCount={syncCompletedCount}
+            syncSuccessful={syncSuccessful}
+            operationalCounts={operationalCounts}
+            onRefresh={() => void refreshHomeData(true)}
+            onSync={() => void handleSyncNow()}
+            onAddMaster={() => navigator?.getParent()?.navigate('addMaster')}
+            onRouteFiber={() =>
+              navigator?.getParent()?.navigate('Route-Master-Hub')
+            }
+            onModulePress={moduleNavigation}
           />
-
-          {/* 2. Scrollable body */}
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}>
-            {/* 3. Globe + branding bar + version */}
-            <View style={{marginTop: SIZE.MVS(20)}}>
-              <LogoView
-                desc={appDesc}
-                verCode={serverVersionCode}
-                employeeName={employeeName}
-                showWelcome={showWelcome}
-              />
-            </View>
-
-            {/* 4. Dummy cards (Add Master / Add Route) */}
-            <StatsDashboard
-              dashboardList={dashboardList}
-              employeeName={employeeName}
-            />
-            {/* 5. Real API modules from Redux store */}
-            {hasApiModules && (
-              <View style={styles.innerContainer}>
-                <ProjectList
-                  onRefresh={() => sync()}
-                  data={dashboardList?.projectListAll ?? []}
-                />
-              </View>
-            )}
-          </ScrollView>
 
           {/* 6. Location permission sheet */}
           {!showPrivacy && (
@@ -1140,7 +1064,6 @@ const Home: FC<ScreenProps.Home> = ({
               }}
             />
           )}
-          <Text>{user?.email}</Text>
           {/* 7. Offline sync sheet */}
           <SyncOfflineDataSheet
             show={showSync}

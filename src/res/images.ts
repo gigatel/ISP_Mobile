@@ -148,3 +148,4 @@ export const manWalking = require('./images/manwalking.gif');
 export const walkingManStatic = require('./images/walkingmen.png');
 export const bkgImage = require('./images/bgnew2.png');
 export const pauseIcon = require('./images/play-buttton.png');
+export const gigaBuildingNetwork = require('./images/giga-building-network.png');

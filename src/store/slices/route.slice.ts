@@ -57,7 +57,7 @@ export interface InsertUpdateRouteChamberMappingArgs {
   totalLength?: number;
   drumLength?: number;
   drumRemainingLength?: number;
-  loopUsed?: number;
+  loopUsed: number;
   fiberId?: string | number;
   fiberType?: string;
   fiberUsedBy?: string;
@@ -102,6 +102,11 @@ export interface GetRouteDetailsPaggiArgs {
   size: number;
   search: string;
 }
+export interface GetSLDDetailsPaggiISPArgs {
+  page: number;
+  size: number;
+  search: string;
+}
 export interface GetRouteFiberAllDataBySLDIdISPArgs {
   routeId: number;
 }
@@ -123,6 +128,47 @@ export interface InstallFiberBySLDTempArgs {
   routeId: number;
   installations: InstallFiberBySLDTempItem[];
 }
+
+const parsePositiveIntegerIds = (
+  value: string | number,
+  fieldName: 'SLDId' | 'FiberId',
+) => {
+  const ids = String(value)
+    .split(',')
+    .map(item => Number(item.trim()))
+    .filter((item, index, all) => all.indexOf(item) === index);
+
+  if (
+    ids.length === 0 ||
+    ids.some(item => !Number.isInteger(item) || item <= 0)
+  ) {
+    throw new Error(`A valid integer ${fieldName} is required.`);
+  }
+
+  return ids;
+};
+
+const splitFiberInstallationIds = (item: InstallFiberBySLDTempItem) => {
+  const sldIds = parsePositiveIntegerIds(item.sldId, 'SLDId');
+  const fiberIds = parsePositiveIntegerIds(item.fiberId, 'FiberId');
+  const itemCount = Math.max(sldIds.length, fiberIds.length);
+
+  if (
+    sldIds.length !== fiberIds.length &&
+    sldIds.length !== 1 &&
+    fiberIds.length !== 1
+  ) {
+    throw new Error(
+      'The number of SLD IDs must match the number of fiber IDs.',
+    );
+  }
+
+  return Array.from({length: itemCount}, (_, index) => ({
+    ...item,
+    sldId: sldIds.length === 1 ? sldIds[0] : sldIds[index],
+    fiberId: fiberIds.length === 1 ? fiberIds[0] : fiberIds[index],
+  }));
+};
 export interface UpdateMasterArgs {
   Id?: number;
   Name: string;
@@ -368,6 +414,44 @@ export const GetRouteDetailsPaggiAPI = createAsyncThunk<
   }
 });
 
+export const GetSLDDetailsPaggiISPAPI = createAsyncThunk<
+  any,
+  GetSLDDetailsPaggiISPArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetSLDDetailsPaggiISP`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.postRequestWithJsonWithBody({
+      path: URLs.getSLDDetailsPaggiISP,
+      body: {
+        page: Math.max(1, Number(payload.page) || 1),
+        size: Math.max(1, Number(payload.size) || 10),
+        search: String(payload.search ?? '').trim(),
+      },
+      isAuth: true,
+    });
+
+    if (res?.status === 200 && res?.success) {
+      return {
+        recordsTotal: Number(res?.recordsTotal) || 0,
+        recordsFiltered: Number(res?.recordsFiltered) || 0,
+        data: Array.isArray(res?.data) ? res.data : [],
+      };
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load SLD routes',
+      data: error,
+    });
+  }
+});
+
 export const GetRouteFiberAllDataBySLDIdISPAPI = createAsyncThunk<
   any[],
   GetRouteFiberAllDataBySLDIdISPArgs,
@@ -407,11 +491,6 @@ export const installFiberBySLDTempAPI = createAsyncThunk<
   {rejectValue: ApiError}
 >(`${ROUTE}/InstallFiberBySLDTemp`, async (payload, thunkApi) => {
   try {
-    console.log(
-      '📤 InstallFiberBySLDTemp PAYLOAD:',
-      JSON.stringify(payload, null, 2),
-    );
-
     const formData = new FormData();
     formData.append('RouteId', String(payload.routeId));
 
@@ -424,8 +503,20 @@ export const installFiberBySLDTempAPI = createAsyncThunk<
         },
       })),
     );
+    const normalizedInstallations = watermarkedInstallations.flatMap(
+      splitFiberInstallationIds,
+    );
 
-    watermarkedInstallations.forEach((item, index) => {
+    console.log(
+      '📤 InstallFiberBySLDTemp PAYLOAD:',
+      JSON.stringify(
+        {...payload, installations: normalizedInstallations},
+        null,
+        2,
+      ),
+    );
+
+    normalizedInstallations.forEach((item, index) => {
       const key = `Installations[${index}]`;
       formData.append(`${key}.SLDId`, String(item.sldId));
       formData.append(`${key}.FiberId`, String(item.fiberId));
@@ -470,7 +561,7 @@ export const installFiberBySLDTempAPI = createAsyncThunk<
     console.error('❌ InstallFiberBySLDTemp ERROR:', error);
     return thunkApi.rejectWithValue({
       status: error?.status,
-      message: error?.message || 'Unable to install the SLD fiber.',
+      message: error?.message || 'Unable to save the route fiber installation.',
       data: error,
     });
   }
@@ -570,6 +661,14 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
     const requestPath = payload.fiberChangeScope
       ? URLs.InsertUpdateRouteFiberMappingByRoute
       : URLs.InsertUpdateRouteChamberMapping;
+    const numericLoopUsed = Number(payload.loopUsed);
+    const normalizedLoopUsed =
+      Number.isFinite(numericLoopUsed) && numericLoopUsed >= 0
+        ? numericLoopUsed
+        : 0;
+    const payloadWithLoopUsed = {...payload, loopUsed: normalizedLoopUsed};
+    const routeCreationPayload = {...payloadWithLoopUsed};
+    delete routeCreationPayload.masterId;
 
     if (payload.fiberChangeScope) {
       const numericFiberId = Number(payload.fiberId);
@@ -578,11 +677,20 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
           message: 'FiberId must be a single positive integer.',
         });
       }
+      const numericMasterId = Number(payload.masterId);
+      if (
+        payload.fiberChangeScope === 'WithoutSLD' &&
+        (!Number.isInteger(numericMasterId) || numericMasterId <= 0)
+      ) {
+        return thunkApi.rejectWithValue({
+          message: 'MasterId is required for every Without SLD master.',
+        });
+      }
 
       const formData = new FormData();
       const fiberMappingFields: Array<[string, string | number | boolean]> = [
         ['FiberUsedBy', payload.fiberUsedBy ?? ''],
-        ['LoopUsed', payload.loopUsed ?? 0],
+        ['LoopUsed', normalizedLoopUsed],
         ['EndLatLng', payload.endLatLng ?? ''],
         ['RouteId', payload.routeId],
         ['FromOrderNo', payload.fromOrderNo ?? 0],
@@ -608,8 +716,15 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
         ['Id', payload.id ?? 0],
         ['EndCountry', payload.endCountry ?? ''],
         ['MasterType', payload.masterType ?? ''],
-        ['MasterId', payload.masterId ?? 0],
       ];
+      if (payload.fiberChangeScope === 'WithoutSLD') {
+        fiberMappingFields.push([
+          'MasterId',
+          Number.isInteger(numericMasterId) && numericMasterId > 0
+            ? numericMasterId
+            : 0,
+        ]);
+      }
       if (payload.fiberChangeScope === 'PartialRoute') {
         fiberMappingFields.push([
           'IsStartingPoint',
@@ -659,7 +774,7 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
         payload.imageFile.uri,
       );
       const formData = new FormData();
-      Object.entries(payload).forEach(([key, value]) => {
+      Object.entries(routeCreationPayload).forEach(([key, value]) => {
         if (key === 'imageFile' || value === undefined || value === null) {
           return;
         }
@@ -693,7 +808,7 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
       });
     }
 
-    const body = {...payload};
+    const body = routeCreationPayload;
 
     const res = await APIs.postRequestWithJsonWithBody({
       path: requestPath,

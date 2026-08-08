@@ -21,6 +21,7 @@ import {COLORS, IMAGES, FONTS, SIZE} from '@res';
 import LinearGradient from 'react-native-linear-gradient';
 import {Location, Common, ImageWatermark} from '@utils';
 import {parseAddressComponents} from '../../components/molecules/addressParser';
+import {saveRecentlyAddedMaster} from '../../services/airPlacedMasterStorage';
 import {StoreDispatch} from '@reducers';
 import {
   UpdateMasterAPI,
@@ -897,7 +898,22 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       }
 
       console.log('📤 [AddMaster] → UpdateMasterAPI');
-      await dispatch(UpdateMasterAPI(payload)).unwrap();
+      const updateResponse = await dispatch(UpdateMasterAPI(payload)).unwrap();
+      const createdMasterId =
+        updateResponse?.data?.id ??
+        updateResponse?.data?.Id ??
+        updateResponse?.id ??
+        updateResponse?.Id ??
+        0;
+      saveRecentlyAddedMaster({
+        ...payload,
+        id: createdMasterId,
+        masterId: createdMasterId,
+        name: payload.Name,
+        masterType: selectedType.value,
+        latLng: payload.LatLng,
+        address: payload.Address,
+      });
       console.log('✅ Master added');
 
       Common.showToast(`${selectedType.label} added successfully! ✅`);

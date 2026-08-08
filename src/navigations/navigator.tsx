@@ -59,6 +59,7 @@ import MakeRouteScreen from '@screens/MakeRouteScreen';
 import SelectPausedRouteScreen from '@screens/SelectPausedRouteScreen';
 import SelectRouteToChangeFiberScreen from '@screens/SelectRouteToChangeFiberScreen';
 import FiberChangeScreen from '@screens/FiberChangeScreen';
+import InstallFiberWithSLDScreen from '@screens/InstallFiberWithSLDScreen';
 import type {PausedRouteSnapshot} from '../services/pausedRouteStorage';
 export interface RootStackParamList {
   Splash: undefined;
@@ -190,6 +191,18 @@ export interface RootStackParamList {
         selectedMasterVersion?: string;
       }
     | undefined;
+  'Install-Fiber-With-SLD': {
+    selectedSld: Record<string, any>;
+    currentPosition?: {latitude: number; longitude: number};
+    currentAddress?: string;
+    installationMode?:
+      | 'new-route'
+      | 'fiber-change-full'
+      | 'fiber-change-partial';
+    fiberChangeRoute?: Record<string, any>;
+    fiberChangeSelectedFibers?: any[];
+    routeFiberData?: any[];
+  };
   'Route-Master-Hub':
     | {
         currentPosition?: {
@@ -365,6 +378,10 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
         component={SelectRouteMasterScreen}
       />
       <Stack.Screen name="Make-Route" component={MakeRouteScreen} />
+      <Stack.Screen
+        name="Install-Fiber-With-SLD"
+        component={InstallFiberWithSLDScreen}
+      />
       <Stack.Screen
         name="Select-Paused-Route"
         component={SelectPausedRouteScreen}

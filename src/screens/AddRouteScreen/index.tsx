@@ -132,6 +132,24 @@ const getValueByNormalizedKeys = (source: any, keys: string[]) => {
   return entry?.[1];
 };
 
+const getMasterLoopUsed = (master: any) => {
+  const value = Number(
+    master?.loopUsed ??
+      master?.LoopUsed ??
+      master?.loopMeters ??
+      master?.LoopMeters ??
+      master?.loop ??
+      master?.Loop ??
+      getValueByNormalizedKeys(master, [
+        'loopUsed',
+        'loopMeters',
+        'loop',
+        'loopLength',
+      ]),
+  );
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+};
+
 const parseLatLng = (latLng?: string | null): Coordinate | null => {
   const [latText, lngText] = String(latLng ?? '').split(',');
   const coordinate = {
@@ -1078,6 +1096,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
         country: item.masterData?.country || '',
         pincode: item.masterData?.pincode || 0,
         landmark: item.masterData?.landmark || '',
+        loopUsed: getMasterLoopUsed(item.masterData),
         extra1: item.masterData?.extra1 || '',
         extra2: item.masterData?.extra2 || '',
       }));
@@ -2521,6 +2540,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
 
             // 🔹 TOTAL ROUTE LENGTH
             routeLength: Math.round(totalRouteLength),
+            loopUsed: Math.round(getMasterLoopUsed(currentItem.masterData)),
 
             orderNo,
           };

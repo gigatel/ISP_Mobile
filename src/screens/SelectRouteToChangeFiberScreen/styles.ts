@@ -234,6 +234,7 @@ export default StyleSheet.create({
     fontSize: SIZE.MS(11),
   },
   fiberDetailText: {
+    flexShrink: 1,
     marginTop: SIZE.MVS(3),
     color: '#363B43',
     fontFamily: FONTS.MEDIUM,
@@ -324,10 +325,16 @@ export default StyleSheet.create({
   moreLoader: {
     marginVertical: SIZE.MVS(12),
   },
+  footer: {
+    flexShrink: 0,
+    paddingHorizontal: SIZE.MS(15),
+    paddingTop: SIZE.MVS(8),
+    paddingBottom: SIZE.MVS(12),
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#DEE3E8',
+    backgroundColor: COLORS.WHITE,
+  },
   whereButtonTouchable: {
-    marginHorizontal: SIZE.MS(15),
-    marginTop: SIZE.MVS(8),
-    marginBottom: SIZE.MVS(12),
     borderRadius: SIZE.MS(7),
     overflow: 'hidden',
   },
@@ -418,6 +425,7 @@ export default StyleSheet.create({
     fontFamily: FONTS.SEMI_BOLD,
   },
   existingFiberText: {
+    flexShrink: 1,
     marginTop: SIZE.MVS(8),
     marginBottom: SIZE.MVS(8),
     color: '#444A52',
@@ -462,10 +470,12 @@ export default StyleSheet.create({
   sldSummaryRow: {
     minHeight: SIZE.MVS(18),
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
   sldSummaryText: {
+    flexShrink: 1,
     color: '#494F58',
     fontFamily: FONTS.REGULAR,
     fontSize: SIZE.MS(11),
@@ -477,7 +487,7 @@ export default StyleSheet.create({
   sldMasterRow: {
     minHeight: SIZE.MVS(37),
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   sldMasterIcon: {
     width: SIZE.MS(29),
@@ -496,6 +506,14 @@ export default StyleSheet.create({
   sldMasterAddress: {
     color: '#4E545C',
     fontFamily: FONTS.REGULAR,
+  },
+  sldMasterFiberText: {
+    flexShrink: 1,
+    marginTop: SIZE.MVS(2),
+    color: '#4E545C',
+    fontFamily: FONTS.REGULAR,
+    fontSize: SIZE.MS(10),
+    lineHeight: SIZE.MVS(14),
   },
   sldMasterMeta: {
     minWidth: SIZE.MS(62),
