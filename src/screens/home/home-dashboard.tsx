@@ -1,10 +1,13 @@
 import {DataType} from '@types';
 import {FONTS, IMAGES, SIZE} from '@res';
+import {API_ENVIRONMENT} from '../../apis/urls';
 import DeviceInfo from 'react-native-device-info';
 import LinearGradient from 'react-native-linear-gradient';
 import React, {useEffect, useMemo, useRef} from 'react';
+import type {PendingSLDJob} from './index';
 import Svg, {Circle, Path} from 'react-native-svg';
 import {
+  ActivityIndicator,
   Animated,
   Easing,
   Image,
@@ -30,10 +33,16 @@ type DashboardProps = {
     routesAdded: number;
     buildings: number;
   };
+  pendingSLDJobs: PendingSLDJob[];
+  pendingSLDJobsLoading: boolean;
+  pendingSLDJobsError: string | null;
   onRefresh: () => void;
+  onRetryPendingSLDJobs: () => void;
+  onPendingSLDJobPress: (job: PendingSLDJob) => void;
   onSync: () => void;
   onAddMaster: () => void;
   onRouteFiber: () => void;
+  onCircuitConnectivity: () => void;
   onModulePress: (item: DataType.SubModule) => void;
 };
 
@@ -65,16 +74,6 @@ const TowerIcon = ({color = '#6D20D8', size = 32}) => (
   </Svg>
 );
 
-const getActivities = (dashboard: any) => {
-  const possible =
-    dashboard?.recentActivities ??
-    dashboard?.recentActivity ??
-    dashboard?.activityList ??
-    dashboard?.data?.recentActivities ??
-    [];
-  return Array.isArray(possible) ? possible.slice(0, 3) : [];
-};
-
 const getSubModules = (dashboard: any): DataType.SubModule[] => {
   const modules = dashboard?.projectListAll?.flatMap(
     (project: DataType.Project) => project?.modules ?? [],
@@ -83,17 +82,6 @@ const getSubModules = (dashboard: any): DataType.SubModule[] => {
     (module: DataType.Module) => module?.subModules ?? [],
   );
 };
-
-const activityColorStyles = StyleSheet.create({
-  green: {backgroundColor: '#00A466'},
-  blue: {backgroundColor: '#155DFC'},
-  orange: {backgroundColor: '#F36A10'},
-});
-const activityColors = [
-  activityColorStyles.green,
-  activityColorStyles.blue,
-  activityColorStyles.orange,
-];
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -338,10 +326,16 @@ export const HomeDashboard = ({
   syncCompletedCount,
   syncSuccessful,
   operationalCounts,
+  pendingSLDJobs,
+  pendingSLDJobsLoading,
+  pendingSLDJobsError,
   onRefresh,
+  onRetryPendingSLDJobs,
+  onPendingSLDJobPress,
   onSync,
   onAddMaster,
   onRouteFiber,
+  onCircuitConnectivity,
   onModulePress,
 }: DashboardProps) => {
   const {width} = useWindowDimensions();
@@ -399,10 +393,6 @@ export const HomeDashboard = ({
       },
     ];
   }, [operationalCounts, syncCompletedCount]);
-  const activities = useMemo(
-    () => getActivities(dashboardList),
-    [dashboardList],
-  );
   const version = DeviceInfo.getVersion();
 
   return (
@@ -427,7 +417,7 @@ export const HomeDashboard = ({
               <Image source={IMAGES.crown} style={styles.crown} />
               <Text style={styles.envText}>GIGA ISP</Text>
               <Text style={styles.envDot}>•</Text>
-              <Text style={styles.envPill}>{__DEV__ ? 'DEV' : 'PROD'}</Text>
+              <Text style={styles.envPill}>{API_ENVIRONMENT}</Text>
             </View>
           </View>
           <View accessibilityLabel="Notifications" style={styles.bellButton}>
@@ -486,6 +476,17 @@ export const HomeDashboard = ({
           />
         </View>
 
+        <View style={styles.singleActionRow}>
+          <ActionCard
+            title="Circuit Connectivity"
+            subtitle="View customer circuits and infrastructure"
+            color="#155DFC"
+            bg="#E9EFFF"
+            icon={IMAGES.Circuit}
+            onPress={onCircuitConnectivity}
+          />
+        </View>
+
         {subModules.length > 0 && (
           <ScrollView
             horizontal
@@ -515,44 +516,103 @@ export const HomeDashboard = ({
         <View style={styles.activityCard}>
           <View style={styles.activityHeader}>
             <Text style={styles.activityTitle}>Pending Activity</Text>
-            {activities.length > 0 && (
-              <Text style={styles.linkText}>See All</Text>
-            )}
-          </View>
-          {activities.length > 0 ? (
-            activities.map((activity: any, index: number) => (
-              <View
-                key={activity?.id ?? index}
-                style={[
-                  styles.activityRow,
-                  index > 0 && styles.activityBorder,
-                ]}>
-                <View
-                  style={[
-                    styles.activityIconWrap,
-                    activityColors[Math.min(index, activityColors.length - 1)],
-                  ]}>
-                  <Text style={styles.activityCheck}>✓</Text>
-                </View>
-                <Text numberOfLines={2} style={styles.activityText}>
-                  {activity?.title ??
-                    activity?.message ??
-                    activity?.name ??
-                    'Activity updated'}
-                </Text>
-                <Text style={styles.activityTime}>
-                  {activity?.time ?? activity?.createdAt ?? ''}
+            {pendingSLDJobs.length > 0 && (
+              <View style={styles.pendingCountBadge}>
+                <Text style={styles.pendingCountText}>
+                  {pendingSLDJobs.length} Pending
                 </Text>
               </View>
-            ))
+            )}
+          </View>
+          {pendingSLDJobsLoading && pendingSLDJobs.length === 0 ? (
+            <View style={styles.pendingState}>
+              <ActivityIndicator color="#6D20D8" />
+              <Text style={styles.pendingStateText}>
+                Loading pending jobs...
+              </Text>
+            </View>
+          ) : pendingSLDJobsError && pendingSLDJobs.length === 0 ? (
+            <View style={styles.pendingState}>
+              <Text style={styles.pendingErrorText}>{pendingSLDJobsError}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={onRetryPendingSLDJobs}
+                style={styles.retryButton}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : pendingSLDJobs.length > 0 ? (
+            <ScrollView
+              nestedScrollEnabled
+              scrollEnabled={pendingSLDJobs.length > 3}
+              showsVerticalScrollIndicator={pendingSLDJobs.length > 3}
+              style={
+                pendingSLDJobs.length > 3
+                  ? styles.pendingActivityList
+                  : undefined
+              }>
+              {pendingSLDJobs.map((job, index) => (
+                <TouchableOpacity
+                  key={`${job.id}-${job.jobId}`}
+                  activeOpacity={0.78}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${
+                    job.code || job.jobId
+                  } fiber change`}
+                  onPress={() => onPendingSLDJobPress(job)}
+                  style={[
+                    styles.activityRow,
+                    index > 0 && styles.activityBorder,
+                  ]}>
+                  <View style={styles.activityIconWrap}>
+                    <Text style={styles.activityIconText}>SLD</Text>
+                  </View>
+                  <View style={styles.activityContent}>
+                    <View style={styles.activityTopRow}>
+                      <Text numberOfLines={1} style={styles.activityText}>
+                        {job.code || job.jobId}
+                      </Text>
+                      <View style={styles.jobStatusBadge}>
+                        <Text style={styles.jobStatusText}>
+                          {job.jobStatus || 'Pending'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text numberOfLines={1} style={styles.routeName}>
+                      {job.routeName || job.routeCode || 'Unnamed route'}
+                    </Text>
+                    <Text numberOfLines={2} style={styles.jobDetails}>
+                      {[job.jobId, job.routeCode, job.fiberCode, job.fiberType]
+                        .filter(Boolean)
+                        .join('  •  ')}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.jobDetails}>
+                      {[
+                        job.fiberSpecification,
+                        `Drum remaining: ${Number(
+                          job.remainingDrumLength || 0,
+                        ).toLocaleString()} / ${Number(
+                          job.totalDrumLength || 0,
+                        ).toLocaleString()} m`,
+                      ]
+                        .filter(Boolean)
+                        .join('  •  ')}
+                    </Text>
+                    <Text style={styles.routeLength}>
+                      Route length:{' '}
+                      {Number(job.routeLength || 0).toLocaleString()} m
+                    </Text>
+                  </View>
+                  <Text style={styles.activityChevron}>›</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           ) : (
             <View style={styles.emptyActivity}>
               <View style={styles.emptyActivityIcon}>
                 <Text style={styles.activityCheck}>✓</Text>
               </View>
-              <Text style={styles.emptyActivityText}>
-                No pending activity from the server yet
-              </Text>
+              <Text style={styles.emptyActivityText}>No pending SLD jobs</Text>
             </View>
           )}
         </View>
@@ -831,6 +891,7 @@ const styles = StyleSheet.create({
   },
   linkText: {fontFamily: FONTS.MEDIUM, color: '#7020DE', fontSize: SIZE.MS(12)},
   actionsRow: {flexDirection: 'row', gap: SIZE.MS(9)},
+  singleActionRow: {flexDirection: 'row', marginTop: SIZE.MVS(9)},
   actionsColumn: {flexDirection: 'column'},
   actionCard: {
     ...shadow,
@@ -928,31 +989,111 @@ const styles = StyleSheet.create({
     fontSize: SIZE.MS(14),
     color: '#17182E',
   },
+  pendingCountBadge: {
+    borderRadius: SIZE.MS(10),
+    backgroundColor: '#FFF0E4',
+    paddingHorizontal: SIZE.MS(8),
+    paddingVertical: SIZE.MVS(3),
+  },
+  pendingCountText: {
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(9),
+    color: '#C4530A',
+  },
   activityRow: {
-    minHeight: SIZE.MVS(45),
+    minHeight: SIZE.MVS(88),
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: SIZE.MVS(10),
   },
+  pendingActivityList: {height: SIZE.MVS(264)},
   activityBorder: {borderTopWidth: 1, borderTopColor: '#EEEFF3'},
   activityIconWrap: {
-    width: SIZE.MS(20),
-    height: SIZE.MS(20),
-    borderRadius: SIZE.MS(10),
+    width: SIZE.MS(38),
+    height: SIZE.MS(38),
+    borderRadius: SIZE.MS(12),
+    backgroundColor: '#6D20D8',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  activityIconText: {
+    color: '#FFF',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(9),
+  },
   activityCheck: {color: '#FFF', fontFamily: FONTS.BOLD, fontSize: SIZE.MS(11)},
+  activityContent: {flex: 1, minWidth: 0, marginLeft: SIZE.MS(10)},
+  activityTopRow: {flexDirection: 'row', alignItems: 'center'},
   activityText: {
     flex: 1,
-    marginHorizontal: SIZE.MS(10),
-    fontFamily: FONTS.REGULAR,
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(12),
+    color: '#202238',
+  },
+  jobStatusBadge: {
+    marginLeft: SIZE.MS(8),
+    borderRadius: SIZE.MS(9),
+    backgroundColor: '#FFF0E4',
+    paddingHorizontal: SIZE.MS(7),
+    paddingVertical: SIZE.MVS(2),
+  },
+  jobStatusText: {
+    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(8),
+    color: '#C4530A',
+  },
+  routeName: {
+    marginTop: SIZE.MVS(3),
+    fontFamily: FONTS.MEDIUM,
     fontSize: SIZE.MS(10),
     color: '#535775',
   },
-  activityTime: {
+  jobDetails: {
+    marginTop: SIZE.MVS(3),
     fontFamily: FONTS.REGULAR,
     fontSize: SIZE.MS(9),
-    color: '#9295A6',
+    lineHeight: SIZE.MVS(12),
+    color: '#73778E',
+  },
+  routeLength: {
+    marginTop: SIZE.MVS(3),
+    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(9),
+    color: '#155DFC',
+  },
+  activityChevron: {
+    marginLeft: SIZE.MS(8),
+    fontFamily: FONTS.REGULAR,
+    fontSize: SIZE.MS(25),
+    color: '#7020DE',
+  },
+  pendingState: {
+    minHeight: SIZE.MVS(72),
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SIZE.MVS(8),
+  },
+  pendingStateText: {
+    fontFamily: FONTS.REGULAR,
+    fontSize: SIZE.MS(10),
+    color: '#73778E',
+  },
+  pendingErrorText: {
+    fontFamily: FONTS.REGULAR,
+    fontSize: SIZE.MS(10),
+    color: '#B42318',
+    textAlign: 'center',
+  },
+  retryButton: {
+    borderRadius: SIZE.MS(12),
+    backgroundColor: '#6D20D8',
+    paddingHorizontal: SIZE.MS(16),
+    paddingVertical: SIZE.MVS(6),
+  },
+  retryButtonText: {
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(10),
+    color: '#FFF',
   },
   emptyActivity: {
     minHeight: SIZE.MVS(49),

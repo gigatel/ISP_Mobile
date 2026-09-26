@@ -667,6 +667,7 @@ export default StyleSheet.create({
   },
   drumSheet: {
     width: '100%',
+    minHeight: SIZE.MVS(300),
     maxHeight: '78%',
     borderTopLeftRadius: SIZE.MS(18),
     borderTopRightRadius: SIZE.MS(18),
@@ -691,21 +692,17 @@ export default StyleSheet.create({
     textAlign: 'center',
   },
   drumFormCard: {
+    width: '100%',
     borderRadius: SIZE.MS(11),
     paddingHorizontal: SIZE.MS(12),
     paddingVertical: SIZE.MVS(12),
     backgroundColor: COLORS.WHITE,
   },
-  drumFieldsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: SIZE.MS(10),
-  },
   drumNumberField: {
-    flex: 1.55,
+    width: '100%',
   },
-  drumLengthField: {
-    flex: 0.85,
+  additionalDrumField: {
+    marginTop: SIZE.MVS(12),
   },
   drumFieldLabel: {
     minHeight: SIZE.MVS(16),
@@ -762,32 +759,6 @@ export default StyleSheet.create({
   },
   drumAvailableText: {
     color: '#525862',
-    fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(11),
-  },
-  drumLengthInputWrap: {
-    height: SIZE.MVS(36),
-    borderWidth: 1,
-    borderColor: '#E0E3E8',
-    borderRadius: SIZE.MS(18),
-    paddingHorizontal: SIZE.MS(10),
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.WHITE,
-  },
-  drumLengthInput: {
-    flex: 1,
-    height: '100%',
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    color: '#3D424B',
-    fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(12),
-    textAlign: 'right',
-  },
-  drumLengthSuffix: {
-    marginLeft: SIZE.MS(3),
-    color: '#5F6570',
     fontFamily: FONTS.SEMI_BOLD,
     fontSize: SIZE.MS(11),
   },

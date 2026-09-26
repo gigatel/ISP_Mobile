@@ -11,6 +11,7 @@ import {
   Alert,
   Image,
   ImageSourcePropType,
+  InteractionManager,
   LayoutChangeEvent,
   Linking,
   Modal,
@@ -32,6 +33,7 @@ import MapView, {
   PROVIDER_GOOGLE,
   Region,
 } from 'react-native-maps';
+import {useFocusEffect} from '@react-navigation/native';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useDispatch} from 'react-redux';
@@ -47,6 +49,7 @@ import PolygonSvg from '../../res/images/Polygon.svg';
 import VectorSvg from '../../res/images/Vector.svg';
 import BurgerSvg from '../../res/images/burger.svg';
 import type {RootStackParamList} from '@navigation/navigator';
+import FullscreenImageViewer from '../../components/molecules/fullscreen-image-viewer';
 import {
   isFreeAirPlacedMaster,
   loadFreeAirPlacedMasters,
@@ -155,30 +158,49 @@ const MASTER_TYPES: MasterType[] = [
   {label: 'Tree', value: 'tree', icon: IMAGES.treeIcon},
   {label: 'Building', value: 'building', icon: IMAGES.Building},
   {label: 'POP', value: 'pop', icon: IMAGES.FiberEnclosur},
-  {label: 'Splitter', value: 'splitter', icon: IMAGES.enclosureIcon},
+  {label: 'Spliter/FatBox', value: 'splitter', icon: IMAGES.enclosureIcon},
   {label: 'Tiffin', value: 'tiffin', icon: IMAGES.TiffinIcon},
   {label: 'Enclosure', value: 'enclosure', icon: IMAGES.jointEnclosure},
+  {label: 'Chamber', value: 'chamber', icon: IMAGES.ChamberNew},
 ];
 
-const MAP_FILTER_MASTER_TYPES = MASTER_TYPES.filter(
-  type => type.value !== 'splitter',
-);
+const MAP_FILTER_MASTER_TYPES = MASTER_TYPES;
 
-const AIR_PLACED_MASTER_TYPES = new Set(['pop', 'tiffin', 'enclosure']);
-const FREE_AIR_MASTER_TYPES = new Set(['tiffin', 'enclosure']);
-const SUPPORT_DETAIL_MASTER_TYPES = new Set(['pop', 'tiffin', 'enclosure']);
-// Tiffin and Enclosure can be attached to every support offered in the
+const AIR_PLACED_MASTER_TYPES = new Set([
+  'pop',
+  'splitter',
+  'tiffin',
+  'enclosure',
+]);
+const FREE_AIR_MASTER_TYPES = new Set(['splitter', 'tiffin', 'enclosure']);
+const SUPPORT_DETAIL_MASTER_TYPES = new Set([
+  'pop',
+  'splitter',
+  'tiffin',
+  'enclosure',
+]);
+// Splitter, Tiffin and Enclosure can be attached to every support offered in the
 // "Where to add" selector. Keep this aligned with AIR_SUPPORT_TYPES so a
-// submitted Building result is clickable and displays its attached count just
-// like Pole and Tree.
-const CLICKABLE_AIR_SUPPORT_TYPES = new Set(['pole', 'tree', 'building']);
+// submitted Building or Chamber result is clickable and displays its attached
+// count just like Pole and Tree.
+const CLICKABLE_AIR_SUPPORT_TYPES = new Set([
+  'pole',
+  'tree',
+  'building',
+  'chamber',
+]);
 const AIR_SUPPORT_TYPES = MASTER_TYPES.filter(type =>
-  ['pole', 'tree', 'building'].includes(type.value),
+  ['pole', 'tree', 'building', 'chamber'].includes(type.value),
+);
+const SPLITTER_SUPPORT_TYPES = MASTER_TYPES.filter(type =>
+  ['pole', 'tree', 'building', 'pop', 'tiffin', 'chamber'].includes(type.value),
 );
 
 const getAllowedAirSupportTypes = (masterType: string) =>
   masterType === 'pop'
     ? AIR_SUPPORT_TYPES.filter(type => type.value === 'building')
+    : masterType === 'splitter'
+    ? SPLITTER_SUPPORT_TYPES
     : AIR_SUPPORT_TYPES;
 
 const getRouteAlertVisual = (tone: RouteAlertTone = 'info') => {
@@ -249,8 +271,14 @@ const getImageValue = (value: any): string => {
   if (!image || ['null', 'undefined'].includes(image.toLowerCase())) {
     return '';
   }
-  if (/^(https?:\/\/|file:\/\/|content:\/\/|data:image\/)/i.test(image)) {
-    return image;
+  const normalizedImage = image.replace(/\\/g, '/');
+  if (/^(file:\/\/|content:\/\/|data:image\/)/i.test(normalizedImage)) {
+    return normalizedImage;
+  }
+  if (/^https?:\/\//i.test(normalizedImage)) {
+    // Chrome silently encodes spaces and other unsafe URL characters, while
+    // React Native's native image loader rejects some of those URLs.
+    return encodeURI(normalizedImage);
   }
 
   const compact = image.replace(/\s/g, '');
@@ -262,7 +290,7 @@ const getImageValue = (value: any): string => {
   }
 
   const baseUrl = URLs.BASE_URL_2.replace(/\/api\/?$/i, '/');
-  return `${baseUrl}${image.replace(/\\/g, '/').replace(/^~?\//, '')}`;
+  return encodeURI(`${baseUrl}${normalizedImage.replace(/^~?\//, '')}`);
 };
 
 const getMasterImages = (master: any) => {
@@ -590,8 +618,7 @@ const isSameMasterRecord = (first: any, second: any) => {
     getMasterCoordinate(first),
     getMasterCoordinate(second),
   );
-  const sameLocation =
-    coordinateDistance !== null && coordinateDistance <= 1;
+  const sameLocation = coordinateDistance !== null && coordinateDistance <= 1;
 
   if (
     firstId &&
@@ -873,7 +900,9 @@ const getMasterUniqueKey = (master: any) =>
 
 const getAttachedMasterCount = (master: any, masterType: string) => {
   const normalizedType = asCleanText(masterType).toLowerCase();
-  const prefix = normalizedType === 'enclosure' ? 'enclosure' : 'tiffin';
+  const prefix = ['splitter', 'enclosure'].includes(normalizedType)
+    ? normalizedType
+    : 'tiffin';
   const value =
     master?.__airMasterCount ??
     getValueByNormalizedKeys(master, [
@@ -1142,8 +1171,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   const dispatch = useDispatch<StoreDispatch>();
   const mapRef = useRef<MapView | null>(null);
   const listScrollRef = useRef<ScrollView | null>(null);
-  const currentLocationRowYRef = useRef(0);
+  const currentLocationRowYRef = useRef(-1);
   const pendingLocationScrollRef = useRef(false);
+  const locationReloadCompleteRef = useRef(false);
   const didInitialLoadRef = useRef(false);
   const lastAddedMasterKeyRef = useRef<string | null>(null);
   const lastUpdatedSupportVersionRef = useRef<string | null>(null);
@@ -1325,9 +1355,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
 
   useEffect(() => {
     const pendingMakeRoute = route.params?.pendingMakeRoute;
-    const pendingVersion = asCleanText(
-      route.params?.pendingMakeRouteVersion,
-    );
+    const pendingVersion = asCleanText(route.params?.pendingMakeRouteVersion);
 
     if (
       !pendingMakeRoute ||
@@ -1375,7 +1403,11 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       localRecentlyAddedMastersRef.current,
       [addedMaster],
     );
-    if (['pole', 'tree', 'building'].includes(getMasterTypeValue(addedMaster))) {
+    if (
+      ['pole', 'tree', 'building', 'chamber'].includes(
+        getMasterTypeValue(addedMaster),
+      )
+    ) {
       localStandaloneMastersRef.current = mergeUniqueAttachedMasters(
         localStandaloneMastersRef.current,
         [addedMaster],
@@ -1460,6 +1492,23 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     async (showAlert = true): Promise<Coordinate | null> => {
       try {
         setIsLocating(true);
+        const permissionStatus: any = await Location.checkPermission();
+        const hasLocationPermission =
+          permissionStatus === 'granted' ||
+          permissionStatus?.['android.permission.ACCESS_FINE_LOCATION'] ===
+            'granted';
+
+        if (!hasLocationPermission) {
+          if (showAlert) {
+            showScreenAlert({
+              title: 'Permission Required',
+              message: 'Location permission is required to find where you are.',
+              tone: 'location',
+            });
+          }
+          return null;
+        }
+
         const data =
           (await Location.getAddressFromLatLong()) as DataType.GeoAddress;
         const nextPosition = {
@@ -1478,10 +1527,28 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           return null;
         }
 
-        const nextAddress =
-          asCleanText(data?.address) ||
+        const returnedAddress = asCleanText(data?.address);
+        let nextAddress =
           asCleanText(data?.addressList?.[0]) ||
-          getCoordinateAddressText(nextPosition);
+          (!/^address not found$/i.test(returnedAddress)
+            ? returnedAddress
+            : '');
+
+        if (!nextAddress) {
+          try {
+            const refreshedAddress = await Location.getAddressWithLatLong(
+              nextPosition.latitude,
+              nextPosition.longitude,
+            );
+            nextAddress =
+              asCleanText(refreshedAddress?.addressList?.[0]) ||
+              asCleanText(refreshedAddress?.address);
+          } catch (error) {
+            console.warn('[AllMasters] Current address lookup failed:', error);
+          }
+        }
+
+        nextAddress = nextAddress || getCoordinateAddressText(nextPosition);
 
         setCurrentPosition(nextPosition);
         setCurrentAddress(nextAddress);
@@ -1758,9 +1825,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   // Re-applying its bottom inset after returning from Make Route adds the
   // navigation-bar height twice and visibly pushes the footer upward.
   const footerBottomPadding =
-    Platform.OS === 'ios'
-      ? Math.max(insets.bottom, SIZE.MS(10))
-      : SIZE.MS(10);
+    Platform.OS === 'ios' ? Math.max(insets.bottom, SIZE.MS(10)) : SIZE.MS(10);
 
   const screenTitle = isRouteSelectionMode
     ? 'Select Master'
@@ -1790,6 +1855,25 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     loadMasters,
   ]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        !isRouteSelectionMode ||
+        isRouteHubMode ||
+        isAirPlacementFlow
+      ) {
+        return;
+      }
+
+      loadMasters();
+    }, [
+      isAirPlacementFlow,
+      isRouteHubMode,
+      isRouteSelectionMode,
+      loadMasters,
+    ]),
+  );
+
   const onRefresh = async () => {
     if (
       isAirPlacementFlow &&
@@ -1808,8 +1892,16 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
   };
 
   const handleWhereIAm = async () => {
+    const shouldScrollToCurrentLocation = activeTab === 'list';
+    if (shouldScrollToCurrentLocation) {
+      currentLocationRowYRef.current = -1;
+      pendingLocationScrollRef.current = true;
+      locationReloadCompleteRef.current = false;
+    }
+
     const nextPosition = await readCurrentLocation(true);
     if (!nextPosition) {
+      pendingLocationScrollRef.current = false;
       return;
     }
 
@@ -1821,6 +1913,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       isAirPlacementFlow &&
       (!selectedAirSupportType || !hasLoadedAirSupports)
     ) {
+      pendingLocationScrollRef.current = false;
       return;
     }
 
@@ -1831,11 +1924,14 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         : selectedMasterTypes,
     });
 
-    if (activeTab === 'list') {
-      pendingLocationScrollRef.current = true;
-      requestAnimationFrame(() => {
+    if (shouldScrollToCurrentLocation) {
+      locationReloadCompleteRef.current = true;
+      InteractionManager.runAfterInteractions(() => {
         requestAnimationFrame(() => {
-          if (!pendingLocationScrollRef.current) {
+          if (
+            !pendingLocationScrollRef.current ||
+            currentLocationRowYRef.current < 0
+          ) {
             return;
           }
 
@@ -1977,6 +2073,10 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     SUPPORT_DETAIL_MASTER_TYPES.has(initialSelectedMasterType) &&
     (isPopPlacementFlow
       ? master.__masterType === 'building'
+      : initialSelectedMasterType === 'splitter'
+      ? SPLITTER_SUPPORT_TYPES.some(
+          supportType => supportType.value === master.__masterType,
+        )
       : CLICKABLE_AIR_SUPPORT_TYPES.has(master.__masterType));
 
   const openSupportDetails = (master: MasterItem) => {
@@ -1987,12 +2087,15 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
     navigation.navigate('Add-Air-Master-On-Support', {
       selectedMasterType: initialSelectedMasterType as
         | 'pop'
+        | 'splitter'
         | 'tiffin'
         | 'enclosure',
       selectedMasterLabel:
         asCleanText(route.params?.selectedMasterLabel) ||
         (initialSelectedMasterType === 'pop'
           ? 'POP'
+          : initialSelectedMasterType === 'splitter'
+          ? 'Spliter/FatBox'
           : initialSelectedMasterType === 'tiffin'
           ? 'Tiffin'
           : 'Enclosure'),
@@ -2330,6 +2433,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       currentAddress: currentLocationAddress,
       selectedMaster: master,
       selectedMasterVersion: `${Date.now()}-${getMasterUniqueKey(master)}`,
+      initialRouteMode: 'withoutSld',
     });
   };
 
@@ -2561,14 +2665,14 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         onLayout={(event: LayoutChangeEvent) => {
           currentLocationRowYRef.current = event.nativeEvent.layout.y;
 
-          if (pendingLocationScrollRef.current) {
+          if (
+            pendingLocationScrollRef.current &&
+            locationReloadCompleteRef.current
+          ) {
             pendingLocationScrollRef.current = false;
             requestAnimationFrame(() => {
               listScrollRef.current?.scrollTo({
-                y: Math.max(
-                  0,
-                  currentLocationRowYRef.current - SIZE.MS(16),
-                ),
+                y: Math.max(0, currentLocationRowYRef.current - SIZE.MS(16)),
                 animated: true,
               });
             });
@@ -2593,7 +2697,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               {nearestText}
             </Text>
           </View>
-          {!isPopPlacementFlow ? (
+          {!isPopPlacementFlow && initialSelectedMasterType !== 'splitter' ? (
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={handleAddCurrentLocation}
@@ -2659,7 +2763,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       }
     });
 
-    if (isAirPlacementFlow && currentPosition && !currentLocationPlacement) {
+    if (currentPosition && !currentLocationPlacement) {
       rows.push(renderCurrentLocationRow());
     }
 
@@ -2865,23 +2969,33 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
               <Text style={styles.stateText}>
                 {isPopPlacementFlow
                   ? 'Building is selected for POP. Tap Submit to load nearby buildings.'
-                  : 'Choose Pole, Tree, or Building above and tap Submit.'}
+                  : initialSelectedMasterType === 'splitter'
+                  ? 'Choose Pole, Tree, Building, POP, Tiffin, or Chamber above and tap Submit.'
+                  : 'Choose Pole, Tree, Building, or Chamber above and tap Submit.'}
               </Text>
             </View>
           ) : filteredMasters.length > 0 ? (
             renderMastersWithCurrentLocation()
-          ) : isAirPlacementFlow && currentPosition ? (
+          ) : currentPosition ? (
             <>
               {renderCurrentLocationRow()}
               <View style={styles.stateBox}>
-                <Text style={styles.stateTitle}>No supports found</Text>
-              <Text style={styles.stateText}>
-                  {isPopPlacementFlow
+                <Text style={styles.stateTitle}>
+                  {isAirPlacementFlow
+                    ? 'No supports found'
+                    : 'No masters found'}
+                </Text>
+                <Text style={styles.stateText}>
+                  {!isAirPlacementFlow
+                    ? 'No nearby masters are available. Use the Add button on your current-address card to create one.'
+                    : isPopPlacementFlow
                     ? 'No Building is available nearby. POP can only be added by selecting a Building card.'
+                    : initialSelectedMasterType === 'splitter'
+                    ? 'No supported Master Site is available nearby. Spliter/FatBox must be added by selecting a Master Site card.'
                     : `You can still add ${
                         route.params?.selectedMasterLabel || 'this master'
                       } at your current address using the Add button above.`}
-              </Text>
+                </Text>
               </View>
             </>
           ) : (
@@ -3085,11 +3199,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
             {activeTab === 'list' ? renderListView() : renderMapView()}
           </View>
 
-          <View
-            style={[
-              styles.footer,
-              {paddingBottom: footerBottomPadding},
-            ]}>
+          <View style={[styles.footer, {paddingBottom: footerBottomPadding}]}>
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => {
@@ -3361,40 +3471,14 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           </View>
         </Modal>
 
-        <Modal
+        <FullscreenImageViewer
           visible={previewImages.length > 0}
-          transparent
-          onRequestClose={() => setPreviewImages([])}>
-          <View style={styles.previewOverlay}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => setPreviewImages([])}
-              style={styles.previewCloseButton}>
-              <Text style={styles.previewCloseText}>×</Text>
-            </TouchableOpacity>
-            {previewImages[previewImageIndex] ? (
-              <Image
-                source={{uri: previewImages[previewImageIndex]}}
-                style={styles.previewImage}
-                resizeMode="contain"
-              />
-            ) : null}
-            {previewImages.length > 1 ? (
-              <View style={styles.previewPager}>
-                {previewImages.map((_, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    onPress={() => setPreviewImageIndex(index)}
-                    style={[
-                      styles.previewDot,
-                      index === previewImageIndex && styles.previewDotActive,
-                    ]}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </View>
-        </Modal>
+          images={previewImages}
+          index={previewImageIndex}
+          title="Master Images"
+          onIndexChange={setPreviewImageIndex}
+          onClose={() => setPreviewImages([])}
+        />
       </View>
     </Screen>
   );

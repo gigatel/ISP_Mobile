@@ -126,7 +126,6 @@ export const getRequestWithQuery = async ({
 
   try {
     const headers = isAuth ? await getAuthHeaders() : {};
-    console.log({headers});
 
     const response = await axiosInstance.get(url, {headers, timeout});
     Common.success(`GET | SUCCESS | ${path}`, response?.data);
@@ -172,7 +171,6 @@ export const getRequestWithQueryStatic = async ({
           'Content-Type': 'application/json',
         };
 
-    console.log({headers});
     const response = await axiosInstance.get(url, {headers, timeout});
     Common.success(`GET | SUCCESS | STATIC | ${path}`, response?.data);
     return response?.data;

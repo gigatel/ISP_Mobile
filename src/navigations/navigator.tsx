@@ -60,6 +60,8 @@ import SelectPausedRouteScreen from '@screens/SelectPausedRouteScreen';
 import SelectRouteToChangeFiberScreen from '@screens/SelectRouteToChangeFiberScreen';
 import FiberChangeScreen from '@screens/FiberChangeScreen';
 import InstallFiberWithSLDScreen from '@screens/InstallFiberWithSLDScreen';
+import CircuitConnectivityScreen from '@screens/CircuitConnectivityScreen';
+import InfraConnectivityScreen from '@screens/InfraConnectivityScreen';
 import type {PausedRouteSnapshot} from '../services/pausedRouteStorage';
 export interface RootStackParamList {
   Splash: undefined;
@@ -88,7 +90,7 @@ export interface RootStackParamList {
       }
     | undefined;
   'Add-Air-Master-On-Support': {
-    selectedMasterType: 'pop' | 'tiffin' | 'enclosure';
+    selectedMasterType: 'pop' | 'splitter' | 'tiffin' | 'enclosure';
     selectedMasterLabel: string;
     supportMaster: any;
     supportKey: string;
@@ -141,7 +143,11 @@ export interface RootStackParamList {
     addedMasterKey?: string;
   };
   'Select-Paused-Route': undefined;
-  'Select-Route-To-Change-Fiber': undefined;
+  'Select-Route-To-Change-Fiber':
+    | {
+        initialPendingSLDJob?: Record<string, any>;
+      }
+    | undefined;
   'Fiber-Change': {
     selectedRoute: Record<string, any>;
     selectedFibers: any[];
@@ -176,6 +182,11 @@ export interface RootStackParamList {
   Login: undefined;
   ChamberReport: undefined;
   SearchCustomer: undefined;
+  CircuitConnectivity: undefined;
+  InfraConnectivity: {
+    customer: Record<string, any>;
+    initialCircuit?: Record<string, any>;
+  };
   ProfileScreen: undefined;
   PitInstallation: undefined;
   AddRouteFiberScreen:
@@ -189,6 +200,7 @@ export interface RootStackParamList {
         currentAddress?: string;
         selectedMaster?: any;
         selectedMasterVersion?: string;
+        initialRouteMode?: 'withSld' | 'withoutSld';
       }
     | undefined;
   'Install-Fiber-With-SLD': {
@@ -202,6 +214,7 @@ export interface RootStackParamList {
     fiberChangeRoute?: Record<string, any>;
     fiberChangeSelectedFibers?: any[];
     routeFiberData?: any[];
+    installationProgress?: PausedRouteSnapshot;
   };
   'Route-Master-Hub':
     | {
@@ -367,6 +380,14 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
       />
       <Stack.Screen name="Route-Master-Hub" component={RouteMasterHubScreen} />
       <Stack.Screen name="SearchCustomer" component={SearchCustomer} />
+      <Stack.Screen
+        name="CircuitConnectivity"
+        component={CircuitConnectivityScreen}
+      />
+      <Stack.Screen
+        name="InfraConnectivity"
+        component={InfraConnectivityScreen}
+      />
       <Stack.Screen name="RoadProject" component={RoadProjectSurvey} />
       <Stack.Screen name="DistanceCovered" component={DistanceCovered} />
       <Stack.Screen name="PitInstallation" component={PitInstallation} />

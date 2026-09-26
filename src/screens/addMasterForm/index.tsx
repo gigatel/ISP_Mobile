@@ -1,4 +1,4 @@
-import React, {FC, useMemo, useState} from 'react';
+import React, {FC, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -64,8 +64,10 @@ const MASTER_TYPE_OPTIONS: MasterTypeOption[] = [
   {label: 'Tree', value: 'tree'},
   {label: 'Building', value: 'building'},
   {label: 'POP', value: 'pop'},
+  {label: 'Spliter/FatBox', value: 'splitter'},
   {label: 'Tiffin', value: 'tiffin'},
   {label: 'Enclosure', value: 'enclosure'},
+  {label: 'Chamber', value: 'chamber'},
 ];
 
 const asCleanText = (value?: unknown) =>
@@ -95,6 +97,7 @@ const getGeneratedMasterName = (label: string) =>
 const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
   const dispatch = useDispatch<StoreDispatch>();
+  const formScrollRef = useRef<ScrollView | null>(null);
   const isRouteMasterSelectionFlow = Boolean(
     route.params?.routeMasterSelectionMode,
   );
@@ -137,7 +140,9 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const [area, setArea] = useState(initialAddressParts.area);
   const [city, setCity] = useState(initialAddressParts.city);
   const [stateName, setStateName] = useState(initialAddressParts.state);
-  const [country, setCountry] = useState(initialAddressParts.country);
+  const [country, setCountry] = useState(
+    initialAddressParts.country || 'India',
+  );
   const [pincode, setPincode] = useState(initialAddressParts.pincode);
   const [image1, setImage1] = useState('');
   const [image2, setImage2] = useState('');
@@ -154,6 +159,25 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     initialMasterOption,
   );
   const [showMasterTypeDropdown, setShowMasterTypeDropdown] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(showEvent, event => {
+      setKeyboardInset(event.endCoordinates.height);
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardInset(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const selectedMasterType = selectedMaster?.value || '';
   const selectedMasterLabel = selectedMaster?.label || 'Master';
@@ -162,13 +186,13 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     ? 'Add Master'
     : `Add ${selectedMasterLabel}`;
   const imageLabel = `${selectedMasterLabel} Images`;
-  const showAirPlacementNotice = ['tiffin', 'enclosure'].includes(
+  const showAirPlacementNotice = ['splitter', 'tiffin', 'enclosure'].includes(
     (selectedMasterType || selectedMasterLabel).toLowerCase(),
   );
   const isFreeAirPlacement =
     showAirPlacementNotice && !isRouteMasterSelectionFlow;
   const isStandalonePlacement =
-    ['pole', 'tree', 'building'].includes(selectedMasterType) &&
+    ['pole', 'tree', 'building', 'chamber'].includes(selectedMasterType) &&
     !isRouteMasterSelectionFlow;
 
   const selectedCoordinate = useMemo(
@@ -196,7 +220,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     setArea(initialAddressParts.area);
     setCity(initialAddressParts.city);
     setStateName(initialAddressParts.state);
-    setCountry(initialAddressParts.country);
+    setCountry(initialAddressParts.country || 'India');
     setPincode(initialAddressParts.pincode);
     setImage1('');
     setImage2('');
@@ -358,6 +382,31 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       return;
     }
 
+    if (!city.trim()) {
+      Alert.alert('City', 'City is required.');
+      return;
+    }
+
+    if (!stateName.trim()) {
+      Alert.alert('State', 'State is required.');
+      return;
+    }
+
+    if (!area.trim()) {
+      Alert.alert('Area', 'Area is required.');
+      return;
+    }
+
+    if (!/^\d{6}$/.test(pincode.trim())) {
+      Alert.alert('Pincode', 'Please enter a valid 6-digit pincode.');
+      return;
+    }
+
+    if (!country.trim()) {
+      Alert.alert('Country', 'Country is required.');
+      return;
+    }
+
     if (!image1 && !image2) {
       Alert.alert(imageLabel, `Please add at least one ${imageLabel}.`);
       return;
@@ -432,6 +481,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         MasterType: selectedMasterLabel,
         address: masterAddress.trim(),
         selectedAddress: selectedAddress.trim(),
+        city: city.trim(),
+        state: stateName.trim(),
+        country: country.trim() || 'India',
+        area: area.trim(),
+        pincode: pincode.trim(),
         landmark: landmark.trim(),
         latLng: latLngText.trim(),
         LatLng: latLngText.trim(),
@@ -461,7 +515,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       }
 
       let nearestApiMasters: any;
-      if (isStandalonePlacement && selectedCoordinate) {
+      if (
+        selectedCoordinate &&
+        (isStandalonePlacement ||
+          (isRouteMasterSelectionFlow && !createdMasterId))
+      ) {
         try {
           nearestApiMasters = await dispatch(
             GetNearestPoleTreeDDAPI({
@@ -480,6 +538,45 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         }
       }
 
+      const nearestMasterList = Array.isArray(nearestApiMasters)
+        ? nearestApiMasters
+        : Array.isArray(nearestApiMasters?.data)
+        ? nearestApiMasters.data
+        : [];
+      const refreshedAddedMaster = nearestMasterList.find((master: any) => {
+        const serverId = Number(
+          master?.id ??
+            master?.Id ??
+            master?.masterId ??
+            master?.MasterId ??
+            master?.ispMasterId ??
+            master?.IspMasterId,
+        );
+        const serverName = asCleanText(
+          master?.name ?? master?.Name ?? master?.masterName,
+        ).toLowerCase();
+        return createdMasterId > 0
+          ? serverId === createdMasterId
+          : serverName === masterName.toLowerCase();
+      });
+      const refreshedMasterId = Number(
+        refreshedAddedMaster?.id ??
+          refreshedAddedMaster?.Id ??
+          refreshedAddedMaster?.masterId ??
+          refreshedAddedMaster?.MasterId ??
+          refreshedAddedMaster?.ispMasterId ??
+          refreshedAddedMaster?.IspMasterId,
+      );
+      const resolvedAddedMaster = refreshedAddedMaster
+        ? {
+            ...addedMaster,
+            ...refreshedAddedMaster,
+            ...(Number.isInteger(refreshedMasterId) && refreshedMasterId > 0
+              ? {id: refreshedMasterId, masterId: refreshedMasterId}
+              : {}),
+          }
+        : addedMaster;
+
       if (isRouteMasterSelectionFlow) {
         if (route.params?.returnToFiberChange) {
           (navigation as any).popTo('Fiber-Change', {
@@ -490,7 +587,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
             installationProgress: route.params?.fiberChangeInstallationProgress,
             currentPosition: selectedCoordinate,
             currentAddress: selectedAddress.trim(),
-            addedMaster,
+            addedMaster: resolvedAddedMaster,
             addedMasterKey,
           });
           return;
@@ -501,23 +598,26 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
             currentPosition: selectedCoordinate,
             currentAddress: selectedAddress.trim(),
             initialMasters: route.params?.routeInitialMasters ?? [],
-            addedMaster,
+            addedMaster: resolvedAddedMaster,
             addedMasterKey,
           });
           return;
         }
 
-        navigation.popTo('Select-Route-Master', {
-          routeSelectionMode: true,
+        const routeBuilderParams = {
           routeName: asCleanText(route.params?.routeName) || 'Unnamed Route',
           routeDraft: route.params?.routeDraft ?? {},
-          returnToRouteBuilder: route.params?.returnToRouteBuilder,
           currentPosition: selectedCoordinate,
           currentAddress: selectedAddress.trim(),
-          initialMasters: route.params?.routeInitialMasters ?? [],
-          addedMaster,
-          addedMasterKey,
-        });
+          selectedMaster: resolvedAddedMaster,
+          selectedMasterVersion: `${addedMasterKey}-${createdMasterId || 0}`,
+        };
+
+        if (route.params?.returnToRouteBuilder) {
+          (navigation as any).popTo('Make-Route', routeBuilderParams);
+        } else {
+          navigation.navigate('Make-Route', routeBuilderParams);
+        }
         return;
       }
 
@@ -578,7 +678,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
-      keyboardAvoidingEnabled={Platform.OS === 'ios'}
+      keyboardAvoidingEnabled={false}
       statusBgColor={isRouteMasterSelectionFlow ? '#8858F9' : '#F4F7FB'}
       statusBarStyle={isRouteMasterSelectionFlow ? 'light' : 'dark'}>
       <StatusBar
@@ -629,12 +729,16 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         </LinearGradient>
 
         <ScrollView
+          ref={formScrollRef}
           style={styles.scroll}
           contentContainerStyle={[
             styles.scrollContent,
-            {paddingBottom: insets.bottom + SIZE.MS(96)},
+            {paddingBottom: insets.bottom + SIZE.MS(96) + keyboardInset},
           ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={
+            Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+          }
           showsVerticalScrollIndicator={false}>
           <View style={styles.formCard}>
             <View style={styles.twoColumnRow}>
@@ -778,6 +882,81 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               style={styles.input}
             />
 
+            <View style={styles.addressDetailsRow}>
+              <View style={styles.addressDetailField}>
+                <Text style={styles.label}>
+                  City<Text style={styles.required}> *</Text>
+                </Text>
+                <TextInput
+                  value={city}
+                  onChangeText={setCity}
+                  placeholder="Enter City"
+                  placeholderTextColor="#9CA3AF"
+                  autoCapitalize="words"
+                  style={styles.input}
+                />
+              </View>
+
+              <View style={styles.addressDetailField}>
+                <Text style={styles.label}>
+                  State<Text style={styles.required}> *</Text>
+                </Text>
+                <TextInput
+                  value={stateName}
+                  onChangeText={setStateName}
+                  placeholder="Enter State"
+                  placeholderTextColor="#9CA3AF"
+                  autoCapitalize="words"
+                  style={styles.input}
+                />
+              </View>
+            </View>
+
+            <View style={styles.addressDetailsRow}>
+              <View style={styles.addressDetailField}>
+                <Text style={styles.label}>
+                  Area<Text style={styles.required}> *</Text>
+                </Text>
+                <TextInput
+                  value={area}
+                  onChangeText={setArea}
+                  placeholder="Enter Area"
+                  placeholderTextColor="#9CA3AF"
+                  autoCapitalize="words"
+                  style={styles.input}
+                />
+              </View>
+
+              <View style={styles.addressDetailField}>
+                <Text style={styles.label}>
+                  Pincode<Text style={styles.required}> *</Text>
+                </Text>
+                <TextInput
+                  value={pincode}
+                  onChangeText={value =>
+                    setPincode(value.replace(/\D/g, '').slice(0, 6))
+                  }
+                  placeholder="Enter Pincode"
+                  placeholderTextColor="#9CA3AF"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  style={styles.input}
+                />
+              </View>
+            </View>
+
+            <Text style={styles.label}>
+              Country<Text style={styles.required}> *</Text>
+            </Text>
+            <TextInput
+              value={country}
+              onChangeText={setCountry}
+              placeholder="Enter Country"
+              placeholderTextColor="#9CA3AF"
+              autoCapitalize="words"
+              style={styles.input}
+            />
+
             <Text style={styles.label}>Landmark</Text>
             <TextInput
               value={landmark}
@@ -802,6 +981,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
             <TextInput
               value={remarks}
               onChangeText={setRemarks}
+              onFocus={() => {
+                setTimeout(() => {
+                  formScrollRef.current?.scrollToEnd({animated: true});
+                }, 250);
+              }}
               placeholder="Enter Remarks"
               placeholderTextColor="#9CA3AF"
               style={styles.input}
@@ -953,8 +1137,8 @@ const styles = StyleSheet.create({
   label: {
     marginTop: SIZE.MS(8),
     marginBottom: SIZE.MS(6),
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.BOLD,
     color: '#263241',
   },
   required: {
@@ -973,8 +1157,8 @@ const styles = StyleSheet.create({
   },
   selectText: {
     flex: 1,
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#5B6170',
   },
   masterTypeDropdown: {
@@ -1015,8 +1199,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#7445DF',
   },
   masterTypeOptionText: {
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#263241',
   },
   masterTypeOptionTextSelected: {
@@ -1043,8 +1227,8 @@ const styles = StyleSheet.create({
     flex: 1,
     height: '100%',
     paddingHorizontal: SIZE.MS(11),
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#263241',
   },
   fetchButton: {
@@ -1057,8 +1241,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#8858F9',
   },
   fetchText: {
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.BOLD,
     color: COLORS.WHITE,
   },
   selectAddressInput: {
@@ -1074,8 +1258,8 @@ const styles = StyleSheet.create({
   },
   selectAddressText: {
     flex: 1,
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#263241',
     marginRight: SIZE.MS(8),
   },
@@ -1098,8 +1282,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F0F1F4',
   },
   addressOptionText: {
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#263241',
   },
   input: {
@@ -1109,9 +1293,16 @@ const styles = StyleSheet.create({
     borderColor: '#E5E8EE',
     backgroundColor: COLORS.WHITE,
     paddingHorizontal: SIZE.MS(12),
-    fontSize: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#263241',
+  },
+  addressDetailsRow: {
+    flexDirection: 'row',
+    gap: SIZE.MS(10),
+  },
+  addressDetailField: {
+    flex: 1,
   },
   imagesRow: {
     flexDirection: 'row',
@@ -1138,8 +1329,8 @@ const styles = StyleSheet.create({
     marginRight: SIZE.MS(5),
   },
   imageButtonText: {
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#4A4F5D',
   },
   imagePreviewBox: {
@@ -1176,8 +1367,8 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.BOLD,
   },
   emptyImageText: {
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#A0A6B2',
   },
   infoRow: {
@@ -1208,9 +1399,9 @@ const styles = StyleSheet.create({
   },
   infoText: {
     flex: 1,
-    fontSize: SIZE.MS(10),
-    lineHeight: SIZE.MS(14),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
+    lineHeight: SIZE.MS(15),
+    fontFamily: FONTS.BOLD,
     color: '#1577FF',
   },
   bottomActions: {
@@ -1242,8 +1433,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   bottomButtonText: {
-    fontSize: SIZE.MS(12),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(14),
+    fontFamily: FONTS.BOLD,
     color: COLORS.WHITE,
   },
   previewOverlay: {

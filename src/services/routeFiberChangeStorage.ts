@@ -11,6 +11,10 @@ export type StoredRouteFiberSelection = {
   drumLabel: string;
   drumLength: number;
   lengthToUse: number;
+  stateId?: string;
+  stateName?: string;
+  zoneId?: string;
+  zoneName?: string;
   totalDistance?: number;
   sldId?: number;
   sldCode?: string;
@@ -56,6 +60,19 @@ const normalize = (value: unknown) =>
   String(value ?? '')
     .trim()
     .toLowerCase();
+
+export const getReplacementFiberLabel = (...values: unknown[]) => {
+  for (const value of values) {
+    const labels = String(value ?? '')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+    if (labels.length > 0) {
+      return labels[labels.length - 1];
+    }
+  }
+  return '';
+};
 
 export const getCompletedAppRoutes = (): CompletedAppRouteSnapshot[] => {
   const value = getData('COMPLETED_APP_ROUTES');
@@ -109,7 +126,7 @@ export const getRouteFiberSelections = (
   getStoredRouteFibers().find(item => matchesRoute(item, routeId, routeName))
     ?.fibers ?? [];
 
-export const appendRouteFiberSelection = (
+export const replaceRouteFiberSelection = (
   routeId: unknown,
   routeName: unknown,
   selection: Omit<StoredRouteFiberSelection, 'id' | 'addedAt'>,
@@ -123,11 +140,13 @@ export const appendRouteFiberSelection = (
     id: `fiber-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     addedAt: Date.now(),
   };
-  const previous = index >= 0 ? records[index] : null;
   const nextRecord: StoredRouteFibers = {
     routeId: String(routeId ?? ''),
     routeName: String(routeName ?? ''),
-    fibers: [...(previous?.fibers ?? []), nextSelection],
+    // A fiber change replaces the route's current fiber selection. Keeping
+    // older selections here caused the old and new fiber types to be rendered
+    // together after returning to the route list.
+    fibers: [nextSelection],
     updatedAt: Date.now(),
   };
   const nextRecords =

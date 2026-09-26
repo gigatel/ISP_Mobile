@@ -335,6 +335,7 @@ import {ensureAllSirenChannel, displayWithSiren} from './utils/AllSiren';
 
 // (kept) your push service for token mgmt
 import notificationService from './services/notificationService';
+import GlobalAlertProvider from './components/molecules/global-alert-provider';
 
 // ✅ Android-only: create the siren channel ASAP (no await at module scope)
 if (Platform.OS === 'android') {
@@ -567,7 +568,9 @@ const App = () => {
   return (
     <Provider store={store}>
       <SafeAreaProvider>
-        <RootNavigator />
+        <GlobalAlertProvider>
+          <RootNavigator />
+        </GlobalAlertProvider>
       </SafeAreaProvider>
     </Provider>
   );

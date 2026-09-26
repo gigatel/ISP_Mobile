@@ -469,7 +469,7 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
             </Text>
           )}
           {/* OTP Input */}
-          <View style={styles.inputContainer}>
+          <View style={styles.inputContainer} pointerEvents="none">
             <OtpInput
               ref={otpRef}
               numberOfDigits={6}
@@ -500,9 +500,11 @@ const OtpVerification: FC<ScreenProps.OtpVerification> = ({
               }}
               textInputProps={{
                 accessibilityLabel: 'One-Time Password',
-                editable: true,
-                showSoftInputOnFocus: true,
-                caretHidden: false,
+                editable: false,
+                showSoftInputOnFocus: false,
+                caretHidden: true,
+                contextMenuHidden: true,
+                selectTextOnFocus: false,
                 keyboardType: 'number-pad',
                 returnKeyType: 'done',
                 blurOnSubmit: true,

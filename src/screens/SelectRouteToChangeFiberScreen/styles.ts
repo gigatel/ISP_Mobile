@@ -674,9 +674,6 @@ export default StyleSheet.create({
   drumFieldColumn: {
     flex: 1.55,
   },
-  lengthFieldColumn: {
-    flex: 0.85,
-  },
   drumSelectRow: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -697,30 +694,6 @@ export default StyleSheet.create({
   },
   drumLengthText: {
     color: '#5A5F66',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(12),
-  },
-  lengthInputWrap: {
-    height: SIZE.MVS(39),
-    paddingLeft: SIZE.MS(10),
-    paddingRight: SIZE.MS(9),
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E1E4E8',
-    borderRadius: SIZE.MS(20),
-    backgroundColor: COLORS.WHITE,
-  },
-  lengthInput: {
-    flex: 1,
-    height: '100%',
-    paddingVertical: 0,
-    color: '#363B43',
-    fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MS(13),
-  },
-  lengthUnit: {
-    color: '#777C83',
     fontFamily: FONTS.MEDIUM,
     fontSize: SIZE.MS(12),
   },

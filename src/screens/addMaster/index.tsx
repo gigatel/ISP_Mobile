@@ -67,11 +67,18 @@ const PICKER_DATA: PickerItem[] = [
   {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
   {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
   {label: 'POP', value: 'POP', icon: IMAGES.FiberEnclosur},
+  {label: 'Spliter/FatBox', value: 'Splitter', icon: IMAGES.enclosureIcon},
   {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
   {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
+  {label: 'Chamber', value: 'Chamber', icon: IMAGES.ChamberNew},
 ];
 
-const AIR_PLACED_MASTER_TYPES = new Set(['pop', 'tiffin', 'enclosure']);
+const AIR_PLACED_MASTER_TYPES = new Set([
+  'pop',
+  'splitter',
+  'tiffin',
+  'enclosure',
+]);
 
 const LOCATION_MATCH_TOLERANCE = 0.000001;
 
@@ -1285,14 +1292,14 @@ const localStyles = StyleSheet.create({
   },
   locationText: {
     flex: 1,
-    fontSize: SIZE.MS(12),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.SEMI_BOLD,
     color: COLORS.colorDarkslategray,
     lineHeight: SIZE.MS(17),
   },
   locationFetching: {
-    fontSize: SIZE.MS(12),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#999',
   },
   container: {
@@ -1305,8 +1312,8 @@ const localStyles = StyleSheet.create({
     paddingBottom: SIZE.MS(40),
   },
   sectionTitle: {
-    fontSize: SIZE.MS(13),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(15),
+    fontFamily: FONTS.BOLD,
     color: COLORS.colorDarkslategray,
     marginBottom: SIZE.MS(12),
     letterSpacing: 0.3,
@@ -1371,14 +1378,14 @@ const localStyles = StyleSheet.create({
     gap: SIZE.MS(8),
   },
   loadingText: {
-    fontSize: SIZE.MS(12),
+    fontSize: SIZE.MS(13),
     color: '#666',
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.SEMI_BOLD,
   },
   countText: {
-    fontSize: SIZE.MS(12),
+    fontSize: SIZE.MS(13),
     color: '#4CAF50',
-    fontFamily: FONTS.MEDIUM,
+    fontFamily: FONTS.SEMI_BOLD,
     marginTop: SIZE.MS(12),
   },
   actionRow: {

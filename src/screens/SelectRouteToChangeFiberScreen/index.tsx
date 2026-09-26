@@ -45,12 +45,15 @@ import {
   GetFiberMasterListAPI,
   GetRouteFiberAllDataBySLDIdISPAPI,
   GetRouteFiberMappingPaggiISPAPI,
+  GetStateMasterAPI,
+  GetZonesByStateIdAPI,
   insertUpdateRouteChamberMappingAPI,
 } from '@slices/route.slice';
 import {Common, Location} from '@utils';
 import {
-  appendRouteFiberSelection,
+  getReplacementFiberLabel,
   getRouteFiberSelections,
+  replaceRouteFiberSelection,
   StoredRouteFiberSelection,
 } from '../../services/routeFiberChangeStorage';
 import PointerSvg from '../../res/images/pointer.svg';
@@ -104,6 +107,7 @@ type DrumOption = {
   label: string;
   value: string;
   availableLength: number;
+  totalLength: number;
   fiberSpecificationName?: string;
 };
 
@@ -113,6 +117,8 @@ type PickerMode =
   | 'fiber'
   | 'armour'
   | 'drum'
+  | 'state'
+  | 'zone'
   | 'fromMaster'
   | 'toMaster'
   | null;
@@ -201,6 +207,9 @@ const getListFromResponse = (response: any): any[] => {
   }
 
   const candidates = [
+    response?.data?.stateMaster,
+    response?.data?.states,
+    response?.data?.zones,
     response?.data?.data,
     response?.data?.result,
     response?.data?.items,
@@ -208,6 +217,9 @@ const getListFromResponse = (response: any): any[] => {
     response?.result,
     response?.items,
     response?.records,
+    response?.stateMaster,
+    response?.states,
+    response?.zones,
   ];
   return candidates.find(Array.isArray) ?? [];
 };
@@ -340,6 +352,9 @@ const getMasterIcon = (masterType: string) => {
   if (normalized.includes('splitter')) {
     return IMAGES.enclosureIcon;
   }
+  if (normalized.includes('chamber')) {
+    return IMAGES.ChamberNew;
+  }
   if (normalized.includes('pole')) {
     return IMAGES.PoleImage;
   }
@@ -347,14 +362,7 @@ const getMasterIcon = (masterType: string) => {
 };
 
 const joinedFiberLabel = (...values: unknown[]) =>
-  Array.from(
-    new Set(
-      values
-        .map(asText)
-        .filter(Boolean)
-        .map(value => value.trim()),
-    ),
-  ).join(' • ');
+  getReplacementFiberLabel(...values);
 
 const sldTypeFor = (value: any) =>
   asText(value?.sldType ?? value?.SLDType).toLowerCase();
@@ -552,12 +560,8 @@ const buildSldGroups = (response: any): SldGroup[] =>
         sldCode: existing.sldCode || group.sldCode,
         fiberId: existing.fiberId || group.fiberId,
         fiberCode: existing.fiberCode || group.fiberCode,
-        fiberType: Array.from(
-          new Set([existing.fiberType, group.fiberType].filter(Boolean)),
-        ).join(', '),
-        armourType: Array.from(
-          new Set([existing.armourType, group.armourType].filter(Boolean)),
-        ).join(', '),
+        fiberType: group.fiberType || existing.fiberType,
+        armourType: group.armourType || existing.armourType,
         totalDistance: Math.max(existing.totalDistance, group.totalDistance),
         drumId: existing.drumId || group.drumId,
         drumNo: existing.drumNo || group.drumNo,
@@ -652,10 +656,10 @@ const buildRouteMasterBoundaries = (response: any): RouteMasterBoundary[] =>
 const buildFiberOptions = (response: any): FiberOption[] =>
   getListFromResponse(response)
     .map((item, index): FiberOption | null => {
-      const fiberIdStr = asText(
+      const fiberIdStr = getReplacementFiberLabel(
         item?.fiberIdStr ?? item?.FiberIdStr ?? item?.fiberIDStr,
       );
-      const fiberName = asText(
+      const fiberName = getReplacementFiberLabel(
         item?.fiberName ?? item?.FiberName ?? item?.name ?? item?.Name,
       );
       if (!fiberIdStr && !fiberName) {
@@ -703,14 +707,25 @@ const buildDrumOptions = (response: any): DrumOption[] =>
         item?.drumNoId ??
         item?.DrumNoId ??
         `${label}-${index}`;
-      const availableLength = Number(
-        item?.drumLength ??
+      const totalLength = Number(
+        item?.totalDrumLength ??
+          item?.TotalDrumLength ??
+          item?.drumLength ??
           item?.DrumLength ??
+          0,
+      );
+      const availableLength = Number(
+        item?.drumRemainingLength ??
+          item?.DrumRemainingLength ??
+          item?.remainingDrumLength ??
+          item?.RemainingDrumLength ??
+          item?.availableDrumLength ??
+          item?.AvailableDrumLength ??
           item?.availableLength ??
           item?.AvailableLength ??
           item?.remainingLength ??
           item?.RemainingLength ??
-          0,
+          totalLength,
       );
       const fiberSpecificationName = asText(
         item?.fiberSpecificationName ?? item?.FiberSpecificationName,
@@ -720,10 +735,69 @@ const buildDrumOptions = (response: any): DrumOption[] =>
         label,
         value: String(id),
         availableLength: Number.isFinite(availableLength) ? availableLength : 0,
+        totalLength: Number.isFinite(totalLength)
+          ? totalLength
+          : Number.isFinite(availableLength)
+          ? availableLength
+          : 0,
         ...(fiberSpecificationName ? {fiberSpecificationName} : {}),
       };
     })
     .filter((item): item is DrumOption => item !== null)
+    .filter(
+      (item, index, items) =>
+        items.findIndex(option => option.value === item.value) === index,
+    );
+
+const buildGeographyOptions = (
+  response: any,
+  kind: 'state' | 'zone',
+): PickerItem[] =>
+  getListFromResponse(response)
+    .map((item): PickerItem | null => {
+      const label = asText(
+        kind === 'state'
+          ? item?.stateName ??
+              item?.StateName ??
+              item?.name ??
+              item?.Name ??
+              item?.state ??
+              item?.State ??
+              item?.label ??
+              item?.text ??
+              item?.Text
+          : item?.zoneName ??
+              item?.ZoneName ??
+              item?.name ??
+              item?.Name ??
+              item?.zone ??
+              item?.Zone ??
+              item?.label ??
+              item?.text ??
+              item?.Text,
+      );
+      const value = asText(
+        kind === 'state'
+          ? item?.stateId ??
+              item?.StateId ??
+              item?.stateID ??
+              item?.StateID ??
+              item?.id ??
+              item?.Id ??
+              item?.value ??
+              item?.Value
+          : item?.zoneId ??
+              item?.ZoneId ??
+              item?.zoneID ??
+              item?.ZoneID ??
+              item?.id ??
+              item?.Id ??
+              item?.value ??
+              item?.Value,
+      );
+      return label && value ? {label, value} : null;
+    })
+    .filter((item): item is PickerItem => item !== null)
     .filter(
       (item, index, items) =>
         items.findIndex(option => option.value === item.value) === index,
@@ -789,34 +863,26 @@ const distanceToRoute = (position: Coordinate, route: RouteDetails) => {
   );
 };
 
-const getRouteId = (route: any) => {
-  const directRouteId = Number(route?.routeId ?? route?.RouteId);
-  if (Number.isFinite(directRouteId) && directRouteId > 0) {
-    return directRouteId;
-  }
-
-  const routeIdFromCode = asText(route?.routeIdStr ?? route?.RouteIdStr).match(
-    /\d+/,
-  )?.[0];
-  const parsedRouteId = Number(routeIdFromCode);
-  if (Number.isFinite(parsedRouteId) && parsedRouteId > 0) {
-    return parsedRouteId;
-  }
-
-  return Number(route?.id ?? route?.Id) || 0;
-};
-
 const normalizeRouteFiberMapping = (item: any): RouteDetails => {
-  const fiberNameStr = asText(
+  const fiberNameStr = getReplacementFiberLabel(
     item?.fiberNameStr ?? item?.fiberTypeName ?? item?.fiberIdStr,
   );
-  const fiberTypeName = asText(
+  const fiberTypeName = getReplacementFiberLabel(
     item?.fiberTypeName ?? item?.fiberIdStr ?? item?.fiberNameStr,
   );
   const fiberSpecificationName = asText(
     item?.fiberName ?? item?.fiberSpecificationName,
   );
   const routeLength = Number(item?.routeLength ?? item?.totalDistance);
+  const routeId =
+    Number(
+      item?.routeIdInt ?? item?.RouteIdInt ?? item?.routeId ?? item?.RouteId,
+    ) || 0;
+  const routeIdStr = asText(
+    item?.routeIdStr ??
+      item?.RouteIdStr ??
+      (typeof item?.routeId === 'string' ? item.routeId : ''),
+  );
   const fiberDetail = {
     id: item?.id ?? item?.Id,
     fiberTypeId: item?.fiberTypeId,
@@ -835,7 +901,8 @@ const normalizeRouteFiberMapping = (item: any): RouteDetails => {
   return {
     ...item,
     routeFiberMappingId: Number(item?.id ?? item?.Id) || undefined,
-    routeId: getRouteId(item),
+    routeId,
+    routeIdStr,
     startLatLng: asText(item?.fromLatLng ?? item?.startLatLng),
     startAddress: asText(item?.fromAddress ?? item?.startAddress),
     endLatLng: asText(item?.toLatLng ?? item?.endLatLng),
@@ -918,7 +985,10 @@ const requestCurrentPosition = ({
     );
   });
 
-const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
+const SelectRouteToChangeFiberScreen: FC<Props> = ({
+  navigation,
+  route: navigationRoute,
+}) => {
   const dispatch = useDispatch<StoreDispatch>();
   const listRef = useRef<FlatList<RouteListRow>>(null);
   const mapRef = useRef<MapView | null>(null);
@@ -926,7 +996,9 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
   const locationRequestRef = useRef(0);
   const fiberSavePendingRef = useRef(false);
   const masterBoundaryRequestRef = useRef(0);
+  const geographyRequestRef = useRef(0);
   const scopeManuallySelectedRef = useRef(false);
+  const openedPendingJobRef = useRef('');
 
   const [routes, setRoutes] = useState<RouteDetails[]>([]);
   const [searchText, setSearchText] = useState('');
@@ -956,9 +1028,16 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
   const [coreCount, setCoreCount] = useState('');
   const [drumOptions, setDrumOptions] = useState<DrumOption[]>([]);
   const [drumId, setDrumId] = useState('');
+  const [stateOptions, setStateOptions] = useState<PickerItem[]>([]);
+  const [stateId, setStateId] = useState('');
+  const [zoneOptions, setZoneOptions] = useState<PickerItem[]>([]);
+  const [zoneId, setZoneId] = useState('');
   const [lengthToUse, setLengthToUse] = useState('300');
   const [isLoadingFibers, setIsLoadingFibers] = useState(false);
   const [isLoadingDrums, setIsLoadingDrums] = useState(false);
+  const [isLoadingStates, setIsLoadingStates] = useState(false);
+  const [isLoadingZones, setIsLoadingZones] = useState(false);
+  const [geographyLoadError, setGeographyLoadError] = useState('');
   const [isSavingFiber, setIsSavingFiber] = useState(false);
   const [sheetError, setSheetError] = useState('');
   const [pickerMode, setPickerMode] = useState<PickerMode>(null);
@@ -1047,6 +1126,7 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
         routeRequestRef.current += 1;
         locationRequestRef.current += 1;
         masterBoundaryRequestRef.current += 1;
+        geographyRequestRef.current += 1;
       };
     }, [loadRoutes, serverSearch]),
   );
@@ -1311,6 +1391,58 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
     [dispatch],
   );
 
+  const loadStateOptions = useCallback(async () => {
+    if (stateOptions.length > 0 || isLoadingStates) {
+      return;
+    }
+    try {
+      setIsLoadingStates(true);
+      setGeographyLoadError('');
+      const response = await dispatch(GetStateMasterAPI()).unwrap();
+      const options = buildGeographyOptions(response, 'state');
+      setStateOptions(options);
+      if (options.length === 0) {
+        setGeographyLoadError('No states are available.');
+      }
+    } catch (error: any) {
+      setStateOptions([]);
+      setGeographyLoadError(error?.message || 'Unable to load states.');
+    } finally {
+      setIsLoadingStates(false);
+    }
+  }, [dispatch, isLoadingStates, stateOptions.length]);
+
+  const loadZoneOptions = useCallback(
+    async (selectedStateId: string) => {
+      const requestId = ++geographyRequestRef.current;
+      try {
+        setIsLoadingZones(true);
+        setGeographyLoadError('');
+        const response = await dispatch(
+          GetZonesByStateIdAPI({stateId: selectedStateId}),
+        ).unwrap();
+        if (requestId !== geographyRequestRef.current) {
+          return;
+        }
+        const options = buildGeographyOptions(response, 'zone');
+        setZoneOptions(options);
+        if (options.length === 0) {
+          setGeographyLoadError('No zones are available for this state.');
+        }
+      } catch (error: any) {
+        if (requestId === geographyRequestRef.current) {
+          setZoneOptions([]);
+          setGeographyLoadError(error?.message || 'Unable to load zones.');
+        }
+      } finally {
+        if (requestId === geographyRequestRef.current) {
+          setIsLoadingZones(false);
+        }
+      }
+    },
+    [dispatch],
+  );
+
   const loadRouteMasterBoundaries = useCallback(
     async (routeDetails: RouteDetails) => {
       const requestId = ++masterBoundaryRequestRef.current;
@@ -1367,25 +1499,65 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
     [dispatch],
   );
 
-  const openFiberSheet = (route: RouteDetails) => {
-    scopeManuallySelectedRef.current = false;
-    setSelectedRoute(route);
-    setChangeScope(sldTypeFor(route) === 'partial' ? 'partial' : 'sld');
-    setRouteFiberData([]);
-    setFromOrderNo(null);
-    setToOrderNo(null);
-    setRouteMasterLoadError('');
-    setFiberId('');
-    setArmourValue('');
-    setTubeCount('');
-    setCoreCount('');
-    setDrumId('');
-    setDrumOptions([]);
-    setLengthToUse('300');
-    setSheetError('');
-    loadFiberOptions();
-    loadRouteMasterBoundaries(route);
-  };
+  const openFiberSheet = useCallback(
+    (selectedRouteItem: RouteDetails) => {
+      scopeManuallySelectedRef.current = false;
+      geographyRequestRef.current += 1;
+      setSelectedRoute(selectedRouteItem);
+      setChangeScope(
+        sldTypeFor(selectedRouteItem) === 'partial' ? 'partial' : 'sld',
+      );
+      setRouteFiberData([]);
+      setFromOrderNo(null);
+      setToOrderNo(null);
+      setRouteMasterLoadError('');
+      setFiberId('');
+      setArmourValue('');
+      setTubeCount('');
+      setCoreCount('');
+      setDrumId('');
+      setDrumOptions([]);
+      setStateId('');
+      setZoneId('');
+      setZoneOptions([]);
+      setGeographyLoadError('');
+      setLengthToUse('300');
+      setSheetError('');
+      loadFiberOptions();
+      loadRouteMasterBoundaries(selectedRouteItem);
+    },
+    [loadFiberOptions, loadRouteMasterBoundaries],
+  );
+
+  useEffect(() => {
+    const pendingJob = navigationRoute.params?.initialPendingSLDJob;
+    if (!pendingJob) {
+      return;
+    }
+    const pendingJobKey = String(
+      pendingJob.id ?? pendingJob.jobId ?? pendingJob.code ?? '',
+    );
+    if (!pendingJobKey || openedPendingJobRef.current === pendingJobKey) {
+      return;
+    }
+    openedPendingJobRef.current = pendingJobKey;
+    openFiberSheet({
+      ...pendingJob,
+      routeId:
+        Number(
+          pendingJob.routeIdInt ?? pendingJob.RouteIdInt ?? pendingJob.routeId,
+        ) || 0,
+      routeIdStr: asText(pendingJob.routeCode),
+      routeName: asText(pendingJob.routeName),
+      routeLength: Number(pendingJob.routeLength) || 0,
+      totalDistance: Number(pendingJob.routeLength) || 0,
+      fiberTypeName: asText(pendingJob.fiberType),
+      fiberIdStr: asText(pendingJob.fiberType),
+      fiberSpecificationName: asText(pendingJob.fiberSpecification),
+      pendingSldId: pendingJob.id,
+      pendingSldCode: pendingJob.code,
+    });
+  }, [navigationRoute.params?.initialPendingSLDJob, openFiberSheet]);
 
   const scopedRouteFiberData = useMemo(() => {
     if (changeScope === 'full') {
@@ -1404,30 +1576,29 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
   );
 
   const existingFiberLabel = useMemo(() => {
-    const apiLabels = scopedSldGroups.map(group =>
-      [group.fiberType, group.armourType].filter(Boolean).join(', '),
-    );
+    const latestSelection = selectedRoute
+      ? fiberSelections[selectedRoute.routeId]?.slice(-1)[0]
+      : undefined;
+    if (latestSelection?.fiberLabel) {
+      return getReplacementFiberLabel(latestSelection.fiberLabel);
+    }
+    const latestApiGroup = scopedSldGroups[scopedSldGroups.length - 1];
+    if (latestApiGroup?.fiberType) {
+      return getReplacementFiberLabel(latestApiGroup.fiberType);
+    }
     const routeFiberDetails = selectedRoute?.fiberDetails;
-    const routeLabels = Array.isArray(routeFiberDetails)
-      ? routeFiberDetails.map((fiber: any) =>
-          [
-            asText(
-              fiber?.fiberTypeName ?? fiber?.fiberIdStr ?? fiber?.fiberNameStr,
-            ),
-            asText(
-              fiber?.fiberSpecificationName ??
-                fiber?.armourType ??
-                fiber?.fiberName,
-            ),
-          ]
-            .filter(Boolean)
-            .join(', '),
-        )
-      : [];
-    return Array.from(
-      new Set([...apiLabels, ...routeLabels].filter(Boolean)),
-    ).join(' • ');
-  }, [scopedSldGroups, selectedRoute]);
+    const latestRouteFiber = Array.isArray(routeFiberDetails)
+      ? routeFiberDetails[routeFiberDetails.length - 1]
+      : undefined;
+    return getReplacementFiberLabel(
+      latestRouteFiber?.fiberTypeName,
+      latestRouteFiber?.fiberIdStr,
+      latestRouteFiber?.fiberNameStr,
+      selectedRoute?.fiberTypeName,
+      selectedRoute?.fiberIdStr,
+      selectedRoute?.fiberNameStr,
+    );
+  }, [fiberSelections, scopedSldGroups, selectedRoute]);
 
   const selectedFiber = useMemo(
     () => fiberOptions.find(option => option.value === fiberId) ?? null,
@@ -1440,6 +1611,14 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
   const selectedArmour = useMemo(
     () => ARMOUR_OPTIONS.find(option => option.value === armourValue) ?? null,
     [armourValue],
+  );
+  const selectedState = useMemo(
+    () => stateOptions.find(option => option.value === stateId) ?? null,
+    [stateId, stateOptions],
+  );
+  const selectedZone = useMemo(
+    () => zoneOptions.find(option => option.value === zoneId) ?? null,
+    [zoneId, zoneOptions],
   );
   const selectedFromMaster = useMemo(
     () =>
@@ -1500,6 +1679,14 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       if (drum?.availableLength && Number(lengthToUse) > drum.availableLength) {
         setLengthToUse(String(Math.min(300, drum.availableLength)));
       }
+    } else if (pickerMode === 'state') {
+      setStateId(item.value);
+      setZoneId('');
+      setZoneOptions([]);
+      setGeographyLoadError('');
+      loadZoneOptions(item.value);
+    } else if (pickerMode === 'zone') {
+      setZoneId(item.value);
     } else if (pickerMode === 'fromMaster') {
       const nextFromOrder = Number(item.value);
       setFromOrderNo(nextFromOrder);
@@ -1527,6 +1714,12 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
         meta: option.availableLength ? `${option.availableLength}m` : '',
       }));
     }
+    if (pickerMode === 'state') {
+      return stateOptions;
+    }
+    if (pickerMode === 'zone') {
+      return zoneOptions;
+    }
     if (pickerMode === 'fromMaster') {
       return scopedRouteMasterBoundaries.slice(0, -1).map(master => ({
         label: master.code ? `${master.name} (${master.code})` : master.name,
@@ -1550,6 +1743,8 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
     fromOrderNo,
     pickerMode,
     scopedRouteMasterBoundaries,
+    stateOptions,
+    zoneOptions,
   ]);
 
   const pickerTitle =
@@ -1559,6 +1754,10 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       ? 'Select Cable Type'
       : pickerMode === 'drum'
       ? 'Select Drum'
+      : pickerMode === 'state'
+      ? 'Select State'
+      : pickerMode === 'zone'
+      ? 'Select Zone'
       : pickerMode === 'fromMaster'
       ? 'Select From Master'
       : 'Select To Master';
@@ -1568,7 +1767,10 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       setSheetError('The selected route is unavailable.');
       return;
     }
-    const requestedLength = Number(lengthToUse);
+    const requestedLength =
+      changeScope === 'full'
+        ? Number(selectedDrum?.availableLength ?? 0)
+        : Number(lengthToUse);
     if (isLoadingRouteMasters) {
       setSheetError('Wait for the SLD details to finish loading.');
       return;
@@ -1683,6 +1885,9 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       setFromOrderNo(null);
       setToOrderNo(null);
     }
+    if (scope === 'full') {
+      loadStateOptions();
+    }
     if (
       selectedRoute &&
       routeFiberData.length === 0 &&
@@ -1697,7 +1902,10 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       return;
     }
 
-    const requestedLength = Number(lengthToUse);
+    const requestedLength =
+      changeScope === 'full'
+        ? Number(selectedDrum?.availableLength ?? 0)
+        : Number(lengthToUse);
     if (!selectedRoute || !selectedFiber) {
       setSheetError('Select a fiber type.');
       return;
@@ -1727,6 +1935,14 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       setSheetError('Select Armoured or Unarmoured.');
       return;
     }
+    if (changeScope === 'full' && !selectedState) {
+      setSheetError('Select a state.');
+      return;
+    }
+    if (changeScope === 'full' && !selectedZone) {
+      setSheetError('Select a zone.');
+      return;
+    }
     if (!tubeCount || !coreCount) {
       setSheetError('Tube and core details are unavailable for this fiber.');
       return;
@@ -1736,7 +1952,11 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
       return;
     }
     if (!requestedLength || requestedLength <= 0) {
-      setSheetError('Enter a valid length to use.');
+      setSheetError(
+        changeScope === 'full'
+          ? 'The selected drum has no available length.'
+          : 'Enter a valid length to use.',
+      );
       return;
     }
     if (
@@ -1829,7 +2049,7 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
         ).unwrap();
       }
 
-      const nextFibers = appendRouteFiberSelection(
+      const nextFibers = replaceRouteFiberSelection(
         selectedRoute.routeId,
         selectedRoute.routeName,
         {
@@ -1840,8 +2060,21 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
           coreCount,
           drumId: selectedDrum.value,
           drumLabel: selectedDrum.label,
-          drumLength: selectedDrum.availableLength,
+          drumLength: selectedDrum.totalLength,
+          totalDrumLength: selectedDrum.totalLength,
+          remainingDrumLength: Math.max(
+            0,
+            selectedDrum.availableLength - requestedLength,
+          ),
           lengthToUse: requestedLength,
+          ...(changeScope === 'full'
+            ? {
+                stateId: selectedState?.value,
+                stateName: selectedState?.label,
+                zoneId: selectedZone?.value,
+                zoneName: selectedZone?.label,
+              }
+            : {}),
           changeScope:
             changeScope === 'partial'
               ? 'Partial'
@@ -1866,7 +2099,16 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
         ...previous,
         [selectedRoute.routeId]: nextFibers,
       }));
-      const routeForChange = selectedRoute;
+      const routeForChange =
+        changeScope === 'full'
+          ? {
+              ...selectedRoute,
+              stateId: selectedState?.value,
+              stateName: selectedState?.label,
+              zoneId: selectedZone?.value,
+              zoneName: selectedZone?.label,
+            }
+          : selectedRoute;
       Common.showToast(
         changeScope === 'partial'
           ? 'Partial fiber segment updated successfully'
@@ -1923,27 +2165,25 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
     showLocationPointer: boolean,
   ) => {
     const selections = fiberSelections[route.routeId] ?? [];
-    const selectedFiberLabels = selections.map(item => item.fiberLabel);
-    const serverFiberLabels = Array.isArray(route.fiberDetails)
-      ? route.fiberDetails.map((fiber: any) =>
-          asText(
-            fiber?.fiberTypeName ?? fiber?.fiberIdStr ?? fiber?.fiberNameStr,
-          ),
-        )
-      : [
-          asText(
-            route.fiberTypeName ??
-              route.fiberIdStr ??
-              route.fiberNameStr ??
-              route.fibreType ??
-              route.fiberType,
-          ),
-        ];
+    const latestSelection = selections[selections.length - 1];
+    const serverFibers = Array.isArray(route.fiberDetails)
+      ? route.fiberDetails
+      : [];
+    const latestServerFiber = serverFibers[serverFibers.length - 1];
     const fiberLabel =
-      Array.from(
-        new Set([...serverFiberLabels, ...selectedFiberLabels].filter(Boolean)),
-      ).join(', ') || '--';
-    const totalDistance = Number(route.totalDistance ?? route.routeLength) || 0;
+      getReplacementFiberLabel(latestSelection?.fiberLabel) ||
+      getReplacementFiberLabel(
+        latestServerFiber?.fiberTypeName,
+        latestServerFiber?.fiberIdStr,
+        latestServerFiber?.fiberNameStr,
+        route.fiberTypeName,
+        route.fiberIdStr,
+        route.fiberNameStr,
+        route.fibreType,
+        route.fiberType,
+      ) ||
+      '--';
+    const totalDistance = Number(route.routeLength ?? route.totalDistance) || 0;
     const currentDistance =
       showLocationPointer && currentPosition
         ? distanceToRoute(currentPosition, route)
@@ -1984,8 +2224,7 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
               {asText(route.routeName) || 'Unnamed Route'}
             </Text>
             <Text numberOfLines={1} style={styles.routeId}>
-              Route#
-              {asText(route.routeIdStr).replace(/^route/i, '') || route.routeId}
+              Route#{route.routeId}
             </Text>
             <View style={styles.activeBadge}>
               <Text style={styles.activeText}>Active</Text>
@@ -2418,6 +2657,71 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
                   <View style={styles.twoColumnRow}>
                     <View style={styles.fieldColumn}>
                       <Text style={styles.fieldLabel}>
+                        State<Text style={styles.required}> *</Text>
+                      </Text>
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        disabled={isLoadingStates}
+                        onPress={() => {
+                          loadStateOptions();
+                          setPickerMode('state');
+                        }}
+                        style={styles.selectField}>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.selectText,
+                            !selectedState && styles.placeholderText,
+                          ]}>
+                          {isLoadingStates
+                            ? 'Loading...'
+                            : selectedState?.label || 'Select State'}
+                        </Text>
+                        <Image source={IMAGES.down} style={styles.chevron} />
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.fieldColumn}>
+                      <Text style={styles.fieldLabel}>
+                        Zone<Text style={styles.required}> *</Text>
+                      </Text>
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        disabled={!stateId || isLoadingZones}
+                        onPress={() => {
+                          if (stateId && zoneOptions.length === 0) {
+                            loadZoneOptions(stateId);
+                          }
+                          setPickerMode('zone');
+                        }}
+                        style={[
+                          styles.selectField,
+                          (!stateId || isLoadingZones) && styles.readOnlyField,
+                        ]}>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.selectText,
+                            !selectedZone && styles.placeholderText,
+                          ]}>
+                          {isLoadingZones
+                            ? 'Loading...'
+                            : selectedZone?.label ||
+                              (stateId ? 'Select Zone' : 'Select State First')}
+                        </Text>
+                        <Image
+                          source={IMAGES.down}
+                          style={
+                            stateId ? styles.chevron : styles.disabledChevron
+                          }
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.twoColumnRow}>
+                    <View style={styles.fieldColumn}>
+                      <Text style={styles.fieldLabel}>
                         Select Fiber Type<Text style={styles.required}> *</Text>
                       </Text>
                       <TouchableOpacity
@@ -2524,27 +2828,6 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
                         </View>
                       </View>
                     </View>
-
-                    <View style={styles.lengthFieldColumn}>
-                      <Text style={styles.fieldLabel}>
-                        Length to Use<Text style={styles.required}> *</Text>
-                      </Text>
-                      <View style={styles.lengthInputWrap}>
-                        <TextInput
-                          value={lengthToUse}
-                          onChangeText={value => {
-                            setLengthToUse(value.replace(/[^0-9]/g, ''));
-                            setSheetError('');
-                          }}
-                          keyboardType="number-pad"
-                          placeholder="0"
-                          placeholderTextColor="#92969D"
-                          maxLength={6}
-                          style={styles.lengthInput}
-                        />
-                        <Text style={styles.lengthUnit}>m</Text>
-                      </View>
-                    </View>
                   </View>
 
                   {sheetError ? (
@@ -2633,8 +2916,25 @@ const SelectRouteToChangeFiberScreen: FC<Props> = ({navigation}) => {
                 <View style={styles.pickerEmpty}>
                   {isLoadingFibers ||
                   isLoadingDrums ||
+                  isLoadingStates ||
+                  isLoadingZones ||
                   isLoadingRouteMasters ? (
                     <ActivityIndicator color={COLORS.PRIMARY} />
+                  ) : geographyLoadError &&
+                    (pickerMode === 'state' || pickerMode === 'zone') ? (
+                    <>
+                      <Text style={styles.stateText}>{geographyLoadError}</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (pickerMode === 'state') {
+                            loadStateOptions();
+                          } else if (stateId) {
+                            loadZoneOptions(stateId);
+                          }
+                        }}>
+                        <Text style={styles.masterRetryText}>Retry</Text>
+                      </TouchableOpacity>
+                    </>
                   ) : (
                     <Text style={styles.stateText}>No options available</Text>
                   )}

@@ -15,7 +15,12 @@ const getMasterLatLng = (master: any) =>
 const getMasterType = (master: any) =>
   getText(master?.masterType ?? master?.MasterType ?? master?.type).toLowerCase();
 
-const STANDALONE_MASTER_TYPES = new Set(['pole', 'tree', 'building']);
+const STANDALONE_MASTER_TYPES = new Set([
+  'pole',
+  'tree',
+  'building',
+  'chamber',
+]);
 
 export const isFreeAirPlacedMaster = (master: any) => {
   const placementMode = getText(

@@ -42,11 +42,20 @@ import {Screen} from '@organisms';
 import {StoreDispatch} from '@reducers';
 import {COLORS, IMAGES} from '@res';
 import {
+  GetISPMasterByRouteIdISPAPI,
   GetRouteFiberAllDataBySLDIdISPAPI,
   installFiberBySLDTempAPI,
 } from '@slices/route.slice';
-import {Common, Location} from '@utils';
+import {Common, ImageWatermark, Location} from '@utils';
+import FullscreenImageViewer from '../../components/molecules/fullscreen-image-viewer';
+import ConnectedFiberDetailsModal from '../../components/molecules/connected-fiber-details-modal';
 import PointerSvg from '../../res/images/pointer.svg';
+import {
+  PausedRouteSnapshot,
+  removeCompletedRouteSnapshot,
+  savePausedRouteSnapshot,
+} from '../../services/pausedRouteStorage';
+import {getReplacementFiberLabel} from '../../services/routeFiberChangeStorage';
 import styles from './styles';
 
 type Props = NativeStackScreenProps<
@@ -152,17 +161,7 @@ const fiberLabelFor = (value: any, fallback?: any) => {
       fallback?.fiberSpecificationName ??
       fallback?.fiberName,
   );
-  return (
-    [fiberType, specification]
-      .filter(
-        (item, index, all) =>
-          item &&
-          all.findIndex(
-            candidate => candidate.toLowerCase() === item.toLowerCase(),
-          ) === index,
-      )
-      .join(' ') || '--'
-  );
+  return getReplacementFiberLabel(fiberType, specification) || '--';
 };
 const distanceBetween = (a: Coordinate, b: Coordinate) => {
   const rad = (v: number) => (v * Math.PI) / 180;
@@ -189,8 +188,14 @@ const iconFor = (type: string) => {
   if (value.includes('tiffin')) {
     return IMAGES.TiffinIcon;
   }
+  if (value.includes('splitter')) {
+    return IMAGES.enclosureIcon;
+  }
   if (value.includes('encl')) {
     return IMAGES.jointEnclosure;
+  }
+  if (value.includes('chamber')) {
+    return IMAGES.ChamberNew;
   }
   return IMAGES.module;
 };
@@ -241,6 +246,72 @@ const routeChamberMappingIdFor = (master: any) => {
     ? recordId
     : 0;
 };
+const masterIdFor = (master: any) => {
+  const candidates = [
+    master?.IspMasterId,
+    master?.ispMasterId,
+    master?.masterId,
+    master?.MasterId,
+    master?.newMasterId,
+    master?.NewMasterId,
+    master?.newFiberMasterId,
+    master?.NewFiberMasterId,
+    master?.poleId,
+    master?.PoleId,
+    master?.treeId,
+    master?.TreeId,
+    master?.buildingId,
+    master?.BuildingId,
+    master?.tiffinId,
+    master?.TiffinId,
+    master?.enclosureId,
+    master?.EnclosureId,
+    master?.splitterId,
+    master?.SplitterId,
+    master?.chamberId,
+    master?.ChamberId,
+    master?.id,
+    master?.Id,
+  ];
+  const value = candidates
+    .map(candidate => Number(candidate))
+    .find(candidate => Number.isInteger(candidate) && candidate > 0);
+  return value ?? 0;
+};
+const masterCodeFor = (master: any) =>
+  text(
+    master?.masterCode ?? master?.MasterCode ?? master?.code ?? master?.Code,
+  ).toLowerCase();
+const masterNameFor = (master: any) =>
+  text(
+    master?.masterName ?? master?.MasterName ?? master?.name ?? master?.Name,
+  ).toLowerCase();
+const masterTypeFor = (master: any) =>
+  text(
+    master?.masterType ??
+      master?.MasterType ??
+      master?.masterTypeName ??
+      master?.MasterTypeName ??
+      master?.point ??
+      master?.Point ??
+      master?.type ??
+      master?.Type,
+  ).toLowerCase();
+const routeMasterListFrom = (response: any): any[] => {
+  const candidates = [
+    response,
+    response?.data,
+    response?.items,
+    response?.masters,
+    response?.routeMasters,
+    response?.masterDetails,
+    response?.data?.items,
+    response?.data?.masters,
+    response?.data?.routeMasters,
+    response?.data?.masterDetails,
+  ];
+  return candidates.find(Array.isArray) ?? [];
+};
 const requestPosition = ({
   enableHighAccuracy,
   timeout,
@@ -268,33 +339,66 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
   const selected = route.params.selectedSld;
   const installationMode = route.params.installationMode ?? 'new-route';
   const isFiberChange = installationMode !== 'new-route';
+  const installationProgress = route.params.installationProgress;
   const prefetchedRouteFiberData = route.params.routeFiberData;
   const mapRef = useRef<MapView | null>(null);
   const expandedMapRef = useRef<MapView | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const masterYRef = useRef<Record<string, number>>({});
   const locationRequestRef = useRef(0);
+  const snapshotIdRef = useRef(
+    installationProgress?.id ??
+      `${isFiberChange ? 'fiber-change' : 'new-route-sld'}-${
+        selected.routeId ?? selected.id
+      }-${installationMode}`,
+  );
+  const snapshotCreatedAtRef = useRef(
+    installationProgress?.createdAt ?? Date.now(),
+  );
+  const latestSnapshotRef = useRef<PausedRouteSnapshot | null>(null);
+  const installationCompletedRef = useRef(false);
+  const restoredProgressRef = useRef(false);
+  const initializedServerStatusRef = useRef('');
   const [masters, setMasters] = useState<Master[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(
+    installationProgress?.sldInstallation?.activeIndex ?? 0,
+  );
   const [photos, setPhotos] = useState<
     Record<string, {uri: string; type: string; fileName: string}>
-  >({});
+  >(installationProgress?.sldInstallation?.photos ?? {});
+  const [previewPhoto, setPreviewPhoto] = useState<{
+    masterKey: string;
+    masterName: string;
+    masterIndex: number;
+    uri: string;
+  } | null>(null);
   const [processing, setProcessing] = useState(false);
   const [position, setPosition] = useState<Coordinate | null>(
-    route.params.currentPosition ?? null,
+    installationProgress?.currentPosition ??
+      route.params.currentPosition ??
+      null,
   );
   const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Selecting a saved installation is itself the resume action. Restore its
+  // progress, but keep the active master editable so its loop/photo workflow
+  // can continue immediately.
   const [paused, setPaused] = useState(false);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
   const [mapDisplayType, setMapDisplayType] =
     useState<MapDisplayType>('standard');
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  const [loopValues, setLoopValues] = useState<Record<string, string>>({});
+  const [connectedFiberMasterId, setConnectedFiberMasterId] = useState<
+    string | number | null
+  >(null);
+  const [loopValues, setLoopValues] = useState<Record<string, string>>(
+    installationProgress?.sldInstallation?.loopValues ?? {},
+  );
   const [confirmedLoopKeys, setConfirmedLoopKeys] = useState<Set<string>>(
-    () => new Set(),
+    () =>
+      new Set(installationProgress?.sldInstallation?.confirmedLoopKeys ?? []),
   );
 
   useEffect(() => {
@@ -333,9 +437,23 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
   const routeId = useMemo(
     () =>
       Number(
-        selected?.routeId ?? text(selected?.routeIdStr).replace(/\D/g, ''),
+        selected?.routeIdInt ??
+          selected?.RouteIdInt ??
+          selected?.routeId ??
+          text(selected?.routeIdStr).replace(/\D/g, ''),
       ) || 0,
     [selected],
+  );
+  const zoneId = useMemo(
+    () =>
+      Number(
+        installationProgress?.routeDraft?.zoneId ??
+          route.params.fiberChangeRoute?.zoneId ??
+          route.params.fiberChangeRoute?.ZoneId ??
+          selected?.zoneId ??
+          selected?.ZoneId,
+      ) || 0,
+    [installationProgress?.routeDraft?.zoneId, route.params, selected],
   );
   const fallbackMasters = useCallback(
     (): Master[] =>
@@ -402,6 +520,12 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
           : await dispatch(
               GetRouteFiberAllDataBySLDIdISPAPI({routeId}),
             ).unwrap();
+      const routeMasterResponse = await dispatch(
+        GetISPMasterByRouteIdISPAPI({routeId}),
+      )
+        .unwrap()
+        .catch(() => []);
+      const routeMasterRecords = routeMasterListFrom(routeMasterResponse);
       const wanted = listFrom(response).filter(
         (item: any) =>
           isFiberChange ||
@@ -417,22 +541,45 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
                 item?.masterType ?? item?.MasterType ?? item?.masterTypeName,
               ) || 'Master';
             const orderNo = Number(item?.orderNo ?? item?.OrderNo) || index + 1;
+            const itemCode = masterCodeFor(item);
+            const itemName = masterNameFor(item);
+            const itemType = masterTypeFor(item) || type.toLowerCase();
+            const matchedRouteMaster = routeMasterRecords.find(candidate => {
+              const candidateId = masterIdFor(candidate);
+              if (!candidateId) {
+                return false;
+              }
+              const candidateCode = masterCodeFor(candidate);
+              if (itemCode && candidateCode && itemCode === candidateCode) {
+                return true;
+              }
+              const candidateOrderNo = Number(
+                candidate?.orderNo ?? candidate?.OrderNo,
+              );
+              const candidateName = masterNameFor(candidate);
+              const candidateType = masterTypeFor(candidate);
+              return (
+                candidateName === itemName &&
+                (!candidateType || candidateType === itemType) &&
+                (!Number.isFinite(candidateOrderNo) ||
+                  candidateOrderNo === orderNo)
+              );
+            });
+            const boundaryMasterId =
+              orderNo === Number(selected.firstOrderNo)
+                ? Number(selected.fromMasterId) || 0
+                : orderNo === Number(selected.lastOrderNo)
+                ? Number(selected.toMasterId) || 0
+                : 0;
+            const resolvedMasterId =
+              masterIdFor(matchedRouteMaster) ||
+              masterIdFor(item) ||
+              boundaryMasterId;
             return {
               key: `${orderNo}-${type}-${
-                item?.IspMasterId ??
-                item?.ispMasterId ??
-                item?.masterId ??
-                item?.MasterId ??
-                index
+                resolvedMasterId || itemCode || index
               }`,
-              id:
-                Number(
-                  item?.IspMasterId ??
-                    item?.ispMasterId ??
-                    item?.masterId ??
-                    item?.MasterId ??
-                    item?.id,
-                ) || 0,
+              id: resolvedMasterId,
               routeChamberMappingId: routeChamberMappingIdFor(item),
               sldId: fiber?.sldId ?? fiber?.SLDId ?? selected.id,
               orderNo,
@@ -550,7 +697,242 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
       const availableKeys = new Set(masters.map(master => master.key));
       return new Set([...previous].filter(key => availableKeys.has(key)));
     });
+    setActiveIndex(previous =>
+      masters.length > 0 ? Math.min(previous, masters.length - 1) : 0,
+    );
   }, [masters]);
+
+  useEffect(() => {
+    if (
+      restoredProgressRef.current ||
+      !installationProgress?.sldInstallation ||
+      masters.length === 0
+    ) {
+      return;
+    }
+
+    restoredProgressRef.current = true;
+    const progress = installationProgress.sldInstallation;
+    const savedPoints = installationProgress.routePoints ?? [];
+    const savedConfirmedKeys = new Set(progress.confirmedLoopKeys ?? []);
+    const matchedSavedPointFor = (master: Master, index: number) =>
+      savedPoints.find(point => {
+        const savedMaster = point?.master ?? point;
+        const savedId = Number(point?.masterId ?? savedMaster?.id);
+        const savedOrderNo = Number(savedMaster?.orderNo);
+        return (
+          (master.id > 0 && savedId === master.id) ||
+          (master.orderNo > 0 && savedOrderNo === master.orderNo)
+        );
+      }) ?? savedPoints[index];
+
+    const restoredPhotos: Record<
+      string,
+      {uri: string; type: string; fileName: string}
+    > = {};
+    const restoredLoops: Record<string, string> = {};
+    const restoredConfirmed = new Set<string>();
+
+    masters.forEach((master, index) => {
+      const savedPoint = matchedSavedPointFor(master, index);
+      const savedKey = text(savedPoint?.key);
+      const savedPhoto =
+        progress.photos?.[master.key] ||
+        (savedKey ? progress.photos?.[savedKey] : undefined) ||
+        (savedPoint?.master?.__fiberChangePhotoUri
+          ? {
+              uri: savedPoint.master.__fiberChangePhotoUri,
+              type: savedPoint.master.__fiberChangePhotoType || 'image/jpeg',
+              fileName:
+                savedPoint.master.__fiberChangePhotoName ||
+                `master-${master.id || index + 1}.jpg`,
+            }
+          : undefined);
+      if (savedPhoto) {
+        restoredPhotos[master.key] = savedPhoto;
+      }
+      const restoredLoop =
+        progress.loopValues?.[master.key] ??
+        (savedKey ? progress.loopValues?.[savedKey] : undefined) ??
+        text(savedPoint?.loopMeters);
+      restoredLoops[master.key] = restoredLoop || String(master.loop || 10);
+      if (
+        savedConfirmedKeys.has(master.key) ||
+        (savedKey && savedConfirmedKeys.has(savedKey)) ||
+        savedPoint?.isLocked
+      ) {
+        restoredConfirmed.add(master.key);
+      }
+    });
+
+    setPhotos(restoredPhotos);
+    setLoopValues(restoredLoops);
+    setConfirmedLoopKeys(restoredConfirmed);
+    const activeMasterIndex = installationProgress.fiberChangeActiveMasterKey
+      ? masters.findIndex((master, index) => {
+          const savedPoint = matchedSavedPointFor(master, index);
+          return (
+            master.key === installationProgress.fiberChangeActiveMasterKey ||
+            savedPoint?.key === installationProgress.fiberChangeActiveMasterKey
+          );
+        })
+      : -1;
+    setActiveIndex(
+      Math.min(
+        Math.max(
+          0,
+          activeMasterIndex >= 0
+            ? activeMasterIndex
+            : progress.activeIndex ?? 0,
+        ),
+        masters.length - 1,
+      ),
+    );
+    setPaused(false);
+  }, [installationProgress, masters]);
+
+  const persistedInstallationSnapshot = useMemo<PausedRouteSnapshot>(() => {
+    const fallbackPosition = position ??
+      masters[activeIndex]?.coordinate ??
+      masters.find(master => master.coordinate)?.coordinate ??
+      coordinate(selected.fromLatLng) ??
+      coordinate(selected.toLatLng) ?? {latitude: 0, longitude: 0};
+    const confirmedKeys = [...confirmedLoopKeys];
+    const completedDistance = masters
+      .slice(0, Math.min(activeIndex + 1, masters.length))
+      .reduce(
+        (total, master) =>
+          total +
+          Math.max(0, master.distance) +
+          Math.max(0, Number(loopValues[master.key]) || 0),
+        0,
+      );
+    const fiberChangeMode =
+      installationMode === 'fiber-change-partial' ? 'partial' : 'full';
+
+    return {
+      id: snapshotIdRef.current,
+      routeName:
+        text(selected.routeName) ||
+        text(route.params.fiberChangeRoute?.routeName) ||
+        (isFiberChange ? 'Fiber Change' : 'New Route'),
+      routeDraft: {
+        routeId,
+        routeIdStr: selected.routeIdStr,
+        zoneId,
+        fiberTypeId: selected.fiberTypeId,
+        fiberTypeName: fiberLabelFor(selected),
+        drumId: selected.drumId,
+        drumNo: selected.drumNo,
+        drumLength: selected.drumLength,
+        remainingDrumLength: selected.drumRemainingLength,
+        ...(isFiberChange ? {fiberChangeMode} : {}),
+      },
+      currentPosition: fallbackPosition,
+      currentAddress:
+        route.params.currentAddress ||
+        masters[activeIndex]?.address ||
+        text(selected.fromAddress),
+      routePoints: masters.map(master => ({
+        key: master.key,
+        master,
+        masterId: String(master.id),
+        masterType: master.type.toLowerCase(),
+        masterTypeLabel: master.type,
+        name: master.name,
+        address: master.address,
+        coordinate: master.coordinate,
+        loopMeters: loopValues[master.key] ?? String(master.loop),
+        isLocked: confirmedLoopKeys.has(master.key),
+        isServerSaved: false,
+      })),
+      routePath: masters
+        .map(master => master.coordinate)
+        .filter((value): value is Coordinate => value !== null),
+      walkingSegments: [],
+      segmentDistance: 0,
+      trackingState: paused ? 'paused' : 'idle',
+      drumAllocations: selected.drumId
+        ? [
+            {
+              drumId: String(selected.drumId),
+              drumNo: text(selected.drumNo),
+              availableLength:
+                Number(selected.drumRemainingLength) ||
+                Number(selected.drumLength) ||
+                0,
+              fiberTypeId: String(selected.fiberTypeId ?? ''),
+              fiberTypeName: fiberLabelFor(selected),
+            },
+          ]
+        : [],
+      totalDistance: completedDistance,
+      status: paused ? 'paused' : 'unsaved',
+      createdAt: snapshotCreatedAtRef.current,
+      updatedAt: Date.now(),
+      workflowType: isFiberChange ? 'fiberChange' : 'newRoute',
+      resumeTarget: 'installFiberWithSld',
+      ...(isFiberChange
+        ? {
+            fiberChangeMode,
+            fiberChangeRoute: route.params.fiberChangeRoute,
+            fiberChangeSelectedFibers:
+              route.params.fiberChangeSelectedFibers ?? [],
+            fiberChangeActiveMasterKey: masters[activeIndex]?.key,
+          }
+        : {}),
+      sldInstallation: {
+        selectedSld: selected,
+        installationMode: !isFiberChange
+          ? 'new-route'
+          : installationMode === 'fiber-change-partial'
+          ? 'fiber-change-partial'
+          : 'fiber-change-full',
+        routeFiberData: prefetchedRouteFiberData,
+        activeIndex,
+        photos,
+        loopValues,
+        confirmedLoopKeys: confirmedKeys,
+      },
+    };
+  }, [
+    activeIndex,
+    confirmedLoopKeys,
+    installationMode,
+    isFiberChange,
+    loopValues,
+    masters,
+    paused,
+    photos,
+    position,
+    prefetchedRouteFiberData,
+    route.params.currentAddress,
+    route.params.fiberChangeRoute,
+    route.params.fiberChangeSelectedFibers,
+    routeId,
+    selected,
+    zoneId,
+  ]);
+  latestSnapshotRef.current = persistedInstallationSnapshot;
+
+  useEffect(() => {
+    if (loading || masters.length === 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      savePausedRouteSnapshot(persistedInstallationSnapshot);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [loading, masters.length, persistedInstallationSnapshot]);
+
+  useEffect(
+    () => () => {
+      if (!installationCompletedRef.current && latestSnapshotRef.current) {
+        savePausedRouteSnapshot(latestSnapshotRef.current);
+      }
+    },
+    [],
+  );
   const nearestIndex = useMemo(() => {
     if (!position || !masters.length) {
       return -1;
@@ -572,10 +954,9 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
     () =>
       masters.filter(
         (master, index): master is Master & {coordinate: Coordinate} =>
-          master.coordinate !== null &&
-          (index <= activeIndex || index === nearestIndex),
+          master.coordinate !== null && index <= activeIndex,
       ),
-    [activeIndex, masters, nearestIndex],
+    [activeIndex, masters],
   );
   const visibleMapCoordinates = useMemo(
     () => visibleMapMasters.map(master => master.coordinate),
@@ -729,8 +1110,12 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
       return;
     }
     if (!confirmedLoopKeys.has(master.key)) {
-      Common.showToast('Confirm the loop length before capturing a photo.');
-      return;
+      const loop = Number(loopValues[master.key]);
+      if (!Number.isFinite(loop) || loop < 0) {
+        Common.showToast('Enter a valid loop length before capturing a photo.');
+        return;
+      }
+      setConfirmedLoopKeys(previous => new Set(previous).add(master.key));
     }
     const permission =
       Platform.OS === 'android'
@@ -770,37 +1155,57 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
     };
 
     setProcessing(true);
-    launchCamera(options, (response: ImagePickerResponse) => {
-      setProcessing(false);
-      if (response.didCancel) {
-        return;
-      }
-      if (response.errorCode) {
-        Common.showToast(
-          response.errorMessage ||
-            (response.errorCode === 'camera_unavailable'
-              ? 'Camera is unavailable on this device.'
-              : 'Unable to capture photo. Please retry.'),
+    launchCamera(options, async (response: ImagePickerResponse) => {
+      try {
+        if (response.didCancel) {
+          return;
+        }
+        if (response.errorCode) {
+          Common.showToast(
+            response.errorMessage ||
+              (response.errorCode === 'camera_unavailable'
+                ? 'Camera is unavailable on this device.'
+                : 'Unable to capture photo. Please retry.'),
+          );
+          return;
+        }
+
+        const asset = response.assets?.[0];
+        if (!asset?.uri) {
+          Common.showToast('Camera did not return a photo. Please retry.');
+          return;
+        }
+
+        const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+          asset.uri,
+          master.coordinate
+            ? {
+                latitude: master.coordinate.latitude,
+                longitude: master.coordinate.longitude,
+                address: master.address,
+              }
+            : undefined,
+          {width: asset.width, height: asset.height},
         );
-        return;
+        setPhotos(previous => ({
+          ...previous,
+          [master.key]: {
+            uri: watermarkedUri,
+            type: asset.type || 'image/jpeg',
+            fileName:
+              asset.fileName ||
+              `sld-master-${master.id || master.orderNo}-${Date.now()}.jpg`,
+          },
+        }));
+      } catch (watermarkError: any) {
+        Common.error('Unable to process SLD master image:', watermarkError);
+        Common.showToast(
+          watermarkError?.message ||
+            'Unable to process the photo. Please retry.',
+        );
+      } finally {
+        setProcessing(false);
       }
-
-      const asset = response.assets?.[0];
-      if (!asset?.uri) {
-        Common.showToast('Camera did not return a photo. Please retry.');
-        return;
-      }
-
-      setPhotos(previous => ({
-        ...previous,
-        [master.key]: {
-          uri: asset.uri!,
-          type: asset.type || 'image/jpeg',
-          fileName:
-            asset.fileName ||
-            `sld-master-${master.id || master.orderNo}-${Date.now()}.jpg`,
-        },
-      }));
     });
   };
   const removePhoto = (masterKey: string, index: number) => {
@@ -857,6 +1262,86 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
       Common.showToast('All masters are captured. Tap End to submit.');
     }
   };
+
+  const buildInstallations = useCallback(
+    (capturedOnly: boolean) =>
+      masters.flatMap((master, index) => {
+        const imageFile = photos[master.key];
+        if (capturedOnly && !imageFile) {
+          return [];
+        }
+
+        const completedDistance = masters
+          .slice(0, index + 1)
+          .reduce((total, item) => total + Math.max(0, item.distance), 0);
+        const completedLoops = masters
+          .slice(0, index + 1)
+          .reduce(
+            (total, item) =>
+              total + Math.max(0, Number(loopValues[item.key]) || 0),
+            0,
+          );
+        const drumLength =
+          master.drumLength || Number(selected.drumLength) || 0;
+
+        if (!imageFile) {
+          return [];
+        }
+
+        return [
+          {
+            sldId: master.sldId || selected.id,
+            fiberId: master.fiberId || selected.fiberTypeId,
+            drumLength,
+            drumRemainingLength: drumLength
+              ? Math.max(0, drumLength - completedDistance - completedLoops)
+              : master.drumRemainingLength,
+            masterType: master.type,
+            orderNo: master.orderNo,
+            loopUsed: Number(loopValues[master.key]) || 0,
+            imageFile,
+          },
+        ];
+      }),
+    [loopValues, masters, photos, selected],
+  );
+
+  const saveInstallationStatus = useCallback(
+    async (status: 'unsave' | 'pause' | 'completed', capturedOnly: boolean) => {
+      if (!routeId) {
+        throw new Error('Route ID is unavailable.');
+      }
+      return dispatch(
+        installFiberBySLDTempAPI({
+          routeId,
+          status,
+          zoneId,
+          installations: buildInstallations(capturedOnly),
+        }),
+      ).unwrap();
+    },
+    [buildInstallations, dispatch, routeId, zoneId],
+  );
+
+  useEffect(() => {
+    if (
+      loading ||
+      !routeId ||
+      masters.length === 0 ||
+      Object.keys(photos).length === 0
+    ) {
+      return;
+    }
+    const statusKey = `${snapshotIdRef.current}:${routeId}`;
+    if (initializedServerStatusRef.current === statusKey) {
+      return;
+    }
+    initializedServerStatusRef.current = statusKey;
+    saveInstallationStatus('unsave', true).catch(() => {
+      initializedServerStatusRef.current = '';
+    });
+  }, [loading, masters.length, photos, routeId, saveInstallationStatus]);
+
   const finish = async () => {
     if (paused) {
       Common.showToast('Resume the installation before ending.');
@@ -876,37 +1361,10 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
     }
     setSaving(true);
     try {
-      await dispatch(
-        installFiberBySLDTempAPI({
-          routeId,
-          installations: masters.map((master, index) => {
-            const completedDistance = masters
-              .slice(0, index + 1)
-              .reduce((total, item) => total + Math.max(0, item.distance), 0);
-            const completedLoops = masters
-              .slice(0, index + 1)
-              .reduce(
-                (total, item) =>
-                  total + Math.max(0, Number(loopValues[item.key]) || 0),
-                0,
-              );
-            const drumLength =
-              master.drumLength || Number(selected.drumLength) || 0;
-            return {
-              sldId: master.sldId || selected.id,
-              fiberId: master.fiberId || selected.fiberTypeId,
-              drumLength,
-              drumRemainingLength: drumLength
-                ? Math.max(0, drumLength - completedDistance - completedLoops)
-                : master.drumRemainingLength,
-              masterType: master.type,
-              orderNo: master.orderNo,
-              loopUsed: Number(loopValues[master.key]) || 0,
-              imageFile: photos[master.key],
-            };
-          }),
-        }),
-      ).unwrap();
+      await saveInstallationStatus('completed', false);
+
+      installationCompletedRef.current = true;
+      removeCompletedRouteSnapshot(snapshotIdRef.current);
 
       if (isFiberChange) {
         Common.showToast('Fiber change completed successfully');
@@ -932,8 +1390,70 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
       setSaving(false);
     }
   };
+  const togglePaused = async () => {
+    const nextPaused = !paused;
+    setSaving(true);
+    const statusSnapshot: PausedRouteSnapshot = {
+      ...persistedInstallationSnapshot,
+      trackingState: nextPaused ? 'paused' : 'idle',
+      status: nextPaused ? 'paused' : 'unsaved',
+      updatedAt: Date.now(),
+    };
+    setPaused(nextPaused);
+    savePausedRouteSnapshot(statusSnapshot);
+    latestSnapshotRef.current = statusSnapshot;
+    try {
+      if (Object.keys(photos).length > 0) {
+        await saveInstallationStatus(nextPaused ? 'pause' : 'unsave', true);
+      }
+      Common.showToast(
+        nextPaused
+          ? `${
+              isFiberChange ? 'Fiber change' : 'New SLD route'
+            } saved to paused routes.`
+          : `${isFiberChange ? 'Fiber change' : 'New SLD route'} resumed.`,
+      );
+    } catch (statusError: any) {
+      console.warn(
+        '[InstallFiberWithSLD] Route paused locally; server status sync will retry after an image is captured.',
+        statusError?.message,
+      );
+      Common.showToast(
+        nextPaused
+          ? 'Route saved to paused routes.'
+          : 'Route resumed. Server status will sync after image capture.',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const activeMaster = masters[activeIndex];
+  const previewPhotos = useMemo(
+    () =>
+      masters.flatMap((master, masterIndex) => {
+        const photo = photos[master.key];
+        return photo
+          ? [
+              {
+                masterKey: master.key,
+                masterName: master.name,
+                masterIndex,
+                uri: photo.uri,
+              },
+            ]
+          : [];
+      }),
+    [masters, photos],
+  );
+  const previewPhotoIndex = previewPhoto
+    ? Math.max(
+        0,
+        previewPhotos.findIndex(
+          photo => photo.masterKey === previewPhoto.masterKey,
+        ),
+      )
+    : 0;
   const canGoNext = Boolean(
     activeMaster &&
       confirmedLoopKeys.has(activeMaster.key) &&
@@ -1000,6 +1520,37 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
     return () => clearTimeout(timer);
   }, [activeIndex, routeCoordinate, visibleMapCoordinates]);
 
+  const openConnectedFiberDetails = (master: Master) => {
+    if (master.id > 0) {
+      setConnectedFiberMasterId(master.id);
+      return;
+    }
+    Common.showToast(
+      `Master ID is unavailable for ${master.type} - ${master.name}.`,
+    );
+  };
+
+  const handleSldMapPress = (event: any) => {
+    const pressedCoordinate = event?.nativeEvent?.coordinate as
+      | Coordinate
+      | undefined;
+    if (!pressedCoordinate || visibleMapMasters.length === 0) {
+      return;
+    }
+    const nearestMaster = visibleMapMasters.reduce<{
+      master: Master;
+      distance: number;
+    } | null>((nearest, master) => {
+      const distance = distanceBetween(pressedCoordinate, master.coordinate);
+      return !nearest || distance < nearest.distance
+        ? {master, distance}
+        : nearest;
+    }, null);
+    if (nearestMaster && nearestMaster.distance <= 40) {
+      openConnectedFiberDetails(nearestMaster.master);
+    }
+  };
+
   const renderSldMap = (
     reference: React.RefObject<MapView>,
     expanded = false,
@@ -1023,6 +1574,7 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
         rotateEnabled
         showsBuildings
         zoomEnabled
+        onPress={handleSldMapPress}
         onMapReady={expanded ? fitExpandedMap : undefined}>
         {visibleMapMasters.map(master => {
           const isCurrent = master.key === activeMaster?.key;
@@ -1030,10 +1582,10 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
             <Marker
               key={`map-master-${master.key}-${isCurrent ? 'current' : 'done'}`}
               coordinate={master.coordinate}
-              title={`${master.type} - ${master.name}`}
-              description={master.address}
+              accessibilityLabel={`${master.type} - ${master.name}. Tap to view connected fibers.`}
               anchor={{x: 0.5, y: 0.5}}
               zIndex={isCurrent ? 20 : 10}
+              onPress={() => openConnectedFiberDetails(master)}
               tracksViewChanges>
               <Image
                 fadeDuration={0}
@@ -1096,6 +1648,10 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
               />
             </View>
           </TouchableOpacity>
+          <ConnectedFiberDetailsModal
+            masterId={isMapExpanded ? null : connectedFiberMasterId}
+            onClose={() => setConnectedFiberMasterId(null)}
+          />
         </View>
         <View style={styles.routeInfoCard}>
           <View style={styles.routeInfoTitleRow}>
@@ -1245,12 +1801,24 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
                       <View style={styles.cameraWrap}>
                         <TouchableOpacity
                           disabled={
-                            !enabled || paused || processing || !loopConfirmed
+                            !photo && (!enabled || paused || processing)
                           }
-                          onPress={() => openCamera(master, index)}
+                          onPress={() => {
+                            if (photo) {
+                              setPreviewPhoto({
+                                masterKey: master.key,
+                                masterName: master.name,
+                                masterIndex: index,
+                                uri: photo.uri,
+                              });
+                              return;
+                            }
+                            openCamera(master, index);
+                          }}
                           style={[
                             styles.camera,
-                            (processing || !loopConfirmed) &&
+                            !photo &&
+                              (processing || !enabled || paused) &&
                               styles.cameraDisabled,
                           ]}>
                           {photo ? (
@@ -1349,7 +1917,7 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
             </TouchableOpacity>
             <TouchableOpacity
               disabled={saving}
-              onPress={() => setPaused(value => !value)}
+              onPress={togglePaused}
               style={[styles.footerButton, styles.pauseButton]}>
               <Text style={styles.buttonText}>
                 {paused ? 'Resume' : 'Pause'}
@@ -1372,6 +1940,14 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
             </TouchableOpacity>
           </View>
         ) : null}
+        <FullscreenImageViewer
+          visible={Boolean(previewPhoto)}
+          images={previewPhotos.map(photo => photo.uri)}
+          index={previewPhotoIndex}
+          title={previewPhoto?.masterName || 'Captured Master Image'}
+          onIndexChange={index => setPreviewPhoto(previewPhotos[index] ?? null)}
+          onClose={() => setPreviewPhoto(null)}
+        />
         <Modal
           visible={isMapExpanded}
           statusBarTranslucent
@@ -1379,6 +1955,11 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
           onRequestClose={() => setIsMapExpanded(false)}>
           <View style={styles.expandedMapContainer}>
             {renderSldMap(expandedMapRef, true)}
+            <ConnectedFiberDetailsModal
+              masterId={isMapExpanded ? connectedFiberMasterId : null}
+              expanded
+              onClose={() => setConnectedFiberMasterId(null)}
+            />
             <View style={styles.expandedMapHeader} pointerEvents="box-none">
               <View style={styles.expandedMapTitlePill}>
                 <Text numberOfLines={1} style={styles.expandedMapTitle}>

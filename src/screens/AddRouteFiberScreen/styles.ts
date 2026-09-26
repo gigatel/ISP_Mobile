@@ -564,10 +564,6 @@ const styles = StyleSheet.create({
     flex: 1.85,
     minWidth: 0,
   },
-  lengthColumn: {
-    flex: 0.72,
-    minWidth: SIZE.MS(75),
-  },
   drumControlRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -590,24 +586,6 @@ const styles = StyleSheet.create({
     color: '#52565B',
     fontFamily: FONTS.SEMI_BOLD,
     fontSize: SIZE.MS(12),
-  },
-  lengthInputShell: {
-    paddingRight: SIZE.MS(10),
-  },
-  lengthInput: {
-    flex: 1,
-    height: '100%',
-    color: '#41454B',
-    fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(13),
-    paddingVertical: 0,
-    textAlign: 'right',
-  },
-  unitText: {
-    color: '#62666B',
-    fontFamily: FONTS.SEMI_BOLD,
-    fontSize: SIZE.MS(13),
-    marginLeft: SIZE.MS(2),
   },
   footer: {
     flexDirection: 'row',

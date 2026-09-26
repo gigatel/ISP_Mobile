@@ -1,14 +1,21 @@
 // Base URL Dev
-export const BASE_URL = 'http://mob.gigatel.me:7003/api/'; //hrms_ios
-export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/'; //isp
-// export const BASE_URL_2 = 'http://10.100.2.38:6102/api/'; //isp-local
-export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/'; //locationISP
+// export const BASE_URL = 'http://mob.gigatel.me:7003/api/'; //hrms_ios
+// export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/'; //isp
+// // export const BASE_URL_2 = 'http://10.100.2.38:6102/api/'; //isp-local
+// export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/'; //locationISP
 const apiBase = (url: string) => url.replace(/api\/?.*$/i, 'api/');
+
 //Base URL PROD
-// export const BASE_URL = 'http://isp.gigatel.me:7003/api/';
-// export const BASE_URL_2 = 'http://isp.gigatel.me:7004/api/';
-// export const BASE_URL_3 = 'http://isp.gigatel.me:7005/api/';
-//! Account
+export const BASE_URL = 'https://isp.gigatel.me:7003/api/';
+export const BASE_URL_2 = 'https://isp.gigatel.me:7004/api/';
+export const BASE_URL_3 = 'https://isp.gigatel.me:7005/api/';
+
+export const API_ENVIRONMENT: 'DEV' | 'PROD' = /^https?:\/\/isp\./i.test(
+  BASE_URL_2,
+)
+  ? 'PROD'
+  : 'DEV';
+
 //
 export const DashboardList = BASE_URL + 'AppDashboard/DashboardList2';
 //
@@ -68,9 +75,15 @@ export const getFiberMasterList =
   BASE_URL_2 + 'FiberMaster/GetFiberMasterDDISP';
 export const getDrumNumbersByFiberType =
   BASE_URL_2 + 'SLD/GetDrumNoByFiberTypeIdDD';
+export const getStateMaster = BASE_URL_2 + 'MapLayer/GetStateMaster';
+export const getZonesByStateId = BASE_URL_2 + 'MapLayer/GetZonesByStateId';
+export const getISPMasterByRouteIdISP =
+  BASE_URL_2 + 'RouteMasterWeb/GetISPMasterByRouteIdISP';
 //update master
 export const updateMasterAPI =
   BASE_URL_2 + 'ISPMaster/InsertUpdateISPMasterISP';
+export const insertUpdateSplitterMaster =
+  BASE_URL_2 + 'Splitter/InsertUpdateSplitterMaster';
 export const updateRouteAPI =
   BASE_URL_2 + 'RouteMasterMob/InsertUpdateRouteMasterMob';
 export const InsertUPdateInitialInfoAPI =
@@ -84,10 +97,13 @@ export const UpadteChamberPathDetails =
 export const getRouteDetailsPaggi =
   BASE_URL_2 + 'RouteMasterMob/GetRouteDetailsPaggi';
 export const getSLDDetailsPaggiISP = BASE_URL_2 + 'SLD/GetSLDDetailsPaggiISP';
+export const getPendingSLDJobsISP = BASE_URL_2 + 'SLD/GetPendingSLDJobsISP';
 export const getRouteFiberMappingPaggiISP =
   BASE_URL_2 + 'RouteFiberMapping/GetRouteFiberMappingPaggiISP';
 export const getRouteFiberAllDataBySLDIdISP =
   BASE_URL_2 + 'RouteFiberMapping/GetRouteFiberAllDataBySLDIdISP';
+export const getFiberDetailsByISPMaster =
+  BASE_URL_2 + 'RouteFiberMapping/GetFiberDetailsByISPMaster';
 // Temporary contract until the final SLD fiber-install endpoint is published.
 export const installFiberBySLDTemp =
   BASE_URL_2 + 'RouteMasterMob/UpdateRouteChamberMappingImages';

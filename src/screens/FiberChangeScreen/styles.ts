@@ -11,6 +11,11 @@ export default StyleSheet.create({
   map: {
     flex: 1,
   },
+  mapMasterIcon: {
+    width: SIZE.MS(32),
+    height: SIZE.MS(32),
+    resizeMode: 'contain',
+  },
   scroll: {flex: 1},
   scrollContent: {
     paddingHorizontal: SIZE.MS(14),
@@ -238,12 +243,6 @@ export default StyleSheet.create({
     fontSize: SIZE.MS(8.5),
     backgroundColor: '#F0EBFC',
   },
-  fiberDrumSpecification: {
-    marginTop: SIZE.MVS(7),
-    color: '#59616C',
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MS(9),
-  },
   selectedFiberBar: {
     marginHorizontal: -SIZE.MS(14),
     marginTop: SIZE.MVS(4),
@@ -266,6 +265,22 @@ export default StyleSheet.create({
     fontFamily: FONTS.SEMI_BOLD,
     fontSize: SIZE.MS(12),
     lineHeight: SIZE.MVS(16),
+  },
+  selectedDrumRow: {
+    marginTop: SIZE.MVS(3),
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  selectedDrumLabel: {
+    color: '#454A52',
+    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+  },
+  selectedDrumValue: {
+    flexShrink: 1,
+    color: '#6538D4',
+    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(11),
   },
   masterLoadState: {
     minHeight: SIZE.MVS(36),

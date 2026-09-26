@@ -83,7 +83,20 @@ const getMapTile = async (latitude: number, longitude: number) => {
       return null;
     }
 
-    return withFileScheme(localPath);
+    // Passing a cache file URI to react-native-image-marker is unreliable on
+    // Android: Coil can occasionally finish the request without a bitmap and
+    // the native renderer then reports "Watermark bitmap at index 0 is null".
+    // A static map is only 256x256, so decoding its data URI directly in the
+    // marker library is both cheap and deterministic.
+    const base64 = await RNFS.readFile(localPath, 'base64');
+    const isPng = base64.startsWith('iVBORw0KGgo');
+    const isJpeg = base64.startsWith('/9j/');
+    if (!isPng && !isJpeg) {
+      await RNFS.unlink(localPath);
+      return null;
+    }
+
+    return `data:image/${isPng ? 'png' : 'jpeg'};base64,${base64}`;
   } catch {
     try {
       if (await RNFS.exists(downloadPath)) {
@@ -156,8 +169,7 @@ const getWatermarkLocation = async (
     Math.abs(latitude - saved.lat) < 0.001 &&
     Math.abs(longitude - saved.long) < 0.001;
   let address =
-    supplied?.address?.trim() ||
-    (savedAddressIsNearby ? savedAddress : '');
+    supplied?.address?.trim() || (savedAddressIsNearby ? savedAddress : '');
 
   if (!address) {
     const resolvedAddress = await getAddressWithLatLong(latitude, longitude);
@@ -182,9 +194,9 @@ export const buildLocationWatermarkText = async (
     `Lat: ${resolved.latitude.toFixed(7)} | Lng: ${resolved.longitude.toFixed(
       7,
     )}`,
-    `Date: ${moment(capturedAt).format(
-      'DD-MMM-YYYY',
-    )} | Time: ${moment(capturedAt).format('hh:mm:ss A')}`,
+    `Date: ${moment(capturedAt).format('DD-MMM-YYYY')} | Time: ${moment(
+      capturedAt,
+    ).format('hh:mm:ss A')}`,
   ].join('\n');
 };
 
@@ -205,11 +217,6 @@ export const applyLocationWatermark = async (
   const capturedAt = new Date();
   const resolved = await getWatermarkLocation(location);
   const mapTileUri = await getMapTile(resolved.latitude, resolved.longitude);
-  if (!mapTileUri) {
-    throw new Error(
-      'The location map could not be loaded. Check the internet connection and try again.',
-    );
-  }
   const text = [
     `Location: ${wrapText(resolved.address)}`,
     `Lat: ${resolved.latitude.toFixed(7)} | Lng: ${resolved.longitude.toFixed(
@@ -219,7 +226,7 @@ export const applyLocationWatermark = async (
       'hh:mm:ss A',
     )}`,
   ].join('\n');
-  const detailsOffset = MAP_SIZE + CARD_INSET * 3;
+  const detailsOffset = mapTileUri ? MAP_SIZE + CARD_INSET * 3 : CARD_INSET * 2;
   const watermarks: WatermarkLayer[] = [
     {
       type: 'text',
@@ -239,16 +246,18 @@ export const applyLocationWatermark = async (
     },
   ];
 
-  watermarks.push({
-    type: 'image',
-    src: {uri: mapTileUri},
-    scale: MAP_SCALE,
-    position: {
-      position: Position.bottomLeft,
-      X: CARD_INSET,
-      Y: CARD_INSET,
-    },
-  });
+  if (mapTileUri) {
+    watermarks.push({
+      type: 'image',
+      src: {uri: mapTileUri},
+      scale: MAP_SCALE,
+      position: {
+        position: Position.bottomLeft,
+        X: CARD_INSET,
+        Y: CARD_INSET,
+      },
+    });
+  }
 
   watermarks.push({
     type: 'text',
@@ -291,16 +300,34 @@ export const applyLocationWatermark = async (
       : {}),
   };
 
-  const markedPath = await ImageMarker.mark({
-    backgroundImage: {
-      src: processingSource,
-      scale: 1,
-    },
-    watermarks,
-    quality: 85,
-    filename: `GTPL_${moment(capturedAt).format('YYYYMMDD_HHmmss_SSS')}`,
-    saveFormat: ImageFormat.jpg,
-  });
+  const filename = `GTPL_${moment(capturedAt).format('YYYYMMDD_HHmmss_SSS')}`;
+  const mark = (layers: WatermarkLayer[], name = filename) =>
+    ImageMarker.mark({
+      backgroundImage: {
+        src: processingSource,
+        scale: 1,
+      },
+      watermarks: layers,
+      quality: 85,
+      filename: name,
+      saveFormat: ImageFormat.jpg,
+    });
+
+  let markedPath: string;
+  try {
+    markedPath = await mark(watermarks);
+  } catch (error: any) {
+    // The map is an enhancement; the address, coordinates and capture time
+    // remain a valid location watermark. Do not block route completion if an
+    // Android image decoder rejects only the downloaded map bitmap.
+    if (!mapTileUri || !/watermark bitmap/i.test(String(error?.message))) {
+      throw error;
+    }
+    markedPath = await mark(
+      watermarks.filter(layer => layer.type !== 'image'),
+      `${filename}_text`,
+    );
+  }
 
   return withFileScheme(markedPath);
 };

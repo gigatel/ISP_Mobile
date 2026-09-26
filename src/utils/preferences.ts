@@ -61,6 +61,7 @@ export const KEY = {
 } as const;
 export const OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX =
   'OFFLINE_TODAY_WORKING_BEHALKF_OF' as const;
+export const PAUSED_ROUTE_DRAFT_PREFIX = 'PAUSED_ROUTE_DRAFT:' as const;
 
 export const logout = async () => {
   removeData('PEM_KEY');
@@ -106,13 +107,16 @@ export const logout = async () => {
 export type KeyType = keyof typeof KEY;
 export type PreferenceKey =
   | KeyType
-  | `${typeof OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX}${string}`;
+  | `${typeof OFFLINE_TODAY_WORKING_ON_BEHALF_PREFIX}${string}`
+  | `${typeof PAUSED_ROUTE_DRAFT_PREFIX}${string}`;
 
 export const setData = (key: PreferenceKey, value: any) => {
   try {
     storage.set(key, JSON.stringify(value));
+    return true;
   } catch (e) {
     log('Error in Set Data for ->', key, e);
+    return false;
   }
 };
 
@@ -126,6 +130,14 @@ export const getData = (key: PreferenceKey) => {
   } catch (e) {
     error('Error in Get Data for ->', key, e);
     return null; // Return null on error
+  }
+};
+export const getKeysByPrefix = (prefix: string) => {
+  try {
+    return storage.getAllKeys().filter(key => key.startsWith(prefix));
+  } catch (e) {
+    error('Error in Get Keys for prefix ->', prefix, e);
+    return [];
   }
 };
 export const removeData = async (key: PreferenceKey) => {

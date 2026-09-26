@@ -17,6 +17,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -43,11 +44,14 @@ import {
   GetDrumNumbersByFiberTypeAPI,
   GetFiberMasterListAPI,
   GetSLDDetailsPaggiISPAPI,
+  GetStateMasterAPI,
+  GetZonesByStateIdAPI,
 } from '@slices/route.slice';
 import {Common, Location, Preferences} from '@utils';
 import {useDispatch} from 'react-redux';
 import PointerSvg from '../../res/images/pointer.svg';
 import GoogleMapsIconSvg from '../../res/images/Google_Maps_icon.svg';
+import {getReplacementFiberLabel} from '../../services/routeFiberChangeStorage';
 import styles from './styles';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddRouteFiberScreen'>;
@@ -73,9 +77,11 @@ type PickerKey =
   | 'tubeCount'
   | 'coreCount'
   | 'drum'
+  | 'state'
+  | 'zone'
   | 'address';
 
-type FormField = PickerKey | 'routeName' | 'lengthToUse' | 'location';
+type FormField = PickerKey | 'routeName' | 'location';
 type RouteMode = 'withSld' | 'withoutSld';
 
 const parseLatLng = (value: any): Coordinate | null => {
@@ -117,14 +123,7 @@ const getSldFiberLabel = (item: any) => {
       item?.FiberName ??
       '',
   ).trim();
-  const values = [fiberType, specification].filter(
-    (value, index, all) =>
-      value &&
-      all.findIndex(
-        candidate => candidate.toLowerCase() === value.toLowerCase(),
-      ) === index,
-  );
-  return values.join(' ') || '--';
+  return getReplacementFiberLabel(fiberType, specification) || '--';
 };
 
 const ROUTE_TYPES: PickerOption[] = [
@@ -171,6 +170,8 @@ const pickerTitle: Record<PickerKey, string> = {
   tubeCount: 'Select No. of Tubes',
   coreCount: 'Select No. of Cores',
   drum: 'Select Drum',
+  state: 'Select State',
+  zone: 'Select Zone',
   address: 'Select Current Address',
 };
 
@@ -196,6 +197,9 @@ const getDropdownListFromResponse = (response: any): any[] => {
   }
 
   const candidates = [
+    response?.data?.stateMaster,
+    response?.data?.states,
+    response?.data?.zones,
     response?.data?.data,
     response?.data?.result,
     response?.data?.items,
@@ -203,24 +207,83 @@ const getDropdownListFromResponse = (response: any): any[] => {
     response?.result,
     response?.items,
     response?.records,
+    response?.stateMaster,
+    response?.states,
+    response?.zones,
   ];
 
   return candidates.find(Array.isArray) ?? [];
 };
 
+const buildGeographyOptions = (
+  response: any,
+  kind: 'state' | 'zone',
+): PickerOption[] =>
+  getDropdownListFromResponse(response)
+    .map((item, index): PickerOption | null => {
+      const label = String(
+        kind === 'state'
+          ? item?.stateName ??
+              item?.StateName ??
+              item?.name ??
+              item?.Name ??
+              item?.state ??
+              item?.State ??
+              item?.label ??
+              item?.text ??
+              item?.Text ??
+              ''
+          : item?.zoneName ??
+              item?.ZoneName ??
+              item?.name ??
+              item?.Name ??
+              item?.zone ??
+              item?.Zone ??
+              item?.label ??
+              item?.text ??
+              item?.Text ??
+              '',
+      ).trim();
+      const rawValue =
+        kind === 'state'
+          ? item?.stateId ??
+            item?.StateId ??
+            item?.stateID ??
+            item?.StateID ??
+            item?.id ??
+            item?.Id ??
+            item?.value ??
+            item?.Value
+          : item?.zoneId ??
+            item?.ZoneId ??
+            item?.zoneID ??
+            item?.ZoneID ??
+            item?.id ??
+            item?.Id ??
+            item?.value ??
+            item?.Value;
+      const value = String(rawValue ?? '').trim();
+      return label && value ? {label, value: value || String(index)} : null;
+    })
+    .filter((option): option is PickerOption => option !== null)
+    .filter(
+      (option, index, options) =>
+        options.findIndex(item => item.value === option.value) === index,
+    );
+
 const buildFiberOptions = (response: any): PickerOption[] => {
   const options = getDropdownListFromResponse(response)
     .map((item, index): PickerOption | null => {
-      const fiberIdStr = String(
+      const fiberIdStr = getReplacementFiberLabel(
         item?.fiberIdStr ??
           item?.FiberIdStr ??
           item?.fiberIDStr ??
           item?.FiberIDStr ??
           '',
-      ).trim();
-      const fiberName = String(
+      );
+      const fiberName = getReplacementFiberLabel(
         item?.fiberName ?? item?.FiberName ?? item?.name ?? item?.Name ?? '',
-      ).trim();
+      );
       const id =
         item?.id ?? item?.Id ?? item?.fiberId ?? item?.FiberId ?? fiberIdStr;
 
@@ -371,9 +434,10 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const dispatch = useDispatch<StoreDispatch>();
   const formScrollRef = useRef<ScrollView>(null);
   const mountedRef = useRef(true);
-  const focusedInputRef = useRef<'routeName' | 'lengthToUse' | null>(null);
+  const focusedInputRef = useRef<'routeName' | null>(null);
   const fiberRequestInFlightRef = useRef(false);
   const drumRequestIdRef = useRef(0);
+  const geographyRequestIdRef = useRef(0);
   const sldListRef = useRef<FlatList<any>>(null);
 
   const [activePicker, setActivePicker] = useState<PickerKey | null>(null);
@@ -392,7 +456,14 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const [drumOptions, setDrumOptions] = useState<PickerOption[]>([]);
   const [isLoadingDrums, setIsLoadingDrums] = useState(false);
   const [drumLoadError, setDrumLoadError] = useState('');
-  const [lengthToUse, setLengthToUse] = useState('300');
+  const [stateOptions, setStateOptions] = useState<PickerOption[]>([]);
+  const [stateId, setStateId] = useState<string | null>(null);
+  const [zoneOptions, setZoneOptions] = useState<PickerOption[]>([]);
+  const [zoneId, setZoneId] = useState<string | null>(null);
+  const [isLoadingStates, setIsLoadingStates] = useState(false);
+  const [isLoadingZones, setIsLoadingZones] = useState(false);
+  const [stateLoadError, setStateLoadError] = useState('');
+  const [zoneLoadError, setZoneLoadError] = useState('');
   const [currentPosition, setCurrentPosition] = useState<Coordinate | null>(
     route.params?.currentPosition ?? null,
   );
@@ -405,7 +476,12 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<FormField, string>>>({});
   const [routeMode, setRouteMode] = useState<RouteMode>(
-    route.params?.asBottomSheet ? 'withSld' : 'withoutSld',
+    route.params?.initialRouteMode ??
+      (route.params?.selectedMaster
+        ? 'withoutSld'
+        : route.params?.asBottomSheet
+        ? 'withSld'
+        : 'withoutSld'),
   );
   const [sldRoutes, setSldRoutes] = useState<any[]>([]);
   const [sldSearch, setSldSearch] = useState('');
@@ -413,6 +489,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const [sldTotal, setSldTotal] = useState(0);
   const [sldLoading, setSldLoading] = useState(false);
   const [sldLoadingMore, setSldLoadingMore] = useState(false);
+  const [sldPullRefreshing, setSldPullRefreshing] = useState(false);
   const [sldError, setSldError] = useState('');
   const [locationRange, setLocationRange] = useState(200);
   const [sldRefreshingLocation, setSldRefreshingLocation] = useState(false);
@@ -420,13 +497,15 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const sldRequestRef = useRef(0);
   const didStartSldSearchRef = useRef(false);
 
+  useEffect(() => {
+    if (route.params?.initialRouteMode) {
+      setRouteMode(route.params.initialRouteMode);
+    }
+  }, [route.params?.initialRouteMode, route.params?.selectedMasterVersion]);
+
   const scrollToInput = useCallback(
-    (field: 'routeName' | 'lengthToUse' | null, animated = true) => {
-      if (field === 'lengthToUse') {
-        formScrollRef.current?.scrollToEnd({animated});
-      } else {
-        formScrollRef.current?.scrollTo({y: 42, animated});
-      }
+    (field: 'routeName' | null, animated = true) => {
+      formScrollRef.current?.scrollTo({y: field ? 42 : 0, animated});
     },
     [],
   );
@@ -493,7 +572,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   }, [isKeyboardVisible, scrollToInput]);
 
   const handleInputFocus = useCallback(
-    (field: 'routeName' | 'lengthToUse') => {
+    (field: 'routeName') => {
       focusedInputRef.current = field;
       if (isKeyboardVisible) {
         requestAnimationFrame(() => scrollToInput(field));
@@ -597,6 +676,69 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       } finally {
         if (mountedRef.current && requestId === drumRequestIdRef.current) {
           setIsLoadingDrums(false);
+        }
+      }
+    },
+    [dispatch],
+  );
+
+  const loadStateOptions = useCallback(async () => {
+    if (stateOptions.length > 0 || isLoadingStates) {
+      return;
+    }
+    try {
+      setIsLoadingStates(true);
+      setStateLoadError('');
+      const response = await dispatch(GetStateMasterAPI()).unwrap();
+      const options = buildGeographyOptions(response, 'state');
+      if (!mountedRef.current) {
+        return;
+      }
+      setStateOptions(options);
+      if (options.length === 0) {
+        setStateLoadError('No states are available.');
+      }
+    } catch (error: any) {
+      if (!mountedRef.current) {
+        return;
+      }
+      setStateOptions([]);
+      setStateLoadError(error?.message || 'Unable to load states.');
+    } finally {
+      if (mountedRef.current) {
+        setIsLoadingStates(false);
+      }
+    }
+  }, [dispatch, isLoadingStates, stateOptions.length]);
+
+  const loadZoneOptions = useCallback(
+    async (selectedStateId: string) => {
+      const requestId = ++geographyRequestIdRef.current;
+      try {
+        setIsLoadingZones(true);
+        setZoneLoadError('');
+        const response = await dispatch(
+          GetZonesByStateIdAPI({stateId: selectedStateId}),
+        ).unwrap();
+        if (
+          !mountedRef.current ||
+          requestId !== geographyRequestIdRef.current
+        ) {
+          return;
+        }
+        const options = buildGeographyOptions(response, 'zone');
+        setZoneOptions(options);
+        if (options.length === 0) {
+          setZoneLoadError('No zones are available for this state.');
+        }
+      } catch (error: any) {
+        if (mountedRef.current && requestId === geographyRequestIdRef.current) {
+          setZoneOptions([]);
+          setZoneLoadError(error?.message || 'Unable to load zones.');
+        }
+      } finally {
+        if (mountedRef.current && requestId === geographyRequestIdRef.current) {
+          setIsLoadingZones(false);
         }
       }
     },
@@ -754,9 +896,15 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   }, [loadCurrentLocation, route.params?.currentPosition]);
 
   const loadSldRoutes = useCallback(
-    async (page: number, search: string) => {
+    async (page: number, search: string, showFullLoader = true) => {
       const requestId = ++sldRequestRef.current;
-      page === 1 ? setSldLoading(true) : setSldLoadingMore(true);
+      if (page === 1) {
+        if (showFullLoader) {
+          setSldLoading(true);
+        }
+      } else {
+        setSldLoadingMore(true);
+      }
       setSldError('');
       try {
         const response = await dispatch(
@@ -798,6 +946,20 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     },
     [dispatch],
   );
+
+  const refreshSldRoutes = useCallback(async () => {
+    if (sldPullRefreshing) {
+      return;
+    }
+    setSldPullRefreshing(true);
+    try {
+      await loadSldRoutes(1, sldSearch, false);
+    } finally {
+      if (mountedRef.current) {
+        setSldPullRefreshing(false);
+      }
+    }
+  }, [loadSldRoutes, sldPullRefreshing, sldSearch]);
 
   useEffect(() => {
     loadSldRoutes(1, '');
@@ -866,12 +1028,23 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
         return CORE_COUNTS;
       case 'drum':
         return drumOptions;
+      case 'state':
+        return stateOptions;
+      case 'zone':
+        return zoneOptions;
       case 'address':
         return addressOptions;
       default:
         return [];
     }
-  }, [activePicker, addressOptions, drumOptions, fiberOptions]);
+  }, [
+    activePicker,
+    addressOptions,
+    drumOptions,
+    fiberOptions,
+    stateOptions,
+    zoneOptions,
+  ]);
 
   const currentPickerValue = useMemo(() => {
     switch (activePicker) {
@@ -889,6 +1062,10 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
         return coreCount;
       case 'drum':
         return drum;
+      case 'state':
+        return stateId;
+      case 'zone':
+        return zoneId;
       case 'address':
         return (
           addressOptions.find(option => option.label === currentAddress)
@@ -907,7 +1084,9 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     fiberUsedBy,
     fiberType,
     routeType,
+    stateId,
     tubeCount,
+    zoneId,
   ]);
 
   const openPicker = (key: PickerKey) => {
@@ -919,6 +1098,10 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       Common.showToast('Please select a fiber type first');
       return;
     }
+    if (key === 'zone' && !stateId) {
+      Common.showToast('Please select a state first');
+      return;
+    }
     Keyboard.dismiss();
     if (key === 'routeType') {
       setDraftRouteType(routeType);
@@ -926,6 +1109,17 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     setActivePicker(key);
     if (key === 'fiberType') {
       loadFiberOptions();
+    }
+    if (key === 'state') {
+      loadStateOptions();
+    }
+    if (
+      key === 'zone' &&
+      stateId &&
+      zoneOptions.length === 0 &&
+      !isLoadingZones
+    ) {
+      loadZoneOptions(stateId);
     }
     if (
       key === 'drum' &&
@@ -1020,6 +1214,19 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
         clearError('drum');
         break;
       }
+      case 'state':
+        setStateId(option.value);
+        setZoneId(null);
+        setZoneOptions([]);
+        setZoneLoadError('');
+        clearError('state');
+        clearError('zone');
+        loadZoneOptions(option.value);
+        break;
+      case 'zone':
+        setZoneId(option.value);
+        clearError('zone');
+        break;
       case 'address':
         setCurrentAddress(option.label);
         clearError('location');
@@ -1031,9 +1238,6 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
 
   const validate = () => {
     const nextErrors: Partial<Record<FormField, string>> = {};
-    const requestedLength = Number(lengthToUse);
-    const availableLength = Number(selectedDrum?.meta ?? 0);
-
     if (!routeName.trim()) {
       nextErrors.routeName = 'Enter a route name';
     }
@@ -1052,10 +1256,11 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     if (!drum) {
       nextErrors.drum = 'Select an available drum';
     }
-    if (!requestedLength || requestedLength <= 0) {
-      nextErrors.lengthToUse = 'Enter a valid length';
-    } else if (availableLength && requestedLength > availableLength) {
-      nextErrors.lengthToUse = `Only ${availableLength}m is available`;
+    if (!stateId) {
+      nextErrors.state = 'Select a state';
+    }
+    if (!zoneId) {
+      nextErrors.zone = 'Select a zone';
     }
     if (!currentPosition || !currentAddress) {
       nextErrors.location = 'Current location is required';
@@ -1091,7 +1296,10 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
         drumId: drum,
         drumNo: selectedDrum?.label,
         drumLength: selectedDrum?.meta,
-        lengthToUse,
+        stateId,
+        stateName: getOption(stateOptions, stateId)?.label,
+        zoneId,
+        zoneName: getOption(zoneOptions, zoneId)?.label,
       },
       selectedMaster: route.params?.selectedMaster,
       selectedMasterVersion: route.params?.selectedMasterVersion,
@@ -1136,22 +1344,36 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
 
   const isPickerLoading =
     (activePicker === 'fiberType' && isLoadingFibers) ||
-    (activePicker === 'drum' && isLoadingDrums);
+    (activePicker === 'drum' && isLoadingDrums) ||
+    (activePicker === 'state' && isLoadingStates) ||
+    (activePicker === 'zone' && isLoadingZones);
   const pickerLoadingText =
     activePicker === 'drum'
       ? 'Loading drum numbers...'
+      : activePicker === 'state'
+      ? 'Loading states...'
+      : activePicker === 'zone'
+      ? 'Loading zones...'
       : 'Loading fiber types...';
   const pickerLoadError =
     activePicker === 'fiberType'
       ? fiberLoadError
       : activePicker === 'drum'
       ? drumLoadError
+      : activePicker === 'state'
+      ? stateLoadError
+      : activePicker === 'zone'
+      ? zoneLoadError
       : '';
   const retryActivePicker = () => {
     if (activePicker === 'fiberType') {
       loadFiberOptions(true);
     } else if (activePicker === 'drum' && fiberType) {
       loadDrumOptions(fiberType);
+    } else if (activePicker === 'state') {
+      loadStateOptions();
+    } else if (activePicker === 'zone' && stateId) {
+      loadZoneOptions(stateId);
     }
   };
   const isBottomSheet = Boolean(route.params?.asBottomSheet);
@@ -1219,6 +1441,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
   const renderSldRoute = ({item, index}: {item: any; index: number}) => {
     const showLocationPointer = index === nearestSldRouteIndex;
     const fiberLabel = getSldFiberLabel(item);
+    const routeId = item.routeId ?? item.RouteId;
     return (
       <View style={styles.sldCardRow}>
         {showLocationPointer ? (
@@ -1243,7 +1466,9 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
               {item.routeName || item.sldCode || 'Unnamed Route'}
             </Text>
             <Text numberOfLines={1} style={styles.sldRouteId}>
-              {item.routeIdStr || item.sldCode || `SLD#${item.id}`}
+              {routeId !== null && routeId !== undefined && routeId !== ''
+                ? `Route#${routeId}`
+                : item.sldCode || `SLD#${item.id}`}
             </Text>
             <View
               style={[
@@ -1298,7 +1523,9 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
     <Screen
       preset="fixed"
       keyboardAvoidingEnabled={
-        Platform.OS === 'ios' || (isBottomSheet && isKeyboardVisible)
+        routeMode === 'withSld' && isBottomSheet
+          ? false
+          : Platform.OS === 'ios' || (isBottomSheet && isKeyboardVisible)
       }
       statusBgColor={isBottomSheet ? 'transparent' : COLORS.PRIMARY}
       navBarColor={isBottomSheet ? 'transparent' : COLORS.WHITE}
@@ -1328,6 +1555,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
               styles.bottomSheetCardSld,
             isBottomSheet &&
               isKeyboardVisible &&
+              routeMode !== 'withSld' &&
               styles.bottomSheetCardKeyboard,
           ]}>
           {isBottomSheet ? (
@@ -1433,6 +1661,19 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
                     keyExtractor={item => String(item.id)}
                     contentContainerStyle={styles.sldList}
                     showsVerticalScrollIndicator={false}
+                    alwaysBounceVertical
+                    overScrollMode="always"
+                    refreshControl={
+                      <RefreshControl
+                        refreshing={sldPullRefreshing}
+                        onRefresh={refreshSldRoutes}
+                        colors={[COLORS.PRIMARY]}
+                        progressBackgroundColor={COLORS.WHITE}
+                        tintColor={COLORS.PRIMARY}
+                        title="Refreshing routes…"
+                        titleColor={COLORS.PRIMARY}
+                      />
+                    }
                     onScrollToIndexFailed={() => undefined}
                     onEndReachedThreshold={0.35}
                     onEndReached={() => {
@@ -1487,6 +1728,32 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}>
                 <View style={styles.formCard}>
+                  <View style={styles.twoColumnRow}>
+                    <View style={styles.column}>
+                      <FieldLabel>State</FieldLabel>
+                      <SelectField
+                        value={getOption(stateOptions, stateId)?.label}
+                        placeholder="Select State"
+                        accessibilityLabel="Select state"
+                        error={errors.state}
+                        onPress={() => openPicker('state')}
+                      />
+                    </View>
+                    <View style={styles.column}>
+                      <FieldLabel>Zone</FieldLabel>
+                      <SelectField
+                        value={getOption(zoneOptions, zoneId)?.label}
+                        placeholder={
+                          stateId ? 'Select Zone' : 'Select State First'
+                        }
+                        accessibilityLabel="Select zone"
+                        disabled={!stateId}
+                        error={errors.zone}
+                        onPress={() => openPicker('zone')}
+                      />
+                    </View>
+                  </View>
+
                   <View style={styles.fullField}>
                     <FieldLabel>Route Name</FieldLabel>
                     <View
@@ -1583,38 +1850,6 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
                           </View>
                         ) : null}
                       </View>
-                    </View>
-
-                    <View style={styles.lengthColumn}>
-                      <FieldLabel>Length to Use</FieldLabel>
-                      <View
-                        style={[
-                          styles.inputShell,
-                          styles.lengthInputShell,
-                          errors.lengthToUse && styles.inputShellError,
-                        ]}>
-                        <TextInput
-                          value={lengthToUse}
-                          onChangeText={value => {
-                            setLengthToUse(value.replace(/[^0-9]/g, ''));
-                            clearError('lengthToUse');
-                          }}
-                          keyboardType="number-pad"
-                          placeholder="0"
-                          placeholderTextColor="#92969D"
-                          style={styles.lengthInput}
-                          maxLength={5}
-                          onFocus={() => handleInputFocus('lengthToUse')}
-                          onSubmitEditing={Keyboard.dismiss}
-                          returnKeyType="done"
-                        />
-                        <Text style={styles.unitText}>m</Text>
-                      </View>
-                      {errors.lengthToUse ? (
-                        <Text style={styles.errorText}>
-                          {errors.lengthToUse}
-                        </Text>
-                      ) : null}
                     </View>
                   </View>
                 </View>
@@ -1735,7 +1970,9 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
                     <View style={styles.pickerTitleRow}>
                       <Image
                         source={
-                          activePicker === 'address'
+                          activePicker === 'address' ||
+                          activePicker === 'state' ||
+                          activePicker === 'zone'
                             ? IMAGES.mapLocation
                             : IMAGES.FiberEnclosur
                         }

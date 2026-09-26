@@ -49,11 +49,15 @@ import {COLORS, IMAGES} from '@res';
 import {
   createInitialRouteAPI,
   GetDrumNumbersByFiberTypeAPI,
+  GetFiberMasterListAPI,
+  GetISPMasterByRouteIdISPAPI,
   GetNearestPoleTreeDDAPI,
   insertUpdateRouteChamberMappingAPI,
   updateRoutePathDetailsAPI,
 } from '@slices/route.slice';
 import {Common, ImageWatermark, Location} from '@utils';
+import FullscreenImageViewer from '../../components/molecules/fullscreen-image-viewer';
+import ConnectedFiberDetailsModal from '../../components/molecules/connected-fiber-details-modal';
 import {
   PausedRouteSnapshot,
   removeCompletedRouteSnapshot,
@@ -135,7 +139,7 @@ type RouteMasterMapMarkerProps = {
   point: RoutePoint & {coordinate: Coordinate};
   index: number;
   isActive: boolean;
-  overlapsCurrentLocation: boolean;
+  onPress: () => void;
 };
 
 type RouteSegment = {
@@ -154,7 +158,13 @@ type DrumAllocation = {
   drumId: string;
   drumNo: string;
   availableLength: number;
-  lengthToUse: number;
+  fiberTypeId?: string;
+  fiberTypeName?: string;
+};
+
+type FiberOption = {
+  label: string;
+  value: string;
 };
 
 const MASTER_TYPES = [
@@ -165,19 +175,24 @@ const MASTER_TYPES = [
   'splitter',
   'tiffin',
   'enclosure',
+  'chamber',
 ];
 const DEFAULT_RANGE = 200;
 const MIN_TRACK_DISTANCE_METERS = 0.5;
 const MAX_TRACK_JUMP_METERS = 250;
+const MAX_TRACK_ACCURACY_METERS = 60;
+const MAX_WALKING_SPEED_METERS_PER_SECOND = 2.8;
+const LIVE_LOCATION_POLL_INTERVAL_MS = 3000;
 
 const MASTER_META: Record<string, {label: string; icon: any}> = {
   pole: {label: 'Pole', icon: IMAGES.PoleImage},
   tree: {label: 'Tree', icon: IMAGES.treeIcon},
   building: {label: 'Building', icon: IMAGES.Building},
   pop: {label: 'POP', icon: IMAGES.FiberEnclosur},
-  splitter: {label: 'Splitter', icon: IMAGES.enclosureIcon},
+  splitter: {label: 'Spliter/FatBox', icon: IMAGES.enclosureIcon},
   tiffin: {label: 'Tiffin', icon: IMAGES.TiffinIcon},
   enclosure: {label: 'Enclosure', icon: IMAGES.jointEnclosure},
+  chamber: {label: 'Chamber', icon: IMAGES.ChamberNew},
 };
 
 const asText = (value: unknown) => String(value ?? '').trim();
@@ -226,19 +241,57 @@ const buildDrumOptions = (response: any): DrumOption[] =>
         item?.DrumNoId ??
         `${label}-${index}`;
       const availableLength = asPositiveNumber(
-        item?.drumLength ??
-          item?.DrumLength ??
-          item?.availableLength ??
-          item?.AvailableLength ??
+        item?.remainingDrumLength ??
+          item?.RemainingDrumLength ??
+          item?.drumRemainingLength ??
+          item?.DrumRemainingLength ??
           item?.remainingLength ??
           item?.RemainingLength ??
           item?.balanceLength ??
-          item?.BalanceLength,
+          item?.BalanceLength ??
+          item?.availableLength ??
+          item?.AvailableLength ??
+          item?.drumLength ??
+          item?.DrumLength,
       );
 
       return {label, value: String(id), availableLength};
     })
     .filter((option): option is DrumOption => option !== null)
+    .filter(
+      (option, index, options) =>
+        options.findIndex(item => item.value === option.value) === index,
+    );
+
+const buildFiberOptions = (response: any): FiberOption[] =>
+  getListFromResponse(response)
+    .map((item, index): FiberOption | null => {
+      const fiberCode = asText(
+        item?.fiberIdStr ??
+          item?.FiberIdStr ??
+          item?.fiberIDStr ??
+          item?.FiberIDStr ??
+          item?.fiberName ??
+          item?.FiberName,
+      );
+      const fiberName = asText(
+        item?.fiberName ?? item?.FiberName ?? item?.name ?? item?.Name,
+      );
+      const value = asText(
+        item?.id ?? item?.Id ?? item?.fiberId ?? item?.FiberId ?? fiberCode,
+      );
+      if (!value || (!fiberCode && !fiberName)) {
+        return null;
+      }
+      return {
+        value,
+        label:
+          fiberCode && fiberName && fiberCode !== fiberName
+            ? `${fiberCode} - ${fiberName}`
+            : fiberCode || fiberName || `Fiber ${index + 1}`,
+      };
+    })
+    .filter((option): option is FiberOption => option !== null)
     .filter(
       (option, index, options) =>
         options.findIndex(item => item.value === option.value) === index,
@@ -277,6 +330,24 @@ const getMasterId = (master: any) =>
       master?.ispMasterId ??
       master?.masterId ??
       master?.MasterId ??
+      master?.newMasterId ??
+      master?.NewMasterId ??
+      master?.newFiberMasterId ??
+      master?.NewFiberMasterId ??
+      master?.poleId ??
+      master?.PoleId ??
+      master?.treeId ??
+      master?.TreeId ??
+      master?.buildingId ??
+      master?.BuildingId ??
+      master?.tiffinId ??
+      master?.TiffinId ??
+      master?.enclosureId ??
+      master?.EnclosureId ??
+      master?.splitterId ??
+      master?.SplitterId ??
+      master?.chamberId ??
+      master?.ChamberId ??
       master?.id ??
       master?.Id,
   );
@@ -539,7 +610,7 @@ const RouteMasterMapMarker: FC<RouteMasterMapMarkerProps> = ({
   point,
   index,
   isActive,
-  overlapsCurrentLocation,
+  onPress,
 }) => {
   const [tracksViewChanges, setTracksViewChanges] = useState(true);
   const stopTrackingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -570,8 +641,9 @@ const RouteMasterMapMarker: FC<RouteMasterMapMarkerProps> = ({
   return (
     <Marker
       coordinate={point.coordinate}
-      anchor={overlapsCurrentLocation ? {x: 1, y: 0.7} : {x: 0.5, y: 1}}
+      anchor={{x: 0.5, y: 1}}
       zIndex={isActive ? 120 : 20}
+      onPress={onPress}
       tracksViewChanges={tracksViewChanges}
       accessibilityLabel={`${point.masterTypeLabel}: ${point.name}`}>
       <Image
@@ -691,10 +763,8 @@ const isSameMasterLocation = (point: RoutePoint, master: any) => {
   );
 };
 
-const formatDistance = (distance: number) => `${Math.round(distance)}m`;
-
 const formatWalkingDistance = (distance: number) =>
-  `${Math.round(distance)} meters`;
+  `${distance < 10 ? distance.toFixed(1) : Math.round(distance)} meters`;
 
 const buildInitialRoutePath = (
   masterCoordinate: Coordinate | null,
@@ -766,6 +836,16 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const expandedMapRef = useRef<MapView>(null);
   const fiberCameraRef = useRef<CameraApi>(null);
   const watchIdRef = useRef<number | null>(null);
+  const locationPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const locationPollInFlightRef = useRef(false);
+  const lastProcessedFixTimestampRef = useRef(0);
+  const lastAcceptedFixTimestampRef = useRef(Date.now());
+  const rejectedLocationJumpRef = useRef<{
+    coordinate: Coordinate;
+    confirmations: number;
+  } | null>(null);
   const currentPositionRef = useRef<Coordinate>(initialCurrentPosition);
   const lastAcceptedPositionRef = useRef<Coordinate>(initialCurrentPosition);
   const routePathRef = useRef<Coordinate[]>(initialRoutePath);
@@ -787,8 +867,39 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         .map(point => point.key),
     ),
   );
+  const savedMasterLoopValuesRef = useRef(
+    new Map(
+      initialRoutePoints
+        .filter(point => point.isServerSaved)
+        .map(point => [point.key, asPositiveNumber(point.loopMeters)]),
+    ),
+  );
+  const masterMappingIdsRef = useRef(
+    new Map(
+      initialRoutePoints
+        .map(
+          point =>
+            [
+              point.key,
+              Number(
+                getMasterField(
+                  point.master,
+                  'routeChamberMappingId',
+                  'RouteChamberMappingId',
+                  'routeMasterMappingId',
+                  'RouteMasterMappingId',
+                  'mappingId',
+                  'MappingId',
+                ),
+              ),
+            ] as const,
+        )
+        .filter(
+          ([, mappingId]) => Number.isInteger(mappingId) && mappingId > 0,
+        ),
+    ),
+  );
   const masterSavePromisesRef = useRef(new Map<string, Promise<void>>());
-  const lastAutoSavePointKeyRef = useRef('');
 
   const [currentPosition, setCurrentPosition] = useState<Coordinate>(
     initialCurrentPosition,
@@ -825,6 +936,12 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewImageIndex, setPreviewImageIndex] = useState(0);
   const [previewTitle, setPreviewTitle] = useState('Master Images');
+  const [connectedFiberMasterId, setConnectedFiberMasterId] = useState<
+    string | number | null
+  >(null);
+  const [connectedFiberRouteMasters, setConnectedFiberRouteMasters] = useState<
+    any[]
+  >([]);
   const [drumAllocations, setDrumAllocations] = useState<DrumAllocation[]>(
     () => {
       if (resumeSnapshot?.drumAllocations?.length) {
@@ -833,19 +950,30 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
       const drumId = asText(route.params.routeDraft?.drumId);
       const drumNo = asText(route.params.routeDraft?.drumNo);
-      const lengthToUse = asPositiveNumber(
-        route.params.routeDraft?.lengthToUse,
+      const fullDrumLength = asPositiveNumber(
+        route.params.routeDraft?.totalDrumLength ??
+          route.params.routeDraft?.drumLength,
       );
+      const rawRemainingDrumLength = Number(
+        route.params.routeDraft?.remainingDrumLength,
+      );
+      const availableDrumLength =
+        Number.isFinite(rawRemainingDrumLength) && rawRemainingDrumLength >= 0
+          ? rawRemainingDrumLength
+          : fullDrumLength;
 
-      return drumId && drumNo && lengthToUse
+      return drumId && drumNo && fullDrumLength
         ? [
             {
               drumId,
               drumNo,
-              availableLength: asPositiveNumber(
-                route.params.routeDraft?.drumLength,
+              availableLength: availableDrumLength,
+              fiberTypeId: asText(route.params.routeDraft?.fiberTypeId),
+              fiberTypeName: asText(
+                route.params.routeDraft?.fiberTypeName ??
+                  route.params.routeDraft?.fiberTypeLabel ??
+                  route.params.routeDraft?.fiberType,
               ),
-              lengthToUse,
             },
           ]
         : [];
@@ -853,9 +981,13 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   );
   const [isDrumSheetVisible, setIsDrumSheetVisible] = useState(false);
   const [drumOptions, setDrumOptions] = useState<DrumOption[]>([]);
+  const [fiberOptions, setFiberOptions] = useState<FiberOption[]>([]);
+  const [selectedAdditionalFiberId, setSelectedAdditionalFiberId] =
+    useState('');
   const [selectedDrumId, setSelectedDrumId] = useState('');
-  const [additionalLength, setAdditionalLength] = useState('');
+  const [showFiberOptions, setShowFiberOptions] = useState(false);
   const [showDrumOptions, setShowDrumOptions] = useState(false);
+  const [isLoadingFibers, setIsLoadingFibers] = useState(false);
   const [isLoadingDrums, setIsLoadingDrums] = useState(false);
   const [drumLoadError, setDrumLoadError] = useState('');
   const [drumSelectionError, setDrumSelectionError] = useState('');
@@ -912,6 +1044,44 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     routeAlert.visible,
   ]);
 
+  useEffect(() => {
+    let active = true;
+    if (!serverRouteId) {
+      setConnectedFiberRouteMasters([]);
+      return () => {
+        active = false;
+      };
+    }
+    dispatch(GetISPMasterByRouteIdISPAPI({routeId: serverRouteId}))
+      .unwrap()
+      .then(response => {
+        if (!active) {
+          return;
+        }
+        const candidates = [
+          response,
+          response?.data,
+          response?.items,
+          response?.masters,
+          response?.routeMasters,
+          response?.masterDetails,
+          response?.data?.items,
+          response?.data?.masters,
+          response?.data?.routeMasters,
+          response?.data?.masterDetails,
+        ];
+        setConnectedFiberRouteMasters(candidates.find(Array.isArray) ?? []);
+      })
+      .catch(() => {
+        if (active) {
+          setConnectedFiberRouteMasters([]);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [dispatch, serverRouteId]);
+
   const activePoint =
     (isFiberChange && route.params.fiberChangeActiveMasterKey
       ? routePoints.find(
@@ -942,16 +1112,33 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const liveMasterDistance = liveWalkingDistance;
   const totalCableDistance =
     completedWalkingDistance + liveMasterDistance + totalLoopDistance;
-  const totalAllocatedLength = useMemo(
-    () =>
-      drumAllocations.reduce(
-        (sum, allocation) => sum + allocation.lengthToUse,
-        0,
-      ),
-    [drumAllocations],
-  );
+  const totalAllocatedLength = useMemo(() => {
+    const allocatedLength = drumAllocations.reduce(
+      (sum, allocation) => sum + allocation.availableLength,
+      0,
+    );
+    if (drumAllocations.length > 0) {
+      return allocatedLength;
+    }
+    const rawRemainingDrumLength = Number(
+      route.params.routeDraft?.remainingDrumLength,
+    );
+    return Number.isFinite(rawRemainingDrumLength) &&
+      rawRemainingDrumLength >= 0
+      ? rawRemainingDrumLength
+      : asPositiveNumber(
+          route.params.routeDraft?.totalDrumLength ??
+            route.params.routeDraft?.drumLength,
+        );
+  }, [drumAllocations, route.params.routeDraft]);
+  const hasConfiguredDrum =
+    drumAllocations.length > 0 ||
+    Boolean(
+      asText(route.params.routeDraft?.drumId) ||
+        asText(route.params.routeDraft?.drumNo),
+    );
   const isDrumLengthExhausted =
-    totalAllocatedLength > 0 && totalCableDistance >= totalAllocatedLength;
+    hasConfiguredDrum && totalCableDistance >= totalAllocatedLength;
   const persistedRouteSnapshot = useMemo<PausedRouteSnapshot>(() => {
     const status =
       trackingState === 'walking'
@@ -994,11 +1181,29 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       status,
       createdAt: routeCreatedAtRef.current,
       updatedAt: Date.now(),
+      workflowType: isFiberChange ? 'fiberChange' : 'newRoute',
+      resumeTarget: 'makeRoute',
+      ...(isFiberChange
+        ? {
+            fiberChangeMode: route.params.fiberChangeMode,
+            fiberChangeRoute: route.params.fiberChangeRoute,
+            fiberChangeSelectedFibers:
+              route.params.fiberChangeSelectedFibers ?? [],
+            fiberChangeActiveMasterKey:
+              route.params.fiberChangeActiveMasterKey ?? activePoint?.key,
+          }
+        : {}),
     };
   }, [
     currentAddress,
     currentPosition,
     drumAllocations,
+    activePoint?.key,
+    isFiberChange,
+    route.params.fiberChangeActiveMasterKey,
+    route.params.fiberChangeMode,
+    route.params.fiberChangeRoute,
+    route.params.fiberChangeSelectedFibers,
     route.params.routeDraft,
     route.params.routeName,
     routePath,
@@ -1033,17 +1238,11 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     () => drumOptions.find(option => option.value === selectedDrumId) ?? null,
     [drumOptions, selectedDrumId],
   );
-  const selectedDrumPreviouslyAllocated = useMemo(
+  const selectedAdditionalFiber = useMemo(
     () =>
-      drumAllocations
-        .filter(allocation => allocation.drumId === selectedDrumId)
-        .reduce((sum, allocation) => sum + allocation.lengthToUse, 0),
-    [drumAllocations, selectedDrumId],
-  );
-  const selectedDrumRemainingLength = Math.max(
-    0,
-    (selectedDrumOption?.availableLength ?? 0) -
-      selectedDrumPreviouslyAllocated,
+      fiberOptions.find(option => option.value === selectedAdditionalFiberId) ??
+      null,
+    [fiberOptions, selectedAdditionalFiberId],
   );
 
   const setTrackingStateValue = useCallback((value: TrackingState) => {
@@ -1223,129 +1422,147 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     }
   };
 
-  const selectAdditionalDrum = useCallback(
-    (option: DrumOption) => {
-      const previouslyAllocated = drumAllocations
-        .filter(allocation => allocation.drumId === option.value)
-        .reduce((sum, allocation) => sum + allocation.lengthToUse, 0);
-      const remaining = Math.max(
-        0,
-        option.availableLength - previouslyAllocated,
-      );
-      const preferredLength = asPositiveNumber(
-        route.params.routeDraft?.lengthToUse,
-      );
+  const selectAdditionalDrum = useCallback((option: DrumOption) => {
+    setSelectedDrumId(option.value);
+    setShowDrumOptions(false);
+    setDrumSelectionError('');
+  }, []);
 
-      setSelectedDrumId(option.value);
-      setAdditionalLength(
-        String(Math.min(preferredLength || remaining, remaining)),
-      );
-      setShowDrumOptions(false);
-      setDrumSelectionError('');
+  const loadAdditionalDrums = useCallback(
+    async (fiberTypeId: string) => {
+      if (!fiberTypeId) {
+        setDrumLoadError('Select a fiber type first.');
+        return;
+      }
+
+      try {
+        setIsLoadingDrums(true);
+        setDrumLoadError('');
+        const response = await dispatch(
+          GetDrumNumbersByFiberTypeAPI({fiberTypeId}),
+        ).unwrap();
+        const options = buildDrumOptions(response);
+        setDrumOptions(options);
+
+        const hasAvailableDrum = options.some(
+          option =>
+            option.availableLength > 0 &&
+            !drumAllocations.some(
+              allocation => allocation.drumId === option.value,
+            ),
+        );
+
+        setSelectedDrumId('');
+        if (!hasAvailableDrum) {
+          setSelectedDrumId('');
+          setDrumLoadError('No drum length is available for this fiber type.');
+        }
+      } catch (error: any) {
+        setDrumOptions([]);
+        setSelectedDrumId('');
+        setDrumLoadError(
+          error?.message || 'Unable to load drums. Please try again.',
+        );
+      } finally {
+        setIsLoadingDrums(false);
+      }
     },
-    [drumAllocations, route.params.routeDraft?.lengthToUse],
+    [dispatch, drumAllocations],
   );
 
-  const loadAdditionalDrums = useCallback(async () => {
-    const fiberTypeId = asText(route.params.routeDraft?.fiberTypeId);
-    if (!fiberTypeId) {
-      setDrumLoadError('Fiber type is unavailable for this route.');
-      return;
-    }
+  const selectAdditionalFiber = useCallback(
+    (option: FiberOption) => {
+      setSelectedAdditionalFiberId(option.value);
+      setSelectedDrumId('');
+      setDrumOptions([]);
+      setShowFiberOptions(false);
+      setShowDrumOptions(false);
+      setDrumSelectionError('');
+      loadAdditionalDrums(option.value);
+    },
+    [loadAdditionalDrums],
+  );
 
+  const loadAdditionalFibers = useCallback(async () => {
     try {
-      setIsLoadingDrums(true);
+      setIsLoadingFibers(true);
       setDrumLoadError('');
-      const response = await dispatch(
-        GetDrumNumbersByFiberTypeAPI({fiberTypeId}),
-      ).unwrap();
-      const options = buildDrumOptions(response);
-      setDrumOptions(options);
-
-      const firstAvailable = options.find(option => {
-        const allocated = drumAllocations
-          .filter(allocation => allocation.drumId === option.value)
-          .reduce((sum, allocation) => sum + allocation.lengthToUse, 0);
-        return option.availableLength - allocated > 0;
-      });
-
-      if (firstAvailable) {
-        selectAdditionalDrum(firstAvailable);
-      } else {
-        setSelectedDrumId('');
-        setAdditionalLength('');
-        setDrumLoadError('No drum length is available for this fiber type.');
+      const response = await dispatch(GetFiberMasterListAPI()).unwrap();
+      const options = buildFiberOptions(response);
+      setFiberOptions(options);
+      if (options.length === 0) {
+        setDrumLoadError('No fiber types are available.');
       }
     } catch (error: any) {
-      setDrumOptions([]);
-      setSelectedDrumId('');
-      setAdditionalLength('');
+      setFiberOptions([]);
       setDrumLoadError(
-        error?.message || 'Unable to load drums. Please try again.',
+        error?.message || 'Unable to load fiber types. Please try again.',
       );
     } finally {
-      setIsLoadingDrums(false);
+      setIsLoadingFibers(false);
     }
-  }, [
-    dispatch,
-    drumAllocations,
-    route.params.routeDraft?.fiberTypeId,
-    selectAdditionalDrum,
-  ]);
+  }, [dispatch]);
 
   const openAddDrumSheet = useCallback(() => {
+    if (!isDrumLengthExhausted) {
+      return;
+    }
     Keyboard.dismiss();
     setDrumSelectionError('');
+    setSelectedAdditionalFiberId('');
+    setSelectedDrumId('');
+    setFiberOptions([]);
+    setDrumOptions([]);
+    setShowFiberOptions(false);
     setShowDrumOptions(false);
     setIsDrumSheetVisible(true);
-    loadAdditionalDrums();
-  }, [loadAdditionalDrums]);
+    loadAdditionalFibers();
+  }, [isDrumLengthExhausted, loadAdditionalFibers]);
 
   const closeAddDrumSheet = useCallback(() => {
     Keyboard.dismiss();
+    setShowFiberOptions(false);
     setShowDrumOptions(false);
     setIsDrumSheetVisible(false);
   }, []);
 
   const confirmAdditionalDrum = useCallback(() => {
+    if (!selectedAdditionalFiber) {
+      setDrumSelectionError('Please select a fiber type.');
+      return;
+    }
     if (!selectedDrumOption) {
       setDrumSelectionError('Please select a drum number.');
       return;
     }
 
-    const requestedLength = asPositiveNumber(additionalLength);
-    if (!requestedLength) {
-      setDrumSelectionError('Enter a valid length to use.');
-      return;
-    }
-    if (requestedLength > selectedDrumRemainingLength) {
-      setDrumSelectionError(
-        `Only ${Math.round(selectedDrumRemainingLength)}m is available.`,
-      );
+    const fullDrumLength = asPositiveNumber(selectedDrumOption.availableLength);
+    if (!fullDrumLength) {
+      setDrumSelectionError('The selected drum has no available length.');
       return;
     }
 
-    const nextAllocatedLength = totalAllocatedLength + requestedLength;
+    const nextAllocatedLength = totalAllocatedLength + fullDrumLength;
     setDrumAllocations(previous => [
       ...previous,
       {
         drumId: selectedDrumOption.value,
         drumNo: selectedDrumOption.label,
-        availableLength: selectedDrumOption.availableLength,
-        lengthToUse: requestedLength,
+        availableLength: fullDrumLength,
+        fiberTypeId: selectedAdditionalFiber.value,
+        fiberTypeName: selectedAdditionalFiber.label,
       },
     ]);
     closeAddDrumSheet();
     Common.showToast(
-      `${Math.round(requestedLength)}m added. ${Math.round(
+      `${Math.round(fullDrumLength)}m drum added. ${Math.round(
         nextAllocatedLength,
       )}m total available.`,
     );
   }, [
-    additionalLength,
     closeAddDrumSheet,
+    selectedAdditionalFiber,
     selectedDrumOption,
-    selectedDrumRemainingLength,
     totalAllocatedLength,
   ]);
 
@@ -1378,6 +1595,11 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       Geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
+    if (locationPollTimerRef.current !== null) {
+      clearInterval(locationPollTimerRef.current);
+      locationPollTimerRef.current = null;
+    }
+    locationPollInFlightRef.current = false;
   }, []);
 
   const requestLocationPermission = useCallback(async () => {
@@ -1421,12 +1643,21 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
   const getCurrentCoordinate = useCallback(
     () =>
-      new Promise<Coordinate>((resolve, reject) => {
+      new Promise<
+        Coordinate & {
+          accuracy?: number;
+          timestamp?: number;
+          speed?: number | null;
+        }
+      >((resolve, reject) => {
         Geolocation.getCurrentPosition(
           position =>
             resolve({
               latitude: position.coords.latitude,
               longitude: position.coords.longitude,
+              accuracy: position.coords.accuracy,
+              timestamp: position.timestamp,
+              speed: position.coords.speed,
             }),
           reject,
           {
@@ -1440,25 +1671,73 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   );
 
   const handleLocationUpdate = useCallback(
-    (coordinate: Coordinate, accuracy?: number) => {
+    (
+      coordinate: Coordinate,
+      accuracy?: number,
+      timestamp = Date.now(),
+      speed?: number | null,
+    ) => {
+      if (timestamp <= lastProcessedFixTimestampRef.current) {
+        return;
+      }
+      lastProcessedFixTimestampRef.current = timestamp;
       currentPositionRef.current = coordinate;
       setCurrentPosition(coordinate);
 
       const previous = lastAcceptedPositionRef.current;
       const moved = distanceBetween(previous, coordinate);
-      const inaccurate = Number.isFinite(accuracy) && Number(accuracy) > 100;
+      const normalizedAccuracy = Number.isFinite(accuracy)
+        ? Math.max(0, Number(accuracy))
+        : 25;
+      const inaccurate = normalizedAccuracy > MAX_TRACK_ACCURACY_METERS;
+      const minimumReliableMovement = Math.max(
+        MIN_TRACK_DISTANCE_METERS,
+        Math.min(4, normalizedAccuracy * 0.2),
+      );
+      const elapsedSeconds = Math.max(
+        0.5,
+        (timestamp - lastAcceptedFixTimestampRef.current) / 1000,
+      );
+      const maximumPlausibleMovement = Math.max(
+        6,
+        Math.min(12, elapsedSeconds * MAX_WALKING_SPEED_METERS_PER_SECOND),
+      );
+      const reportedSpeedIsPlausible =
+        !Number.isFinite(speed) ||
+        Number(speed) < 0 ||
+        Number(speed) <= MAX_WALKING_SPEED_METERS_PER_SECOND;
+      const plausibleWalkingMovement =
+        moved <= maximumPlausibleMovement && reportedSpeedIsPlausible;
 
       if (
         !inaccurate &&
-        moved >= MIN_TRACK_DISTANCE_METERS &&
-        moved <= MAX_TRACK_JUMP_METERS
+        moved >= minimumReliableMovement &&
+        plausibleWalkingMovement
       ) {
         segmentDistanceRef.current += moved;
         setSegmentDistance(segmentDistanceRef.current);
         appendCoordinate(coordinate);
         lastAcceptedPositionRef.current = coordinate;
-      } else if (moved > MAX_TRACK_JUMP_METERS) {
-        lastAcceptedPositionRef.current = coordinate;
+        lastAcceptedFixTimestampRef.current = timestamp;
+        rejectedLocationJumpRef.current = null;
+      } else if (!inaccurate && moved > maximumPlausibleMovement) {
+        const rejectedJump = rejectedLocationJumpRef.current;
+        const sameRejectedArea =
+          rejectedJump &&
+          distanceBetween(rejectedJump.coordinate, coordinate) <=
+            Math.max(5, normalizedAccuracy * 0.5);
+        const confirmations = sameRejectedArea
+          ? rejectedJump.confirmations + 1
+          : 1;
+        rejectedLocationJumpRef.current = {coordinate, confirmations};
+
+        if (confirmations >= 2) {
+          // Rebase to a repeatedly confirmed GPS relocation without counting
+          // the relocation itself as walked distance.
+          lastAcceptedPositionRef.current = coordinate;
+          lastAcceptedFixTimestampRef.current = timestamp;
+          rejectedLocationJumpRef.current = null;
+        }
       }
 
       [mapRef.current, expandedMapRef.current].forEach(map =>
@@ -1485,6 +1764,8 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     const coordinate = currentPositionRef.current;
     currentPositionRef.current = coordinate;
     lastAcceptedPositionRef.current = coordinate;
+    lastAcceptedFixTimestampRef.current = Date.now();
+    rejectedLocationJumpRef.current = null;
     setCurrentPosition(coordinate);
     appendCoordinate(coordinate);
 
@@ -1496,6 +1777,8 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
             longitude: position.coords.longitude,
           },
           position.coords.accuracy,
+          position.timestamp,
+          position.coords.speed,
         ),
       error => {
         console.warn('[MakeRoute] Location watch error:', error.message);
@@ -1511,13 +1794,48 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     );
     setTrackingStateValue('walking');
 
+    locationPollTimerRef.current = setInterval(() => {
+      if (
+        trackingStateRef.current !== 'walking' ||
+        locationPollInFlightRef.current
+      ) {
+        return;
+      }
+      locationPollInFlightRef.current = true;
+      getCurrentCoordinate()
+        .then(freshCoordinate => {
+          if (trackingStateRef.current === 'walking') {
+            handleLocationUpdate(
+              freshCoordinate,
+              freshCoordinate.accuracy,
+              freshCoordinate.timestamp,
+              freshCoordinate.speed,
+            );
+          }
+        })
+        .catch((error: any) => {
+          console.warn(
+            '[MakeRoute] Live GPS fallback update failed:',
+            error?.message,
+          );
+        })
+        .finally(() => {
+          locationPollInFlightRef.current = false;
+        });
+    }, LIVE_LOCATION_POLL_INTERVAL_MS);
+
     getCurrentCoordinate()
       .then(freshCoordinate => {
         if (
           trackingStateRef.current === 'walking' &&
           watchIdRef.current !== null
         ) {
-          handleLocationUpdate(freshCoordinate);
+          handleLocationUpdate(
+            freshCoordinate,
+            freshCoordinate.accuracy,
+            freshCoordinate.timestamp,
+            freshCoordinate.speed,
+          );
         }
       })
       .catch((error: any) => {
@@ -1684,8 +2002,8 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       .join(', ')})`;
   };
 
-  const getCreatedRouteId = (response: any) =>
-    Number(
+  const getCreatedRouteId = (response: any): number => {
+    const directId = Number(
       response?.id ??
         response?.Id ??
         response?.routeId ??
@@ -1695,18 +2013,65 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         (typeof response === 'number' || typeof response === 'string'
           ? response
           : 0),
+    );
+    if (Number.isInteger(directId) && directId > 0) {
+      return directId;
+    }
+
+    // The initial-route endpoint has returned both {id} and nested
+    // {data: {routeId}} shapes across deployments.
+    if (response?.data && response.data !== response) {
+      return getCreatedRouteId(response.data);
+    }
+    return 0;
+  };
+
+  const getCreatedMappingId = (response: any) =>
+    Number(
+      response?.id ??
+        response?.Id ??
+        response?.routeChamberMappingId ??
+        response?.RouteChamberMappingId ??
+        response?.mappingId ??
+        response?.MappingId ??
+        response?.data?.id ??
+        response?.data?.Id ??
+        0,
     ) || 0;
 
-  const markMasterAsServerSaved = (pointKey: string) => {
+  const markMasterAsServerSaved = (
+    pointKey: string,
+    mappingId = 0,
+    serverStatus?: 'unsave' | 'pause' | 'completed',
+    loopUsed = 0,
+  ) => {
     savedMasterKeysRef.current.add(pointKey);
+    savedMasterLoopValuesRef.current.set(pointKey, loopUsed);
+    if (mappingId > 0) {
+      masterMappingIdsRef.current.set(pointKey, mappingId);
+    }
     setRoutePoints(previous =>
       previous.map(item =>
-        item.key === pointKey ? {...item, isServerSaved: true} : item,
+        item.key === pointKey
+          ? {
+              ...item,
+              isServerSaved: true,
+              master: {
+                ...(item.master ?? {}),
+                ...(mappingId > 0 ? {routeChamberMappingId: mappingId} : {}),
+                ...(serverStatus ? {routeStatus: serverStatus} : {}),
+              },
+            }
+          : item,
       ),
     );
   };
 
-  const getMappingFiberDetails = (point: RoutePoint) => {
+  const getMappingFiberDetails = (
+    point: RoutePoint,
+    activeFiberTypeId?: string,
+    activeFiberTypeName?: string,
+  ) => {
     const toSingleFiberId = (value: unknown): number | undefined => {
       if (Array.isArray(value)) {
         return value.length === 1 ? toSingleFiberId(value[0]) : undefined;
@@ -1746,6 +2111,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       .map(toSingleFiberId)
       .find((value): value is number => value !== undefined);
     const routeFiberId = [
+      activeFiberTypeId,
       selectedFiber?.fiberId,
       selectedFiber?.FiberId,
       selectedFiber?.fiberTypeId,
@@ -1759,22 +2125,44 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       .map(toSingleFiberId)
       .find((value): value is number => value !== undefined);
     const fiberIdText = asText(
-      route.params.routeDraft?.fiberTypeId ?? selectedFiber?.fiberId,
+      activeFiberTypeId ??
+        route.params.routeDraft?.fiberTypeId ??
+        selectedFiber?.fiberId,
     );
     const numericFiberId = Number(fiberIdText);
     const rawFiberType =
+      asText(activeFiberTypeName) ||
       asText(route.params.routeDraft?.fiberType) ||
       asText(route.params.routeDraft?.fiberTypeName) ||
+      asText(route.params.routeDraft?.fiberTypeLabel) ||
       asText(
         selectedFiber?.fiberLabel ??
           selectedFiber?.fiberTypeName ??
+          selectedFiber?.fiberTypeLabel ??
           selectedFiber?.fiberType,
+      ) ||
+      asText(
+        point.master?.fiberType ??
+          point.master?.FiberType ??
+          point.master?.fiberTypeName ??
+          point.master?.FiberTypeName ??
+          point.master?.fiberTypeLabel,
+      ) ||
+      asText(
+        route.params.fiberChangeRoute?.fiberType ??
+          route.params.fiberChangeRoute?.fiberTypeName ??
+          route.params.fiberChangeRoute?.fiberTypeLabel ??
+          route.params.fiberChangeRoute?.fiberIdStr,
       );
     const fiberCapacity = rawFiberType.match(/(\d+)\s*F\b/i)?.[1];
 
     return {
       fiberId:
-        (isFiberChange ? routeFiberId : masterFiberId) ??
+        (activeFiberTypeId
+          ? routeFiberId
+          : isFiberChange
+          ? routeFiberId
+          : masterFiberId) ??
         (!isFiberChange && fiberIdText && Number.isFinite(numericFiberId)
           ? numericFiberId
           : !isFiberChange
@@ -1803,6 +2191,12 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         drumRemainingLength: Math.max(0, remainingBeforeChange - totalLength),
         drumId: asText(route.params.routeDraft?.drumId),
         drumNo: asText(route.params.routeDraft?.drumNo),
+        fiberTypeId: asText(route.params.routeDraft?.fiberTypeId),
+        fiberTypeName: asText(
+          route.params.routeDraft?.fiberTypeName ??
+            route.params.routeDraft?.fiberTypeLabel ??
+            route.params.routeDraft?.fiberType,
+        ),
       };
     }
 
@@ -1812,7 +2206,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
     for (let index = 0; index < drumAllocations.length; index += 1) {
       const allocation = drumAllocations[index];
-      const allocationLength = asPositiveNumber(allocation.lengthToUse);
+      const allocationLength = asPositiveNumber(allocation.availableLength);
       const usedFromAllocation = Math.min(
         remainingCableLength,
         allocationLength,
@@ -1845,6 +2239,8 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       ),
       drumId: activeAllocation.drumId,
       drumNo: activeAllocation.drumNo,
+      fiberTypeId: activeAllocation.fiberTypeId,
+      fiberTypeName: activeAllocation.fiberTypeName,
     };
   };
 
@@ -1863,7 +2259,9 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         ),
         startArea: asText(getMasterField(point.master, 'area', 'Area')),
         startCity: asText(getMasterField(point.master, 'city', 'City')),
-        startState: asText(getMasterField(point.master, 'state', 'State')),
+        startState:
+          asText(route.params.routeDraft?.stateName) ||
+          asText(getMasterField(point.master, 'state', 'State')),
         startPincode:
           Number(
             getMasterField(point.master, 'pincode', 'Pincode', 'PinCode'),
@@ -1875,6 +2273,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         masterId: Number(point.masterId) || 0,
         orderNo: 1,
         routePath: buildCurrentRoutePath(point, stopPosition),
+        loopUsed: asPositiveNumber(point.loopMeters),
       }),
     ).unwrap();
     const createdRouteId =
@@ -1884,14 +2283,102 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     }
     initialRouteIdRef.current = createdRouteId;
     setServerRouteId(createdRouteId);
-    markMasterAsServerSaved(point.key);
+    markMasterAsServerSaved(
+      point.key,
+      0,
+      'unsave',
+      asPositiveNumber(point.loopMeters),
+    );
     return createdRouteId;
+  };
+
+  const resolveServerMappingId = async (point: RoutePoint, routeId: number) => {
+    const existingMappingId = masterMappingIdsRef.current.get(point.key) ?? 0;
+    if (existingMappingId > 0) {
+      return existingMappingId;
+    }
+
+    const response = await dispatch(
+      GetISPMasterByRouteIdISPAPI({routeId}),
+    ).unwrap();
+    const candidates = [
+      response,
+      response?.data,
+      response?.items,
+      response?.masters,
+      response?.routeMasters,
+      response?.masterDetails,
+      response?.data?.items,
+      response?.data?.masters,
+      response?.data?.routeMasters,
+      response?.data?.masterDetails,
+    ];
+    const serverMasters = candidates.find(Array.isArray) ?? [];
+    const expectedMasterId = Number(point.masterId);
+    const expectedMasterType = normalizeMasterType(point.masterTypeLabel);
+    const matchingMaster = serverMasters.find((master: any) => {
+      const masterId = Number(
+        getMasterField(
+          master,
+          'IspMasterId',
+          'ispMasterId',
+          'masterId',
+          'MasterId',
+        ),
+      );
+      const masterType = normalizeMasterType(
+        getMasterField(
+          master,
+          'masterType',
+          'MasterType',
+          'masterTypeName',
+          'MasterTypeName',
+          'point',
+          'Point',
+        ),
+      );
+      return (
+        masterId === expectedMasterId &&
+        (!expectedMasterType ||
+          !masterType ||
+          masterType === expectedMasterType)
+      );
+    });
+    if (!matchingMaster) {
+      return 0;
+    }
+
+    const explicitMappingId = Number(
+      getMasterField(
+        matchingMaster,
+        'routeChamberMappingId',
+        'RouteChamberMappingId',
+        'routeMasterMappingId',
+        'RouteMasterMappingId',
+        'mappingId',
+        'MappingId',
+      ),
+    );
+    const recordId = Number(getMasterField(matchingMaster, 'id', 'Id'));
+    const mappingId =
+      Number.isInteger(explicitMappingId) && explicitMappingId > 0
+        ? explicitMappingId
+        : Number.isInteger(recordId) &&
+          recordId > 0 &&
+          recordId !== expectedMasterId
+        ? recordId
+        : 0;
+    if (mappingId > 0) {
+      masterMappingIdsRef.current.set(point.key, mappingId);
+    }
+    return mappingId;
   };
 
   const saveMappedMasterToServer = async (
     point: RoutePoint,
     pointIndex: number,
     routeId: number,
+    serverStatus: 'unsave' | 'pause' | 'completed' = 'unsave',
   ) => {
     const mappedSegmentDistance = getMasterToMasterDistance(
       routePoints,
@@ -1918,31 +2405,38 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       );
     const totalLength = completedDistanceToPoint + cumulativeLoopUsed;
     const loopUsed = asPositiveNumber(point.loopMeters);
-    const fiberDetails = getMappingFiberDetails(point);
-    if (isFiberChange && fiberDetails.fiberId === undefined) {
+    const drumDetails = getMappingDrumDetails(totalLength);
+    const fiberDetails = getMappingFiberDetails(
+      point,
+      drumDetails.fiberTypeId,
+      drumDetails.fiberTypeName,
+    );
+    const payloadFiberId = Number(fiberDetails.fiberId);
+    if (!Number.isInteger(payloadFiberId) || payloadFiberId <= 0) {
       throw new Error(
         'A single fiber ID is unavailable for the selected master.',
       );
     }
-    const drumDetails = getMappingDrumDetails(totalLength);
     const fiberChangePhotoUri = asText(point.master?.__fiberChangePhotoUri);
     const routeOrderNo = isFiberChange
       ? Number(getMasterField(point.master, 'orderNo', 'OrderNo')) ||
         pointIndex + 1
       : pointIndex + 1;
-    const routeChamberMappingId = Number(
-      getMasterField(
-        point.master,
-        'routeChamberMappingId',
-        'RouteChamberMappingId',
-        'routeMasterMappingId',
-        'RouteMasterMappingId',
-        'routeFiberMappingId',
-        'RouteFiberMappingId',
-        'mappingId',
-        'MappingId',
-      ),
-    );
+    const routeChamberMappingId =
+      masterMappingIdsRef.current.get(point.key) ??
+      Number(
+        getMasterField(
+          point.master,
+          'routeChamberMappingId',
+          'RouteChamberMappingId',
+          'routeMasterMappingId',
+          'RouteMasterMappingId',
+          'routeFiberMappingId',
+          'RouteFiberMappingId',
+          'mappingId',
+          'MappingId',
+        ),
+      );
     const pointLatLng = getPointLatLng(point);
     const partialStartOrderNo = Number(
       route.params.routeDraft?.partialStartOrderNo,
@@ -1989,104 +2483,118 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     ) {
       throw new Error(`MasterId is unavailable for ${point.name}.`);
     }
-
-    await dispatch(
-      insertUpdateRouteChamberMappingAPI({
-        id:
-          Number.isInteger(routeChamberMappingId) && routeChamberMappingId > 0
-            ? routeChamberMappingId
-            : 0,
-        routeId,
-        masterType:
-          route.params.fiberChangeMode === 'withoutSld'
-            ? resolvedMasterType
-            : point.masterTypeLabel,
-        masterId: resolvedMasterId,
-        distance: Math.round(mappedSegmentDistance),
-        endLatLng: pointLatLng,
-        endSelectedAddress:
-          asText(
-            getMasterField(point.master, 'selectedAddress', 'SelectedAddress'),
-          ) || point.address,
-        endAddress: point.address,
-        endLandmark: asText(
-          getMasterField(point.master, 'landmark', 'Landmark'),
-        ),
-        endArea: asText(getMasterField(point.master, 'area', 'Area')),
-        endCity: asText(getMasterField(point.master, 'city', 'City')),
-        endState: asText(getMasterField(point.master, 'state', 'State')),
-        endPincode:
-          Number(
-            getMasterField(point.master, 'pincode', 'Pincode', 'PinCode'),
-          ) || 0,
-        endCountry: asText(getMasterField(point.master, 'country', 'Country')),
-        routeLength: Math.round(totalLength),
-        orderNo: routeOrderNo,
-        totalLength: Math.round(totalLength),
-        drumLength: Math.round(drumDetails.drumLength),
-        drumRemainingLength: Math.round(drumDetails.drumRemainingLength),
-        loopUsed: Math.round(loopUsed),
-        fiberId: fiberDetails.fiberId,
-        fiberType: fiberDetails.fiberType,
-        fiberUsedBy: fiberDetails.fiberUsedBy,
-        ...(isFiberChange
-          ? {
-              fiberChangeScope:
-                route.params.fiberChangeMode === 'full'
-                  ? ('FullRoute' as const)
-                  : route.params.fiberChangeMode === 'withoutSld'
-                  ? ('WithoutSLD' as const)
-                  : ('PartialRoute' as const),
-            }
-          : {}),
-        ...(route.params.fiberChangeMode === 'partial'
-          ? {
-              isStartingPoint:
-                Number.isFinite(partialStartOrderNo) &&
-                routeOrderNo === partialStartOrderNo,
-            }
-          : {}),
-        ...(isFiberChange
-          ? {
-              // Every installation mode updates only the photographed master.
-              // Equal boundaries stop skipped route orders from being inferred
-              // and inserted between masters that the user explicitly chose.
-              isPartialChange: route.params.fiberChangeMode === 'partial',
-              fromOrderNo: routeOrderNo,
-              toOrderNo: routeOrderNo,
-              fromMasterName: point.name,
-              toMasterName: point.name,
-              fromMasterType: point.masterTypeLabel,
-              toMasterType: point.masterTypeLabel,
-              fromAddress: point.address,
-              toAddress: point.address,
-              fromLatLng: pointLatLng,
-              toLatLng: pointLatLng,
-              segmentLength: 0,
-            }
-          : {}),
-        drumId: drumDetails.drumId,
-        drumNo: drumDetails.drumNo,
-        ...(isFiberChange && fiberChangePhotoUri
-          ? {
-              imageFile: {
-                uri: fiberChangePhotoUri,
-                type:
-                  asText(point.master?.__fiberChangePhotoType) || 'image/jpeg',
-                fileName:
-                  asText(point.master?.__fiberChangePhotoName) ||
-                  `fiber-master-${point.masterId || point.key}.jpg`,
-              },
-            }
-          : {}),
-      }),
+    if (!isFiberChange && resolvedMasterId === 0) {
+      throw new Error(`MasterId is unavailable for ${point.name}.`);
+    }
+    const mappingPayload = {
+      id:
+        Number.isInteger(routeChamberMappingId) && routeChamberMappingId > 0
+          ? routeChamberMappingId
+          : 0,
+      routeId,
+      masterType:
+        route.params.fiberChangeMode === 'withoutSld'
+          ? resolvedMasterType
+          : point.masterTypeLabel,
+      masterId: resolvedMasterId,
+      distance: Math.round(mappedSegmentDistance),
+      endLatLng: pointLatLng,
+      endSelectedAddress:
+        asText(
+          getMasterField(point.master, 'selectedAddress', 'SelectedAddress'),
+        ) || point.address,
+      endAddress: point.address,
+      endLandmark: asText(getMasterField(point.master, 'landmark', 'Landmark')),
+      endArea: asText(getMasterField(point.master, 'area', 'Area')),
+      endCity: asText(getMasterField(point.master, 'city', 'City')),
+      endState:
+        asText(route.params.routeDraft?.stateName) ||
+        asText(getMasterField(point.master, 'state', 'State')),
+      endPincode:
+        Number(getMasterField(point.master, 'pincode', 'Pincode', 'PinCode')) ||
+        0,
+      endCountry: asText(getMasterField(point.master, 'country', 'Country')),
+      routeLength: Math.round(totalLength),
+      orderNo: routeOrderNo,
+      totalLength: Math.round(totalLength),
+      drumLength: Math.round(drumDetails.drumLength),
+      drumRemainingLength: Math.round(drumDetails.drumRemainingLength),
+      loopUsed,
+      fiberId: payloadFiberId,
+      fiberType: fiberDetails.fiberType,
+      fiberUsedBy: fiberDetails.fiberUsedBy,
+      ...(!isFiberChange
+        ? {
+            status: serverStatus,
+            zoneId: Number(route.params.routeDraft?.zoneId) || 0,
+          }
+        : {}),
+      ...(isFiberChange
+        ? {
+            fiberChangeScope:
+              route.params.fiberChangeMode === 'full'
+                ? ('FullRoute' as const)
+                : route.params.fiberChangeMode === 'withoutSld'
+                ? ('WithoutSLD' as const)
+                : ('PartialRoute' as const),
+          }
+        : {}),
+      ...(route.params.fiberChangeMode === 'partial'
+        ? {
+            isStartingPoint:
+              Number.isFinite(partialStartOrderNo) &&
+              routeOrderNo === partialStartOrderNo,
+          }
+        : {}),
+      ...(isFiberChange
+        ? {
+            // Every installation mode updates only the photographed master.
+            // Equal boundaries stop skipped route orders from being inferred
+            // and inserted between masters that the user explicitly chose.
+            isPartialChange: route.params.fiberChangeMode === 'partial',
+            fromOrderNo: routeOrderNo,
+            toOrderNo: routeOrderNo,
+            fromMasterName: point.name,
+            toMasterName: point.name,
+            fromMasterType: point.masterTypeLabel,
+            toMasterType: point.masterTypeLabel,
+            fromAddress: point.address,
+            toAddress: point.address,
+            fromLatLng: pointLatLng,
+            toLatLng: pointLatLng,
+            segmentLength: 0,
+          }
+        : {}),
+      ...(isFiberChange && fiberChangePhotoUri
+        ? {
+            imageFile: {
+              uri: fiberChangePhotoUri,
+              type:
+                asText(point.master?.__fiberChangePhotoType) || 'image/jpeg',
+              fileName:
+                asText(point.master?.__fiberChangePhotoName) ||
+                `fiber-master-${point.masterId || point.key}.jpg`,
+            },
+          }
+        : {}),
+      drumId: asText(drumDetails.drumId),
+      drumNo: drumDetails.drumNo,
+    };
+    const mappingResponse = await dispatch(
+      insertUpdateRouteChamberMappingAPI(mappingPayload),
     ).unwrap();
-    markMasterAsServerSaved(point.key);
+    markMasterAsServerSaved(
+      point.key,
+      getCreatedMappingId(mappingResponse) || routeChamberMappingId,
+      !isFiberChange ? serverStatus : undefined,
+      loopUsed,
+    );
   };
 
   const saveStoppedMasterToServer = async (
     point: RoutePoint,
     stopPosition: Coordinate,
+    serverStatus: 'unsave' | 'pause' | 'completed' = 'completed',
   ) => {
     if (isFiberChange) {
       const routeId = initialRouteIdRef.current;
@@ -2095,10 +2603,6 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         throw new Error('Selected fiber route master is unavailable.');
       }
       await saveMappedMasterToServer(point, pointIndex, routeId);
-      return;
-    }
-
-    if (savedMasterKeysRef.current.has(point.key)) {
       return;
     }
 
@@ -2111,38 +2615,52 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     const firstPoint = routePoints[0];
     if (!routeId) {
       routeId = await saveInitialMasterToServer(firstPoint, stopPosition);
-    } else if (!savedMasterKeysRef.current.has(firstPoint.key)) {
-      // A stored server route ID means its initial master already succeeded.
-      markMasterAsServerSaved(firstPoint.key);
     }
 
-    for (let mappingIndex = 1; mappingIndex <= pointIndex; mappingIndex += 1) {
-      const mappedPoint = routePoints[mappingIndex];
-      if (!savedMasterKeysRef.current.has(mappedPoint.key)) {
-        await saveMappedMasterToServer(mappedPoint, mappingIndex, routeId);
-      }
+    // The first master is already stored by createInitialRouteAPI. Each Stop
+    // must insert only the newly selected destination master; walking earlier
+    // points here created duplicate chamber and SLD rows.
+    if (pointIndex === 0 && serverStatus === 'completed') {
+      return;
     }
+    await saveMappedMasterToServer(point, pointIndex, routeId, serverStatus);
   };
 
   const ensureMasterSavedToServer = (
     point: RoutePoint,
     position: Coordinate,
+    serverStatus: 'unsave' | 'pause' | 'completed' = 'completed',
   ) => {
-    if (savedMasterKeysRef.current.has(point.key)) {
-      return Promise.resolve();
-    }
-
-    const pendingSave = masterSavePromisesRef.current.get(point.key);
+    const saveKey = point.key;
+    const pendingSave = masterSavePromisesRef.current.get(saveKey);
     if (pendingSave) {
       return pendingSave;
     }
 
-    const savePromise = saveStoppedMasterToServer(point, position).finally(
-      () => {
-        masterSavePromisesRef.current.delete(point.key);
-      },
-    );
-    masterSavePromisesRef.current.set(point.key, savePromise);
+    const savePromise = (async () => {
+      if (savedMasterKeysRef.current.has(point.key)) {
+        const savedStatus = asText(point.master?.routeStatus).toLowerCase();
+        const currentLoopUsed = asPositiveNumber(point.loopMeters);
+        const savedLoopUsed = savedMasterLoopValuesRef.current.get(point.key);
+        if (savedStatus === serverStatus && savedLoopUsed === currentLoopUsed) {
+          return;
+        }
+        const routeId = initialRouteIdRef.current;
+        if (!routeId) {
+          return;
+        }
+        const mappingId = await resolveServerMappingId(point, routeId);
+        // Never update an existing status with Id 0: the backend treats that
+        // as a new row and creates duplicate chamber/SLD mappings.
+        if (!mappingId) {
+          return;
+        }
+      }
+      await saveStoppedMasterToServer(point, position, serverStatus);
+    })().finally(() => {
+      masterSavePromisesRef.current.delete(saveKey);
+    });
+    masterSavePromisesRef.current.set(saveKey, savePromise);
     return savePromise;
   };
 
@@ -2175,46 +2693,6 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     ).unwrap();
   };
 
-  useEffect(() => {
-    if (
-      isReadOnly ||
-      isFiberChange ||
-      trackingState !== 'idle' ||
-      isSelectingMaster
-    ) {
-      return;
-    }
-
-    const latestPoint = routePoints[routePoints.length - 1];
-    if (
-      !latestPoint ||
-      savedMasterKeysRef.current.has(latestPoint.key) ||
-      lastAutoSavePointKeyRef.current === latestPoint.key
-    ) {
-      return;
-    }
-
-    lastAutoSavePointKeyRef.current = latestPoint.key;
-    void ensureMasterSavedToServer(
-      latestPoint,
-      currentPositionRef.current,
-    ).catch((error: any) => {
-      showRouteAlert({
-        title: 'Master Save Failed',
-        message:
-          error?.message ||
-          `${latestPoint.masterTypeLabel} • ${latestPoint.name} could not be saved to this route.`,
-        tone: 'error',
-      });
-    });
-  }, [
-    isFiberChange,
-    isReadOnly,
-    isSelectingMaster,
-    routePoints,
-    trackingState,
-  ]);
-
   const handleStart = async () => {
     if (!activePoint || trackingState !== 'idle' || isSelectingMaster) {
       return;
@@ -2222,13 +2700,18 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
 
     const lockLoopImmediately = route.params.fiberChangeMode === 'withoutSld';
     try {
-      // Fiber-change mappings require the master photo, which is captured
-      // after tracking starts. Save those mappings on Stop & Add Master so
-      // Start never attempts a duplicate, photo-less route chamber update.
-      if (!isFiberChange) {
+      // Save the loop currently entered for this master before the input is
+      // locked and route tracking begins.
+      if (!isFiberChange && !initialRouteIdRef.current) {
+        await saveInitialMasterToServer(
+          routePoints[0] ?? activePoint,
+          currentPositionRef.current,
+        );
+      } else if (!isFiberChange) {
         await ensureMasterSavedToServer(
           activePoint,
           currentPositionRef.current,
+          'unsave',
         );
       }
       if (route.params.fiberChangeMode !== 'withoutSld') {
@@ -2287,10 +2770,53 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     if (trackingState === 'walking') {
       stopLocationWatch();
       setTrackingStateValue('paused');
+      if (!isFiberChange && activePoint) {
+        try {
+          await ensureMasterSavedToServer(
+            activePoint,
+            currentPositionRef.current,
+            'pause',
+          );
+          await saveRoutePathProgress(currentPositionRef.current);
+        } catch (error: any) {
+          showRouteAlert({
+            title: 'Pause Save Failed',
+            message:
+              error?.message || 'Unable to save the paused route status.',
+            tone: 'error',
+          });
+        }
+      }
+      const pausedSnapshot: PausedRouteSnapshot = {
+        ...persistedRouteSnapshot,
+        routeDraft: {
+          ...persistedRouteSnapshot.routeDraft,
+          ...(initialRouteIdRef.current
+            ? {routeId: initialRouteIdRef.current}
+            : {}),
+        },
+        trackingState: 'paused',
+        status: 'paused',
+        updatedAt: Date.now(),
+      };
+      savePausedRouteSnapshot(pausedSnapshot);
+      latestSnapshotRef.current = pausedSnapshot;
+      Common.showToast(
+        isFiberChange
+          ? 'Fiber change saved to paused routes.'
+          : 'Route saved to paused routes.',
+      );
       return;
     }
     if (trackingState === 'paused') {
       try {
+        if (!isFiberChange && activePoint) {
+          await ensureMasterSavedToServer(
+            activePoint,
+            currentPositionRef.current,
+            'unsave',
+          );
+        }
         await startLocationWatch();
       } catch (error: any) {
         showRouteAlert({
@@ -2333,10 +2859,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         lastAcceptedPositionRef.current,
         stopPosition,
       );
-      if (
-        finalMovement >= MIN_TRACK_DISTANCE_METERS &&
-        finalMovement <= MAX_TRACK_JUMP_METERS
-      ) {
+      if (finalMovement >= MIN_TRACK_DISTANCE_METERS && finalMovement <= 12) {
         segmentDistanceRef.current += finalMovement;
         setSegmentDistance(segmentDistanceRef.current);
       }
@@ -2358,18 +2881,20 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       }
       setCurrentAddress(stopAddress);
 
-      if (route.params.fiberChangeMode === 'withoutSld') {
-        const photographedUnsavedMasters = routePoints.filter(
-          point =>
-            !savedMasterKeysRef.current.has(point.key) &&
-            Boolean(asText(point.master?.__fiberChangePhotoUri)),
-        );
-        for (const point of photographedUnsavedMasters) {
-          await ensureMasterSavedToServer(point, stopPosition);
+      if (isFiberChange) {
+        if (route.params.fiberChangeMode === 'withoutSld') {
+          const photographedUnsavedMasters = routePoints.filter(
+            point =>
+              !savedMasterKeysRef.current.has(point.key) &&
+              Boolean(asText(point.master?.__fiberChangePhotoUri)),
+          );
+          for (const point of photographedUnsavedMasters) {
+            await ensureMasterSavedToServer(point, stopPosition);
+          }
+          await ensureMasterSavedToServer(activePoint, stopPosition);
+        } else {
+          await ensureMasterSavedToServer(activePoint, stopPosition);
         }
-        await ensureMasterSavedToServer(activePoint, stopPosition);
-      } else {
-        await ensureMasterSavedToServer(activePoint, stopPosition);
       }
       if (route.params.fiberChangeMode !== 'withoutSld') {
         await saveRoutePathProgress(stopPosition);
@@ -2401,35 +2926,44 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         segmentDistanceRef.current = 0;
         setSegmentDistance(0);
         setTrackingStateValue('idle');
-        routeCompletedRef.current = true;
+        const stoppedSnapshot: PausedRouteSnapshot = {
+          id: routeSnapshotIdRef.current,
+          routeName: route.params.routeName,
+          routeDraft: {
+            ...route.params.routeDraft,
+            routeId: initialRouteIdRef.current,
+          },
+          currentPosition: stopPosition,
+          currentAddress: stopAddress,
+          routePoints: completedRoutePoints,
+          routePath: [...routePathRef.current],
+          walkingSegments: completedWalkingSegments,
+          segmentDistance: 0,
+          trackingState: 'idle',
+          drumAllocations,
+          totalDistance:
+            completedWalkingDistance +
+            completedSegmentDistance +
+            totalLoopDistance,
+          status: 'stopped',
+          createdAt: routeCreatedAtRef.current,
+          updatedAt: Date.now(),
+          workflowType: 'fiberChange',
+          resumeTarget: 'makeRoute',
+          fiberChangeMode: route.params.fiberChangeMode,
+          fiberChangeRoute: route.params.fiberChangeRoute,
+          fiberChangeSelectedFibers:
+            route.params.fiberChangeSelectedFibers ?? [],
+          fiberChangeActiveMasterKey: activePoint.key,
+        };
+        savePausedRouteSnapshot(stoppedSnapshot);
+        latestSnapshotRef.current = stoppedSnapshot;
         Keyboard.dismiss();
         navigation.replace('Fiber-Change', {
           selectedRoute: route.params.fiberChangeRoute,
           selectedFibers: route.params.fiberChangeSelectedFibers ?? [],
           installationScope: route.params.fiberChangeMode,
-          installationProgress: {
-            id: routeSnapshotIdRef.current,
-            routeName: route.params.routeName,
-            routeDraft: {
-              ...route.params.routeDraft,
-              routeId: initialRouteIdRef.current,
-            },
-            currentPosition: stopPosition,
-            currentAddress: stopAddress,
-            routePoints: completedRoutePoints,
-            routePath: [...routePathRef.current],
-            walkingSegments: completedWalkingSegments,
-            segmentDistance: 0,
-            trackingState: 'idle',
-            drumAllocations,
-            totalDistance:
-              completedWalkingDistance +
-              completedSegmentDistance +
-              totalLoopDistance,
-            status: 'stopped',
-            createdAt: routeCreatedAtRef.current,
-            updatedAt: Date.now(),
-          },
+          installationProgress: stoppedSnapshot,
         });
         return;
       }
@@ -2619,6 +3153,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       }
 
       routeCompletedRef.current = true;
+      removeCompletedRouteSnapshot(routeSnapshotIdRef.current);
       Keyboard.dismiss();
       navigation.replace('Fiber-Change', {
         selectedRoute: route.params.fiberChangeRoute,
@@ -2628,7 +3163,34 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       return;
     }
 
-    completeRouteLocally();
+    try {
+      setIsEnding(true);
+      stopLocationWatch();
+      for (const point of routePoints) {
+        await ensureMasterSavedToServer(
+          point,
+          currentPositionRef.current,
+          'completed',
+        );
+      }
+      await saveRoutePathProgress(currentPositionRef.current);
+      completeRouteLocally();
+    } catch (error: any) {
+      setTrackingStateValue('paused');
+      savePausedRouteSnapshot({
+        ...persistedRouteSnapshot,
+        trackingState: 'paused',
+        status: 'paused',
+        updatedAt: Date.now(),
+      });
+      showRouteAlert({
+        title: 'Route Completion Failed',
+        message: error?.message || 'Unable to save the completed route status.',
+        tone: 'error',
+      });
+    } finally {
+      setIsEnding(false);
+    }
   };
 
   const handleBack = () => {
@@ -2647,8 +3209,34 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
         {
           text: 'Stop & Leave',
           variant: 'danger',
-          onPress: () => {
+          onPress: async () => {
             stopLocationWatch();
+            const stoppedSnapshot: PausedRouteSnapshot = {
+              ...persistedRouteSnapshot,
+              trackingState: 'idle',
+              status: 'stopped',
+              updatedAt: Date.now(),
+            };
+            savePausedRouteSnapshot(stoppedSnapshot);
+            latestSnapshotRef.current = stoppedSnapshot;
+            if (!isFiberChange && activePoint) {
+              try {
+                await ensureMasterSavedToServer(
+                  activePoint,
+                  currentPositionRef.current,
+                  'completed',
+                );
+              } catch (error: any) {
+                showRouteAlert({
+                  title: 'Stop Save Failed',
+                  message:
+                    error?.message ||
+                    'Unable to save the completed master status.',
+                  tone: 'error',
+                });
+                return;
+              }
+            }
             Keyboard.dismiss();
             navigation.goBack();
           },
@@ -2764,7 +3352,10 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
   const fitExpandedMapToRoute = () => {
     const coordinates =
       routePolylineCoordinates.length > 1
-        ? routePolylineCoordinates
+        ? [
+            ...routePolylineCoordinates,
+            ...masterMarkers.map(point => point.coordinate),
+          ]
         : [currentPosition, ...masterMarkers.map(point => point.coordinate)];
 
     if (coordinates.length > 1) {
@@ -2797,6 +3388,85 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
     });
   };
 
+  const openConnectedFiberForPoint = (point: RoutePoint) => {
+    const pointCode = asText(
+      getMasterField(point.master, 'masterCode', 'MasterCode', 'code', 'Code'),
+    ).toLowerCase();
+    const pointName =
+      getMasterName(point.master).toLowerCase() || point.name.toLowerCase();
+    const pointType = normalizeMasterType(
+      point.masterType || point.masterTypeLabel,
+    );
+    const pointOrderNo = Number(
+      getMasterField(point.master, 'orderNo', 'OrderNo'),
+    );
+    const matchingRecord = connectedFiberRouteMasters.find(record => {
+      const recordCode = asText(
+        getMasterField(record, 'masterCode', 'MasterCode', 'code', 'Code'),
+      ).toLowerCase();
+      if (pointCode && recordCode === pointCode) {
+        return true;
+      }
+      const recordName = getMasterName(record).toLowerCase();
+      const recordType = normalizeMasterType(getMasterType(record));
+      const recordOrderNo = Number(
+        getMasterField(record, 'orderNo', 'OrderNo'),
+      );
+      return Boolean(
+        (pointName &&
+          recordName === pointName &&
+          (!pointType || !recordType || recordType === pointType)) ||
+          (Number.isFinite(pointOrderNo) &&
+            recordOrderNo === pointOrderNo &&
+            (!pointType || !recordType || recordType === pointType)),
+      );
+    });
+    const serverMasterId = Number(
+      getMasterField(
+        matchingRecord,
+        'IspMasterId',
+        'ispMasterId',
+        'masterId',
+        'MasterId',
+        'newMasterId',
+        'NewMasterId',
+      ),
+    );
+    const localMasterId = Number(point.masterId || getMasterId(point.master));
+    const resolvedMasterId =
+      Number.isInteger(serverMasterId) && serverMasterId > 0
+        ? serverMasterId
+        : localMasterId;
+    if (Number.isInteger(resolvedMasterId) && resolvedMasterId > 0) {
+      setConnectedFiberMasterId(resolvedMasterId);
+      return;
+    }
+    Common.showToast(
+      `Master ID is unavailable for ${point.masterTypeLabel} - ${point.name}.`,
+    );
+  };
+
+  const handleRouteMapPress = (event: any) => {
+    const pressedCoordinate = event?.nativeEvent?.coordinate as
+      | Coordinate
+      | undefined;
+    if (!pressedCoordinate || masterMarkers.length === 0) {
+      return;
+    }
+    const nearest = masterMarkers.reduce<{
+      point: RoutePoint & {coordinate: Coordinate};
+      distance: number;
+    } | null>((current, point) => {
+      const distance = distanceBetween(pressedCoordinate, point.coordinate);
+      return !current || distance < current.distance
+        ? {point, distance}
+        : current;
+    }, null);
+    if (nearest && nearest.distance <= 40) {
+      openConnectedFiberForPoint(nearest.point);
+    }
+  };
+
   const renderRouteMap = (
     mapReference: React.RefObject<MapView>,
     expanded = false,
@@ -2818,6 +3488,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       rotateEnabled
       showsBuildings
       zoomEnabled
+      onPress={handleRouteMapPress}
       onMapReady={expanded ? fitExpandedMapToRoute : undefined}
       initialRegion={{
         ...route.params.currentPosition,
@@ -2848,8 +3519,6 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
       ) : null}
 
       {masterMarkers.map((point, index) => {
-        const overlapsCurrentLocation =
-          distanceBetween(point.coordinate, currentPosition) <= 4;
         const isActiveMarker = point.key === activePoint?.key;
 
         return (
@@ -2858,7 +3527,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
             point={point}
             index={index}
             isActive={isActiveMarker}
-            overlapsCurrentLocation={overlapsCurrentLocation}
+            onPress={() => openConnectedFiberForPoint(point)}
           />
         );
       })}
@@ -2911,6 +3580,10 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
               />
             </View>
           </TouchableOpacity>
+          <ConnectedFiberDetailsModal
+            masterId={isMapExpanded ? null : connectedFiberMasterId}
+            onClose={() => setConnectedFiberMasterId(null)}
+          />
         </View>
 
         <View style={styles.addressBar}>
@@ -3141,12 +3814,18 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           <View style={styles.footer}>
             <TouchableOpacity
               activeOpacity={0.82}
-              disabled={trackingState !== 'idle' || !activePoint}
+              disabled={
+                trackingState !== 'idle' ||
+                !activePoint ||
+                isDrumLengthExhausted
+              }
               onPress={handleStart}
               style={[
                 styles.footerButton,
                 styles.startButton,
-                (trackingState !== 'idle' || !activePoint) &&
+                (trackingState !== 'idle' ||
+                  !activePoint ||
+                  isDrumLengthExhausted) &&
                   styles.footerButtonDisabled,
               ]}>
               <Text style={styles.footerButtonText}>Start</Text>
@@ -3287,6 +3966,11 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           onRequestClose={() => setIsMapExpanded(false)}>
           <View style={styles.expandedMapContainer}>
             {renderRouteMap(expandedMapRef, true)}
+            <ConnectedFiberDetailsModal
+              masterId={isMapExpanded ? connectedFiberMasterId : null}
+              expanded
+              onClose={() => setConnectedFiberMasterId(null)}
+            />
 
             <View style={styles.expandedMapHeader} pointerEvents="box-none">
               <View style={styles.expandedMapTitlePill}>
@@ -3346,10 +4030,69 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
               style={styles.drumSheet}
               onPress={event => event.stopPropagation()}>
               <View style={styles.drumSheetHandle} />
-              <Text style={styles.drumSheetTitle}>Select Drum</Text>
+              <Text style={styles.drumSheetTitle}>Select Fiber and Drum</Text>
 
               <View style={styles.drumFormCard}>
-                <View style={styles.drumFieldsRow}>
+                <View style={styles.drumNumberField}>
+                  <Text style={styles.drumFieldLabel}>
+                    Fiber Type
+                    <Text style={styles.drumRequired}> *</Text>
+                  </Text>
+                  <View style={styles.drumSelectRow}>
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      disabled={isLoadingFibers || fiberOptions.length === 0}
+                      onPress={() => {
+                        setShowFiberOptions(previous => !previous);
+                        setShowDrumOptions(false);
+                      }}
+                      style={styles.drumSelectInput}>
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.drumSelectText,
+                          !selectedAdditionalFiber &&
+                            styles.drumPlaceholderText,
+                        ]}>
+                        {selectedAdditionalFiber?.label || 'Select Fiber Type'}
+                      </Text>
+                      <Image
+                        source={IMAGES.down}
+                        style={styles.drumSelectArrow}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {showFiberOptions ? (
+                  <View style={styles.drumOptionsList}>
+                    <ScrollView
+                      nestedScrollEnabled
+                      keyboardShouldPersistTaps="handled"
+                      showsVerticalScrollIndicator={false}>
+                      {fiberOptions.map(option => {
+                        const selected =
+                          option.value === selectedAdditionalFiberId;
+                        return (
+                          <TouchableOpacity
+                            key={option.value}
+                            activeOpacity={0.78}
+                            onPress={() => selectAdditionalFiber(option)}
+                            style={[
+                              styles.drumOptionRow,
+                              selected && styles.drumOptionRowSelected,
+                            ]}>
+                            <Text style={styles.drumOptionLabel}>
+                              {option.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
+
+                <View style={styles.additionalDrumField}>
                   <View style={styles.drumNumberField}>
                     <Text style={styles.drumFieldLabel}>
                       Available Drum Name / No.
@@ -3358,10 +4101,15 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                     <View style={styles.drumSelectRow}>
                       <TouchableOpacity
                         activeOpacity={0.8}
-                        disabled={isLoadingDrums || drumOptions.length === 0}
-                        onPress={() =>
-                          setShowDrumOptions(previous => !previous)
+                        disabled={
+                          !selectedAdditionalFiber ||
+                          isLoadingDrums ||
+                          drumOptions.length === 0
                         }
+                        onPress={() => {
+                          setShowDrumOptions(previous => !previous);
+                          setShowFiberOptions(false);
+                        }}
                         style={styles.drumSelectInput}>
                         <Text
                           numberOfLines={1}
@@ -3378,31 +4126,10 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                       </TouchableOpacity>
                       <View style={styles.drumAvailablePill}>
                         <Text style={styles.drumAvailableText}>
-                          {Math.round(selectedDrumRemainingLength)}m
+                          {Math.round(selectedDrumOption?.availableLength ?? 0)}
+                          m
                         </Text>
                       </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.drumLengthField}>
-                    <Text style={styles.drumFieldLabel}>
-                      Length to Use
-                      <Text style={styles.drumRequired}> *</Text>
-                    </Text>
-                    <View style={styles.drumLengthInputWrap}>
-                      <TextInput
-                        value={additionalLength}
-                        onChangeText={value => {
-                          setAdditionalLength(value.replace(/[^0-9]/g, ''));
-                          setDrumSelectionError('');
-                        }}
-                        placeholder="Enter"
-                        placeholderTextColor="#9CA3AF"
-                        keyboardType="number-pad"
-                        maxLength={7}
-                        style={styles.drumLengthInput}
-                      />
-                      <Text style={styles.drumLengthSuffix}>m</Text>
                     </View>
                   </View>
                 </View>
@@ -3414,30 +4141,26 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                       keyboardShouldPersistTaps="handled"
                       showsVerticalScrollIndicator={false}>
                       {drumOptions.map(option => {
-                        const allocated = drumAllocations
-                          .filter(
+                        const unavailable =
+                          option.availableLength <= 0 ||
+                          drumAllocations.some(
                             allocation => allocation.drumId === option.value,
-                          )
-                          .reduce(
-                            (sum, allocation) => sum + allocation.lengthToUse,
-                            0,
                           );
-                        const remaining = Math.max(
-                          0,
-                          option.availableLength - allocated,
-                        );
+                        const remaining = unavailable
+                          ? 0
+                          : option.availableLength;
                         const selected = option.value === selectedDrumId;
 
                         return (
                           <TouchableOpacity
                             key={option.value}
                             activeOpacity={0.78}
-                            disabled={remaining <= 0}
+                            disabled={unavailable}
                             onPress={() => selectAdditionalDrum(option)}
                             style={[
                               styles.drumOptionRow,
                               selected && styles.drumOptionRowSelected,
-                              remaining <= 0 && styles.drumOptionRowDisabled,
+                              unavailable && styles.drumOptionRowDisabled,
                             ]}>
                             <View style={styles.drumOptionCopy}>
                               <Text style={styles.drumOptionLabel}>
@@ -3463,14 +4186,16 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                   </View>
                 ) : null}
 
-                {isLoadingDrums ? (
+                {isLoadingFibers || isLoadingDrums ? (
                   <View style={styles.drumFeedbackRow}>
                     <ActivityIndicator
                       size="small"
                       color={COLORS.colorMediumslateblue}
                     />
                     <Text style={styles.drumFeedbackText}>
-                      Loading drum numbers...
+                      {isLoadingFibers
+                        ? 'Loading fiber types...'
+                        : 'Loading drum numbers...'}
                     </Text>
                   </View>
                 ) : drumLoadError ? (
@@ -3478,7 +4203,13 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                     <Text style={styles.drumErrorText}>{drumLoadError}</Text>
                     <TouchableOpacity
                       activeOpacity={0.8}
-                      onPress={loadAdditionalDrums}
+                      onPress={() => {
+                        if (selectedAdditionalFiberId) {
+                          loadAdditionalDrums(selectedAdditionalFiberId);
+                        } else {
+                          loadAdditionalFibers();
+                        }
+                      }}
                       style={styles.drumRetryButton}>
                       <Text style={styles.drumRetryText}>Retry</Text>
                     </TouchableOpacity>
@@ -3505,11 +4236,19 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
                 </TouchableOpacity>
                 <TouchableOpacity
                   activeOpacity={0.84}
-                  disabled={isLoadingDrums || !selectedDrumOption}
+                  disabled={
+                    isLoadingFibers ||
+                    isLoadingDrums ||
+                    !selectedAdditionalFiber ||
+                    !selectedDrumOption
+                  }
                   onPress={confirmAdditionalDrum}
                   style={[
                     styles.drumSheetAction,
-                    (isLoadingDrums || !selectedDrumOption) &&
+                    (isLoadingFibers ||
+                      isLoadingDrums ||
+                      !selectedAdditionalFiber ||
+                      !selectedDrumOption) &&
                       styles.drumSheetActionDisabled,
                   ]}>
                   <LinearGradient
@@ -3606,87 +4345,14 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           </View>
         </Modal>
 
-        <Modal
+        <FullscreenImageViewer
           visible={previewImages.length > 0}
-          transparent
-          statusBarTranslucent
-          animationType="fade"
-          onRequestClose={() => setPreviewImages([])}>
-          <View style={styles.previewOverlay}>
-            <View style={styles.previewHeader}>
-              <Text numberOfLines={1} style={styles.previewTitle}>
-                {previewTitle}
-              </Text>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Close image viewer"
-                onPress={() => setPreviewImages([])}
-                style={styles.previewCloseButton}>
-                <Text style={styles.previewCloseText}>×</Text>
-              </TouchableOpacity>
-            </View>
-
-            {previewImages[previewImageIndex] ? (
-              <Image
-                source={{uri: previewImages[previewImageIndex]}}
-                style={styles.previewImage}
-                resizeMode="contain"
-              />
-            ) : null}
-
-            {previewImages.length > 1 ? (
-              <>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Previous image"
-                  onPress={() =>
-                    setPreviewImageIndex(previous =>
-                      previous === 0 ? previewImages.length - 1 : previous - 1,
-                    )
-                  }
-                  style={[styles.previewArrow, styles.previewArrowLeft]}>
-                  <Text style={styles.previewArrowText}>‹</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel="Next image"
-                  onPress={() =>
-                    setPreviewImageIndex(previous =>
-                      previous === previewImages.length - 1 ? 0 : previous + 1,
-                    )
-                  }
-                  style={[styles.previewArrow, styles.previewArrowRight]}>
-                  <Text style={styles.previewArrowText}>›</Text>
-                </TouchableOpacity>
-              </>
-            ) : null}
-
-            <View style={styles.previewFooter}>
-              <Text style={styles.previewCounter}>
-                {previewImageIndex + 1} of {previewImages.length}
-              </Text>
-              {previewImages.length > 1 ? (
-                <View style={styles.previewPager}>
-                  {previewImages.map((_, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Show image ${index + 1}`}
-                      onPress={() => setPreviewImageIndex(index)}
-                      style={[
-                        styles.previewDot,
-                        index === previewImageIndex && styles.previewDotActive,
-                      ]}
-                    />
-                  ))}
-                </View>
-              ) : null}
-            </View>
-          </View>
-        </Modal>
+          images={previewImages}
+          index={previewImageIndex}
+          title={previewTitle}
+          onIndexChange={setPreviewImageIndex}
+          onClose={() => setPreviewImages([])}
+        />
       </View>
     </Screen>
   );

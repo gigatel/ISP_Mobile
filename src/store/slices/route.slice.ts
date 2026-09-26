@@ -34,6 +34,7 @@ export interface CreateInitialRouteArgs {
   masterId: number;
   orderNo: number;
   routePath: string;
+  loopUsed?: number;
 }
 
 // ✅ NEW: Type for InsertUpdateRouteChamberMapping API
@@ -83,6 +84,8 @@ export interface InsertUpdateRouteChamberMappingArgs {
     type: string;
     fileName: string;
   };
+  status?: 'unsave' | 'pause' | 'completed';
+  zoneId?: string | number;
 }
 export interface GetMasterByNameArgs {
   name?: string;
@@ -97,6 +100,12 @@ export interface GetNearestPoleTreeDDArgs {
 export interface GetDrumNumbersByFiberTypeArgs {
   fiberTypeId: string | number;
 }
+export interface GetZonesByStateIdArgs {
+  stateId: string | number;
+}
+export interface GetISPMasterByRouteIdISPArgs {
+  routeId: string | number;
+}
 export interface GetRouteDetailsPaggiArgs {
   page: number;
   size: number;
@@ -109,6 +118,9 @@ export interface GetSLDDetailsPaggiISPArgs {
 }
 export interface GetRouteFiberAllDataBySLDIdISPArgs {
   routeId: number;
+}
+export interface GetFiberDetailsByISPMasterArgs {
+  masterId: string | number;
 }
 export interface InstallFiberBySLDTempItem {
   sldId: string | number;
@@ -126,6 +138,8 @@ export interface InstallFiberBySLDTempItem {
 }
 export interface InstallFiberBySLDTempArgs {
   routeId: number;
+  status: 'unsave' | 'pause' | 'completed';
+  zoneId: string | number;
   installations: InstallFiberBySLDTempItem[];
 }
 
@@ -172,6 +186,8 @@ const splitFiberInstallationIds = (item: InstallFiberBySLDTempItem) => {
 export interface UpdateMasterArgs {
   Id?: number;
   Name: string;
+  PlacedType?: string;
+  PlacedTypeId?: string;
   MasterType: string;
   Address: string;
   SelectedAddress: string;
@@ -188,6 +204,28 @@ export interface UpdateMasterArgs {
   ImageFile2?: any;
   Extra1?: string;
   Extra2?: string;
+}
+export interface InsertUpdateSplitterMasterArgs {
+  Id?: number;
+  CoreNo: number;
+  ConnectBy: string;
+  SplitterType: string;
+  Pincode: string;
+  MasterSiteType: string;
+  MasterSiteId: string | number;
+  MasterLatLng: string;
+  City: string;
+  Area: string;
+  MasterCode: string;
+  IsActive: boolean;
+  State: string;
+  SplitterName: string;
+  Remarks: string;
+  Address: string;
+  Country: string;
+  Landmark: string;
+  Image1?: any;
+  Image2?: any;
 }
 export interface AddRouteArgs {
   Id?: number;
@@ -376,6 +414,133 @@ export const GetDrumNumbersByFiberTypeAPI = createAsyncThunk<
   }
 });
 
+export const GetStateMasterAPI = createAsyncThunk<
+  any,
+  void,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetStateMaster`, async (_, thunkApi) => {
+  try {
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getStateMaster,
+      isAuth: true,
+    });
+
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? [];
+    }
+    if (Array.isArray(res?.data)) {
+      return res.data;
+    }
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load states',
+      data: error,
+    });
+  }
+});
+
+export const GetZonesByStateIdAPI = createAsyncThunk<
+  any,
+  GetZonesByStateIdArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetZonesByStateId`, async (payload, thunkApi) => {
+  try {
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getZonesByStateId,
+      params: `?stateId=${encodeURIComponent(String(payload.stateId))}`,
+      isAuth: true,
+    });
+
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? [];
+    }
+    if (Array.isArray(res?.data)) {
+      return res.data;
+    }
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load zones',
+      data: error,
+    });
+  }
+});
+
+export const GetISPMasterByRouteIdISPAPI = createAsyncThunk<
+  any,
+  GetISPMasterByRouteIdISPArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetISPMasterByRouteIdISP`, async (payload, thunkApi) => {
+  try {
+    const routeId = Number(payload.routeId);
+    if (!Number.isInteger(routeId) || routeId <= 0) {
+      console.warn('[GetISPMasterByRouteIdISP] Skipped: invalid routeId', {
+        routeId: payload.routeId,
+      });
+      return thunkApi.rejectWithValue({
+        message: 'A valid routeId is required to load paused route masters.',
+      });
+    }
+
+    console.log('[GetISPMasterByRouteIdISP] REQUEST', {
+      routeId,
+      url: `${URLs.getISPMasterByRouteIdISP}?routeId=${encodeURIComponent(
+        String(routeId),
+      )}`,
+    });
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getISPMasterByRouteIdISP,
+      params: `?routeId=${encodeURIComponent(String(routeId))}`,
+      isAuth: true,
+    });
+    console.log('[GetISPMasterByRouteIdISP] RESPONSE', {
+      routeId,
+      response: res,
+    });
+    if (Array.isArray(res)) {
+      return res;
+    }
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? [];
+    }
+    if (Array.isArray(res?.data)) {
+      return res.data;
+    }
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    console.error('[GetISPMasterByRouteIdISP] ERROR', {
+      routeId: payload.routeId,
+      error,
+    });
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load paused route masters',
+      data: error,
+    });
+  }
+});
+
 export const GetRouteDetailsPaggiAPI = createAsyncThunk<
   any,
   GetRouteDetailsPaggiArgs,
@@ -485,6 +650,44 @@ export const GetRouteFiberAllDataBySLDIdISPAPI = createAsyncThunk<
   }
 });
 
+export const GetFiberDetailsByISPMasterAPI = createAsyncThunk<
+  any,
+  GetFiberDetailsByISPMasterArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/GetFiberDetailsByISPMaster`, async (payload, thunkApi) => {
+  try {
+    const masterId = Number(payload.masterId);
+    if (!Number.isInteger(masterId) || masterId <= 0) {
+      return thunkApi.rejectWithValue({
+        message: 'A valid MasterId is required to load connected fibers.',
+      });
+    }
+
+    const res = await APIs.getRequestWithQuery({
+      path: URLs.getFiberDetailsByISPMaster,
+      params: `?MasterId=${encodeURIComponent(String(masterId))}`,
+      isAuth: true,
+    });
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? null;
+    }
+    if (res?.success === false || (res?.status && res.status !== 200)) {
+      return thunkApi.rejectWithValue({
+        status: res?.status,
+        message: extractErrorMessage(res),
+        data: res,
+      });
+    }
+    return res?.data ?? res;
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      status: error?.status,
+      message: error?.message || 'Unable to load connected fiber details.',
+      data: error,
+    });
+  }
+});
+
 export const installFiberBySLDTempAPI = createAsyncThunk<
   any,
   InstallFiberBySLDTempArgs,
@@ -493,16 +696,22 @@ export const installFiberBySLDTempAPI = createAsyncThunk<
   try {
     const formData = new FormData();
     formData.append('RouteId', String(payload.routeId));
+    formData.append('Status', payload.status);
+    formData.append('ZoneId', String(payload.zoneId));
 
-    const watermarkedInstallations = await Promise.all(
-      payload.installations.map(async item => ({
+    // Watermark one photo at a time. Running every Android bitmap operation in
+    // parallel can exhaust the native heap on longer SLD routes and terminate
+    // the app even when the API request itself completes successfully.
+    const watermarkedInstallations: InstallFiberBySLDTempItem[] = [];
+    for (const item of payload.installations) {
+      watermarkedInstallations.push({
         ...item,
         imageFile: {
           ...item.imageFile,
           uri: await ensureLocationWatermark(item.imageFile.uri),
         },
-      })),
-    );
+      });
+    }
     const normalizedInstallations = watermarkedInstallations.flatMap(
       splitFiberInstallationIds,
     );
@@ -626,6 +835,7 @@ export const createInitialRouteAPI = createAsyncThunk<
       masterId: payload.masterId,
       orderNo: payload.orderNo,
       routePath: payload.routePath,
+      loopUsed: payload.loopUsed ?? 0,
     };
     console.log('startinitialrouteapi', {body});
 
@@ -668,7 +878,6 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
         : 0;
     const payloadWithLoopUsed = {...payload, loopUsed: normalizedLoopUsed};
     const routeCreationPayload = {...payloadWithLoopUsed};
-    delete routeCreationPayload.masterId;
 
     if (payload.fiberChangeScope) {
       const numericFiberId = Number(payload.fiberId);
@@ -688,6 +897,7 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
       }
 
       const formData = new FormData();
+      const normalizedFiberType = String(payload.fiberType ?? '').trim();
       const fiberMappingFields: Array<[string, string | number | boolean]> = [
         ['FiberUsedBy', payload.fiberUsedBy ?? ''],
         ['LoopUsed', normalizedLoopUsed],
@@ -695,7 +905,7 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
         ['RouteId', payload.routeId],
         ['FromOrderNo', payload.fromOrderNo ?? 0],
         ['EndCity', payload.endCity ?? ''],
-        ['FiberType', payload.fiberType ?? ''],
+        ['FiberType', normalizedFiberType],
         ['DrumNo', payload.drumNo ?? ''],
         ['FiberId', numericFiberId],
         ['IsPartialChange', payload.isPartialChange ?? false],
@@ -809,12 +1019,17 @@ export const insertUpdateRouteChamberMappingAPI = createAsyncThunk<
     }
 
     const body = routeCreationPayload;
+    console.log(
+      '[InsertUpdateRouteChamberMapping] REQUEST',
+      JSON.stringify(body, null, 2),
+    );
 
     const res = await APIs.postRequestWithJsonWithBody({
       path: requestPath,
       body,
       isAuth: true,
     });
+    console.log('[InsertUpdateRouteChamberMapping] RESPONSE', res);
     if (res?.status === 200 && res?.success) {
       return res?.data ?? res;
     }
@@ -838,6 +1053,12 @@ export const UpdateMasterAPI = createAsyncThunk<
     const formData = new FormData();
     formData.append('Id', String(payload.Id ?? 0));
     formData.append('Name', payload.Name);
+    if (payload.PlacedType !== undefined) {
+      formData.append('PlacedType', payload.PlacedType);
+    }
+    if (payload.PlacedTypeId !== undefined) {
+      formData.append('PlacedTypeId', payload.PlacedTypeId);
+    }
     formData.append('MasterType', payload.MasterType);
     formData.append('Address', payload.Address);
     formData.append('SelectedAddress', payload.SelectedAddress);
@@ -895,6 +1116,75 @@ export const UpdateMasterAPI = createAsyncThunk<
   } catch (error: any) {
     console.error('❌ UpdateMaster ERROR:', error);
     return thunkApi.rejectWithValue(error);
+  }
+});
+export const InsertUpdateSplitterMasterAPI = createAsyncThunk<
+  any,
+  InsertUpdateSplitterMasterArgs,
+  {rejectValue: ApiError}
+>(`${ROUTE}/InsertUpdateSplitterMaster`, async (payload, thunkApi) => {
+  try {
+    const formData = new FormData();
+    formData.append('CoreNo', String(payload.CoreNo ?? 0));
+    formData.append('ConnectBy', payload.ConnectBy ?? '');
+    formData.append('SplitterType', payload.SplitterType);
+    formData.append('Pincode', payload.Pincode);
+    formData.append('MasterSiteType', payload.MasterSiteType);
+    formData.append('MasterSiteId', String(payload.MasterSiteId));
+    formData.append('MasterLatLng', payload.MasterLatLng);
+    formData.append('City', payload.City);
+    formData.append('Area', payload.Area);
+    formData.append('MasterCode', payload.MasterCode);
+    formData.append('IsActive', String(payload.IsActive));
+    formData.append('State', payload.State);
+    formData.append('SplitterName', payload.SplitterName);
+    formData.append('Remarks', payload.Remarks);
+    formData.append('Address', payload.Address);
+    formData.append('Country', payload.Country || 'India');
+    formData.append('Landmark', payload.Landmark);
+    formData.append('Id', String(payload.Id ?? 0));
+
+    if (payload.Image1?.uri) {
+      formData.append('Image1', {
+        uri: payload.Image1.uri,
+        type: payload.Image1.type || 'image/jpeg',
+        name: payload.Image1.fileName || 'splitter_image_1.jpg',
+      });
+    } else {
+      formData.append('Image1', '');
+    }
+
+    if (payload.Image2?.uri) {
+      formData.append('Image2', {
+        uri: payload.Image2.uri,
+        type: payload.Image2.type || 'image/jpeg',
+        name: payload.Image2.fileName || 'splitter_image_2.jpg',
+      });
+    } else {
+      formData.append('Image2', '');
+    }
+
+    const res = await APIs.postRequestWithFormData({
+      path: URLs.insertUpdateSplitterMaster,
+      body: formData,
+      params: formData,
+      isAuth: true,
+      onUploadProgress: undefined,
+    });
+
+    if (res?.status === 200 && res?.success) {
+      return res?.data ?? res;
+    }
+
+    return thunkApi.rejectWithValue({
+      status: res?.status,
+      message: extractErrorMessage(res),
+      data: res,
+    });
+  } catch (error: any) {
+    return thunkApi.rejectWithValue({
+      message: error?.message || 'Unable to save Spliter/FatBox.',
+    });
   }
 });
 export const updateRoutePathDetailsAPI = createAsyncThunk<

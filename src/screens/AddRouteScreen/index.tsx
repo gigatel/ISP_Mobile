@@ -1006,9 +1006,10 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
     {label: 'Tree', value: 'Tree', icon: IMAGES.treeIcon},
     {label: 'Building', value: 'Building', icon: IMAGES.TiffinIcon},
     {label: 'POP', value: 'POP', icon: IMAGES.FiberEnclosur},
-    {label: 'Splitter', value: 'Splitter', icon: IMAGES.enclosureIcon},
+    {label: 'Spliter/FatBox', value: 'Splitter', icon: IMAGES.enclosureIcon},
     {label: 'Tiffin', value: 'Tiffin', icon: IMAGES.TiffinIcon},
     {label: 'Enclosure', value: 'Enclosure', icon: IMAGES.jointEnclosure},
+    {label: 'Chamber', value: 'Chamber', icon: IMAGES.ChamberNew},
   ];
 
   const getTotalDistance = (): number => {
@@ -2540,7 +2541,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
 
             // 🔹 TOTAL ROUTE LENGTH
             routeLength: Math.round(totalRouteLength),
-            loopUsed: Math.round(getMasterLoopUsed(currentItem.masterData)),
+            loopUsed: getMasterLoopUsed(currentItem.masterData),
 
             orderNo,
           };

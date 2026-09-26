@@ -59,6 +59,22 @@ type OperationalCounts = {
   buildings: number;
 };
 
+export type PendingSLDJob = {
+  id: number;
+  code: string;
+  routeId: number;
+  routeCode: string;
+  routeName: string;
+  fiberCode: string;
+  fiberSpecification: string;
+  fiberType: string;
+  totalDrumLength: number;
+  remainingDrumLength: number;
+  routeLength: number;
+  jobId: string;
+  jobStatus: string;
+};
+
 type CachedOperationalCounts = OperationalCounts & {
   masterTypeCounts?: Record<string, number>;
 };
@@ -68,8 +84,10 @@ const ISP_MASTER_TYPES = [
   'Tree',
   'Building',
   'POP',
+  'Splitter',
   'Tiffin',
   'Enclosure',
+  'Chamber',
 ] as const;
 const HOME_OPERATIONAL_COUNTS = Preferences.KEY.HOME_OPERATIONAL_COUNTS;
 
@@ -447,6 +465,11 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
   const [dlTotal, setDlTotal] = useState<number>(-1);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [dashboardRefreshing, setDashboardRefreshing] = useState(false);
+  const [pendingSLDJobs, setPendingSLDJobs] = useState<PendingSLDJob[]>([]);
+  const [pendingSLDJobsLoading, setPendingSLDJobsLoading] = useState(false);
+  const [pendingSLDJobsError, setPendingSLDJobsError] = useState<string | null>(
+    null,
+  );
   const [lastSyncLabel, setLastSyncLabel] = useState(
     Preferences.getData('LAST_HOME_SYNC') ?? 'Not synced yet',
   );
@@ -561,15 +584,40 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
     );
   }, [dispatch]);
 
+  const refreshPendingSLDJobs = useCallback(async () => {
+    setPendingSLDJobsLoading(true);
+    setPendingSLDJobsError(null);
+    try {
+      const response = await APIs.getRequestWithQuery({
+        path: URLs.getPendingSLDJobsISP,
+        isAuth: true,
+      });
+      if (response?.success && response?.status === 200) {
+        setPendingSLDJobs(asArray(response) as PendingSLDJob[]);
+        return true;
+      }
+      throw response;
+    } catch (error: any) {
+      __DEV__ && console.warn('[Home] pending SLD jobs failed', error);
+      setPendingSLDJobsError(
+        error?.message ?? 'Unable to load pending SLD jobs.',
+      );
+      return false;
+    } finally {
+      setPendingSLDJobsLoading(false);
+    }
+  }, []);
+
   const refreshHomeData = useCallback(
     async (force = true) => {
       const [dashboardUpdated] = await Promise.all([
         refreshDashboard(force),
         refreshOperationalCounts(),
+        refreshPendingSLDJobs(),
       ]);
       return dashboardUpdated;
     },
-    [refreshDashboard, refreshOperationalCounts],
+    [refreshDashboard, refreshOperationalCounts, refreshPendingSLDJobs],
   );
 
   const serverSyncCompleted = Number(
@@ -955,7 +1003,7 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
     }
     const dashboardSynced = await refreshDashboard(true);
     if (dashboardSynced) {
-      await refreshOperationalCounts();
+      await Promise.all([refreshOperationalCounts(), refreshPendingSLDJobs()]);
       const nextCount = Math.max(syncCompletedCount, serverSyncCompleted) + 1;
       setSyncCompletedCount(nextCount);
       Preferences.setData('HOME_SYNC_COUNT', nextCount);
@@ -1039,16 +1087,28 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
           <HomeDashboard
             dashboardList={dashboardList}
             user={user}
-            refreshing={dashboardRefreshing}
+            refreshing={dashboardRefreshing || pendingSLDJobsLoading}
+            pendingSLDJobs={pendingSLDJobs}
+            pendingSLDJobsLoading={pendingSLDJobsLoading}
+            pendingSLDJobsError={pendingSLDJobsError}
             lastSyncLabel={lastSyncLabel}
             syncCompletedCount={syncCompletedCount}
             syncSuccessful={syncSuccessful}
             operationalCounts={operationalCounts}
             onRefresh={() => void refreshHomeData(true)}
+            onRetryPendingSLDJobs={() => void refreshPendingSLDJobs()}
+            onPendingSLDJobPress={job =>
+              navigator?.getParent()?.navigate('Select-Route-To-Change-Fiber', {
+                initialPendingSLDJob: job,
+              })
+            }
             onSync={() => void handleSyncNow()}
             onAddMaster={() => navigator?.getParent()?.navigate('addMaster')}
             onRouteFiber={() =>
               navigator?.getParent()?.navigate('Route-Master-Hub')
+            }
+            onCircuitConnectivity={() =>
+              navigator?.getParent()?.navigate('CircuitConnectivity')
             }
             onModulePress={moduleNavigation}
           />

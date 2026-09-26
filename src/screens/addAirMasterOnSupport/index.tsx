@@ -1,8 +1,9 @@
-import React, {FC, useEffect, useMemo, useState} from 'react';
+import React, {FC, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -37,6 +38,7 @@ import {StoreDispatch} from '@reducers';
 import {
   GetMasterByNameAPI,
   GetNearestPoleTreeDDAPI,
+  InsertUpdateSplitterMasterAPI,
   UpdateMasterAPI,
 } from '@slices/route.slice';
 import {Common, ImageWatermark} from '@utils';
@@ -58,6 +60,7 @@ type Coordinate = {
 };
 
 const LOCATION_MATCH_METERS = 8;
+const SPLITTER_TYPE_OPTIONS = ['1:2', '1:4', '1:8', '1:16', '1:32', '1:64'];
 
 const cleanText = (value?: unknown) =>
   String(value ?? '')
@@ -175,6 +178,8 @@ const getId = (master: any) =>
   cleanText(
     master?.id ??
       master?.Id ??
+      master?.ispMasterId ??
+      master?.IspMasterId ??
       master?.masterId ??
       master?.MasterId ??
       valueByKeys(master, ['id', 'masterId']),
@@ -197,6 +202,13 @@ const getType = (master: any) =>
       master?.type ??
       master?.Type,
   ) || 'Master';
+
+const getSplitterMasterSiteType = (masterType: string) => {
+  const normalizedType = cleanText(masterType).toLowerCase();
+  return normalizedType === 'pop'
+    ? 'Pop'
+    : normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1);
+};
 
 const getAirPlacementSupport = (master: any, fallback: string) =>
   cleanText(
@@ -363,10 +375,50 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
   const [isLoadingExisting, setIsLoadingExisting] = useState(false);
   const [image1, setImage1] = useState('');
   const [image2, setImage2] = useState('');
+  const [splitterType, setSplitterType] = useState('');
+  const [splitterName, setSplitterName] = useState('');
+  const [showSplitterTypeDropdown, setShowSplitterTypeDropdown] =
+    useState(false);
   const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const bottomFieldFocusedRef = useRef(false);
+  const isSplitterFlow = selectedMasterType.toLowerCase() === 'splitter';
+
+  const keepBottomFieldVisible = () => {
+    bottomFieldFocusedRef.current = true;
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({animated: true});
+    }, keyboardHeight > 0 ? 100 : 400);
+  };
+
+  const clearBottomFieldFocus = () => {
+    bottomFieldFocusedRef.current = false;
+  };
+
+  useEffect(() => {
+    const keyboardShowListener = Keyboard.addListener('keyboardDidShow', event => {
+      setKeyboardHeight(event.endCoordinates.height);
+      if (bottomFieldFocusedRef.current) {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            scrollViewRef.current?.scrollToEnd({animated: true});
+          }, 100);
+        });
+      }
+    });
+    const keyboardHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      keyboardShowListener.remove();
+      keyboardHideListener.remove();
+    };
+  }, []);
 
   useEffect(() => {
     const loadSupportDetails = async () => {
@@ -535,6 +587,9 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
   const resetForm = () => {
     setImage1('');
     setImage2('');
+    setSplitterType('');
+    setSplitterName('');
+    setShowSplitterTypeDropdown(false);
     setRemarks('');
   };
 
@@ -563,6 +618,14 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       Alert.alert('Lat/Lng', `${supportType} Lat/Lng is not available.`);
       return;
     }
+    if (isSplitterFlow && !splitterType) {
+      Alert.alert('Spliter/FatBox Type', 'Please select a Spliter/FatBox type.');
+      return;
+    }
+    if (isSplitterFlow && !splitterName.trim()) {
+      Alert.alert('Spliter/FatBox Name', 'Spliter/FatBox Name is required.');
+      return;
+    }
     if (!image1 && !image2) {
       Alert.alert(
         `${selectedMasterLabel} Images`,
@@ -575,12 +638,31 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       return;
     }
 
-    const masterName = `${selectedMasterLabel}${Date.now()
-      .toString()
-      .slice(-6)}`;
+    const masterName = isSplitterFlow
+      ? splitterName.trim()
+      : `${selectedMasterLabel}${Date.now().toString().slice(-6)}`;
+    const supportMasterName =
+      getName(supportDetails, '') || getName(supportMaster, '');
+    const supportMasterId = getId(supportDetails) || getId(supportMaster);
+    const supportMasterCode = getCode(supportDetails) || getCode(supportMaster);
+    if (isSplitterFlow && (!supportMasterId || !supportMasterCode)) {
+      Alert.alert(
+        'Master Site Details',
+        'Master Site ID and Master Code are required to add a Spliter/FatBox.',
+      );
+      return;
+    }
+    const shouldSendSupportMapping = [
+      'splitter',
+      'tiffin',
+      'enclosure',
+    ].includes(selectedMasterType.toLowerCase());
     const payload: any = {
       Id: 0,
       Name: masterName,
+      ...(shouldSendSupportMapping
+        ? {PlacedType: supportType, PlacedTypeId: supportMasterId}
+        : {}),
       MasterType: selectedMasterLabel,
       Address: supportAddress,
       SelectedAddress: supportAddress,
@@ -625,7 +707,32 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
 
     try {
       setIsSubmitting(true);
-      const savedMaster = await dispatch(UpdateMasterAPI(payload)).unwrap();
+      const savedMaster = isSplitterFlow
+        ? await dispatch(
+            InsertUpdateSplitterMasterAPI({
+              CoreNo: 0,
+              ConnectBy: '',
+              SplitterType: splitterType,
+              Pincode: payload.PinCode,
+              MasterSiteType: getSplitterMasterSiteType(supportType),
+              MasterSiteId: supportMasterId,
+              MasterLatLng: payload.LatLng,
+              City: payload.City,
+              Area: payload.Area,
+              MasterCode: supportMasterCode,
+              IsActive: true,
+              State: payload.State,
+              SplitterName: masterName,
+              Remarks: payload.Extra1,
+              Address: payload.Address,
+              Country: payload.Country,
+              Landmark: payload.Landmark,
+              Id: 0,
+              Image1: payload.ImageFile1,
+              Image2: payload.ImageFile2,
+            }),
+          ).unwrap()
+        : await dispatch(UpdateMasterAPI(payload)).unwrap();
       const savedMasterData =
         savedMaster?.data && typeof savedMaster.data === 'object'
           ? savedMaster.data
@@ -633,6 +740,8 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       const savedMasterId = Number(
         savedMasterData?.id ??
           savedMasterData?.Id ??
+          savedMasterData?.splitterId ??
+          savedMasterData?.SplitterId ??
           (typeof savedMasterData === 'number' ? savedMasterData : undefined),
       );
       const addedMaster = {
@@ -652,6 +761,10 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
         isActive: true,
         extra1: remarks.trim(),
         extra2: `On ${supportType}`,
+        splitterType: isSplitterFlow ? splitterType : undefined,
+        SplitterType: isSplitterFlow ? splitterType : undefined,
+        supportMasterName,
+        supportMasterId,
         placementMode: 'support',
         image1,
         image2,
@@ -746,11 +859,17 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
         </View>
 
         <ScrollView
+          ref={scrollViewRef}
           style={styles.scroll}
           contentContainerStyle={[
             styles.scrollContent,
-            {paddingBottom: insets.bottom + SIZE.MS(96)},
+            {
+              paddingBottom:
+                insets.bottom + SIZE.MS(110) + keyboardHeight,
+            },
           ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}>
           <View style={styles.supportCard}>
             <View style={styles.titleRow}>
@@ -871,12 +990,77 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
               {renderImageSlot(1, image1)}
               {renderImageSlot(2, image2)}
             </View>
-            <Text style={styles.sectionLabel}>
+            {isSplitterFlow ? (
+              <>
+                <Text style={styles.splitterSectionLabel}>
+                  Types of Spliter/FatBox<Text style={styles.required}> *</Text>
+                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    setShowSplitterTypeDropdown(previous => !previous)
+                  }
+                  style={styles.splitterTypeInput}>
+                  <Text
+                    style={[
+                      styles.splitterTypeText,
+                      !splitterType && styles.splitterPlaceholderText,
+                    ]}>
+                    {splitterType || 'Select'}
+                  </Text>
+                  <Image source={IMAGES.down} style={styles.dropdownIcon} />
+                </TouchableOpacity>
+
+                {showSplitterTypeDropdown ? (
+                  <View style={styles.splitterTypeDropdown}>
+                    {SPLITTER_TYPE_OPTIONS.map((option, index) => (
+                      <TouchableOpacity
+                        key={option}
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          setSplitterType(option);
+                          setShowSplitterTypeDropdown(false);
+                        }}
+                        style={[
+                          styles.splitterTypeOption,
+                          index < SPLITTER_TYPE_OPTIONS.length - 1 &&
+                            styles.splitterTypeOptionBorder,
+                        ]}>
+                        <Text
+                          style={[
+                            styles.splitterTypeOptionText,
+                            splitterType === option &&
+                              styles.splitterTypeOptionTextSelected,
+                          ]}>
+                          {option}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
+
+                <Text style={styles.splitterSectionLabel}>
+                  Spliter/FatBox Name<Text style={styles.required}> *</Text>
+                </Text>
+                <TextInput
+                  value={splitterName}
+                  onChangeText={setSplitterName}
+                  onFocus={keepBottomFieldVisible}
+                  onBlur={clearBottomFieldFocus}
+                  placeholder="Enter Spliter/FatBox Name"
+                  placeholderTextColor="#9CA3AF"
+                  style={styles.splitterNameInput}
+                />
+              </>
+            ) : null}
+            <Text style={styles.sectionLabelWithMargin}>
               Remarks<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
               value={remarks}
               onChangeText={setRemarks}
+              onFocus={keepBottomFieldVisible}
+              onBlur={clearBottomFieldFocus}
               placeholder="Enter Remarks"
               placeholderTextColor="#9CA3AF"
               style={styles.remarksInput}
@@ -1001,15 +1185,15 @@ const styles = StyleSheet.create({
   },
   titleRow: {flexDirection: 'row', alignItems: 'center'},
   masterName: {
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.BOLD,
     color: '#7754F7',
     marginRight: SIZE.MS(5),
   },
   masterTypeText: {
     flex: 1,
-    fontSize: SIZE.MS(8),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#343943',
   },
   statusBadge: {
@@ -1020,15 +1204,15 @@ const styles = StyleSheet.create({
   },
   inactiveStatusBadge: {backgroundColor: '#8E8E8E'},
   statusText: {
-    fontSize: SIZE.MS(7),
+    fontSize: SIZE.MS(9),
     fontFamily: FONTS.BOLD,
     color: COLORS.WHITE,
   },
   detailText: {
     marginTop: SIZE.MS(3),
-    fontSize: SIZE.MS(8),
-    lineHeight: SIZE.MS(11),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(10),
+    lineHeight: SIZE.MS(14),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#343943',
   },
   detailLabel: {fontFamily: FONTS.BOLD},
@@ -1041,15 +1225,15 @@ const styles = StyleSheet.create({
     paddingVertical: SIZE.MS(3),
   },
   airPlacementText: {
-    fontSize: SIZE.MS(8),
-    fontFamily: FONTS.SEMI_BOLD,
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.BOLD,
     color: '#7040DF',
   },
   imagesLabel: {
     marginTop: SIZE.MS(5),
     marginBottom: SIZE.MS(4),
-    fontSize: SIZE.MS(8),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#343943',
   },
   supportImagesRow: {flexDirection: 'row', alignItems: 'flex-end'},
@@ -1071,8 +1255,8 @@ const styles = StyleSheet.create({
   },
   mapOnlyText: {
     marginRight: SIZE.MS(5),
-    fontSize: SIZE.MS(8),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#1577FF',
   },
   existingLoading: {
@@ -1083,8 +1267,8 @@ const styles = StyleSheet.create({
   },
   existingLoadingText: {
     marginLeft: SIZE.MS(7),
-    fontSize: SIZE.MS(9),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#606771',
   },
   existingCard: {
@@ -1106,8 +1290,8 @@ const styles = StyleSheet.create({
   },
   viewImagesButton: {flexDirection: 'row', alignItems: 'center'},
   viewImagesText: {
-    fontSize: SIZE.MS(7),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(9),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#343943',
     textDecorationLine: 'underline',
   },
@@ -1131,9 +1315,23 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     marginBottom: SIZE.MS(7),
-    fontSize: SIZE.MS(10),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.BOLD,
     color: '#343943',
+  },
+  sectionLabelWithMargin: {
+    marginTop: SIZE.MS(10),
+    marginBottom: SIZE.MS(7),
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.BOLD,
+    color: '#343943',
+  },
+  splitterSectionLabel: {
+    marginTop: SIZE.MS(12),
+    marginBottom: SIZE.MS(8),
+    fontSize: SIZE.MS(13),
+    fontFamily: FONTS.BOLD,
+    color: '#252A33',
   },
   required: {color: '#F5002E'},
   formImagesRow: {flexDirection: 'row', gap: SIZE.MS(8)},
@@ -1154,8 +1352,8 @@ const styles = StyleSheet.create({
     tintColor: '#444952',
   },
   captureText: {
-    fontSize: SIZE.MS(9),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#444952',
   },
   formImagePreview: {
@@ -1174,8 +1372,8 @@ const styles = StyleSheet.create({
     resizeMode: 'contain',
   },
   noImageText: {
-    fontSize: SIZE.MS(8),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(10),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#9CA3AF',
   },
   removeImageButton: {
@@ -1195,15 +1393,75 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.BOLD,
     color: COLORS.WHITE,
   },
+  splitterTypeInput: {
+    height: SIZE.MS(42),
+    borderWidth: 1,
+    borderColor: '#E1E4E9',
+    borderRadius: SIZE.MS(21),
+    paddingHorizontal: SIZE.MS(12),
+    backgroundColor: COLORS.WHITE,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  splitterTypeText: {
+    flex: 1,
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.BOLD,
+    color: '#343943',
+  },
+  splitterPlaceholderText: {color: '#9CA3AF'},
+  dropdownIcon: {
+    width: SIZE.MS(11),
+    height: SIZE.MS(11),
+    resizeMode: 'contain',
+    tintColor: '#667085',
+  },
+  splitterTypeDropdown: {
+    marginTop: SIZE.MS(4),
+    borderWidth: 1,
+    borderColor: '#E1E4E9',
+    borderRadius: SIZE.MS(8),
+    overflow: 'hidden',
+    backgroundColor: COLORS.WHITE,
+  },
+  splitterTypeOption: {
+    minHeight: SIZE.MS(34),
+    paddingHorizontal: SIZE.MS(12),
+    justifyContent: 'center',
+  },
+  splitterTypeOptionBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF0F4',
+  },
+  splitterTypeOptionText: {
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.SEMI_BOLD,
+    color: '#343943',
+  },
+  splitterTypeOptionTextSelected: {
+    color: '#7040DF',
+    fontFamily: FONTS.SEMI_BOLD,
+  },
   remarksInput: {
     height: SIZE.MS(36),
     borderWidth: 1,
     borderColor: '#E1E4E9',
     borderRadius: SIZE.MS(18),
     paddingHorizontal: SIZE.MS(11),
-    fontSize: SIZE.MS(9),
-    fontFamily: FONTS.MEDIUM,
+    fontSize: SIZE.MS(11),
+    fontFamily: FONTS.SEMI_BOLD,
     color: '#343943',
+  },
+  splitterNameInput: {
+    height: SIZE.MS(42),
+    borderWidth: 1,
+    borderColor: '#E1E4E9',
+    borderRadius: SIZE.MS(21),
+    paddingHorizontal: SIZE.MS(12),
+    fontSize: SIZE.MS(12),
+    fontFamily: FONTS.BOLD,
+    color: '#252A33',
   },
   bottomActions: {
     position: 'absolute',
