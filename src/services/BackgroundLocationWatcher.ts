@@ -16,6 +16,7 @@ export function startBackgroundLocationWatcher() {
     Geolocation.setRNConfiguration?.({
       skipPermissionRequests: false,
       authorizationLevel: 'always',
+      locationProvider: Platform.OS === 'android' ? 'playServices' : 'auto',
     });
   } catch { }
   const iosOpts = {
@@ -70,10 +71,14 @@ function onPosition(pos: any): void {
     }
 
     // quick cache for Poster
+    const previous =
+      Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS) ?? {};
     Preferences.setData(Preferences.KEY.LAST_GEO_ADDRESS, {
-      address: '',
+      ...previous,
       lat: latitude,
       long: longitude,
+      accuracy: Number(pos?.coords?.accuracy) || undefined,
+      locationTs: Number(pos?.timestamp) || Date.now(),
     });
 
     // If you perform reverse geocoding elsewhere, you can keep it here as fire-and-forget.

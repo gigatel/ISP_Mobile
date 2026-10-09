@@ -1662,7 +1662,7 @@ const MakeRouteScreen: FC<Props> = ({navigation, route}) => {
           reject,
           {
             enableHighAccuracy: true,
-            timeout: 15000,
+            timeout: 30000,
             maximumAge: 2000,
           },
         );

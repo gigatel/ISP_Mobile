@@ -402,7 +402,7 @@ const RoadProjectSurvey: FC<ScreenProps.RoadProjectTask> = ({empData}) => {
               resolve({lat: pos.coords.latitude, lng: pos.coords.longitude});
             },
             () => resolve(null),
-            {enableHighAccuracy: true, timeout: 6000, maximumAge: 0},
+            {enableHighAccuracy: true, timeout: 30000, maximumAge: 0},
           );
         }, 800);
 
@@ -417,7 +417,7 @@ const RoadProjectSurvey: FC<ScreenProps.RoadProjectTask> = ({empData}) => {
           () => {
             // fallback runs
           },
-          {enableHighAccuracy: false, timeout: 1200, maximumAge: 5 * 60 * 1000},
+          {enableHighAccuracy: true, timeout: 1200, maximumAge: 5 * 60 * 1000},
         );
       }),
     [ensurePermission],

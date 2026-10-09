@@ -459,8 +459,8 @@ const PatrollerTask: FC<ScreenProps.PatrollerTask> = ({
             setPositionReady(true); // ✅ crucial: we’re “ready” (with or without map) so stop loader
           },
           {
-            enableHighAccuracy: false,
-            timeout: 10000,
+            enableHighAccuracy: true,
+            timeout: 30000,
             maximumAge: 0,
           },
         );

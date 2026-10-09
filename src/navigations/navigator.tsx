@@ -184,8 +184,9 @@ export interface RootStackParamList {
   SearchCustomer: undefined;
   CircuitConnectivity: undefined;
   InfraConnectivity: {
-    customer: Record<string, any>;
+    company: Record<string, any>;
     initialCircuit?: Record<string, any>;
+    connectivityType?: 'infra' | 'customer';
   };
   ProfileScreen: undefined;
   PitInstallation: undefined;

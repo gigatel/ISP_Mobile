@@ -1079,13 +1079,13 @@ const InstallFiberWithSLDScreen: FC<Props> = ({navigation, route}) => {
         };
 
         requestPosition({
-          enableHighAccuracy: false,
+          enableHighAccuracy: true,
           timeout: 8000,
           maximumAge: 60000,
         }).then(showPosition, handleFailure);
         requestPosition({
           enableHighAccuracy: true,
-          timeout: 20000,
+          timeout: 30000,
           maximumAge: 0,
         }).then(showPosition, handleFailure);
       });

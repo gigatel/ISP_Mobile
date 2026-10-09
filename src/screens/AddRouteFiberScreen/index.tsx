@@ -798,7 +798,7 @@ const AddRouteFiberScreen: FC<Props> = ({navigation, route}) => {
       return await requestCoordinate(true, 15000, 10000);
     } catch (highAccuracyError) {
       try {
-        return await requestCoordinate(false, 12000, 120000);
+        return await requestCoordinate(true, 12000, 120000);
       } catch {
         const cachedLocation = Preferences.getData('LAST_GEO_ADDRESS');
         const cachedCoordinate = {

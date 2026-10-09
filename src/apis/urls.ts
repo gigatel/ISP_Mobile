@@ -1,14 +1,18 @@
 // Base URL Dev
-// export const BASE_URL = 'http://mob.gigatel.me:7003/api/'; //hrms_ios
-// export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/'; //isp
-// // export const BASE_URL_2 = 'http://10.100.2.38:6102/api/'; //isp-local
-// export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/'; //locationISP
+export const BASE_URL = 'http://mob.gigatel.me:7003/api/'; //hrms_ios
+export const BASE_URL_2 = 'http://mob.gigatel.me:7004/api/'; //isp
+// export const BASE_URL_2 = 'http://10.100.2.38:6102/api/'; //isp-local
+export const BASE_URL_3 = 'http://mob.gigatel.me:7005/api/'; //locationISP
+export const BASE_URL_4 = 'http://mob.gigatel.me:7006/hrms_dev/';
+
 const apiBase = (url: string) => url.replace(/api\/?.*$/i, 'api/');
 
 //Base URL PROD
-export const BASE_URL = 'https://isp.gigatel.me:7003/api/';
-export const BASE_URL_2 = 'https://isp.gigatel.me:7004/api/';
-export const BASE_URL_3 = 'https://isp.gigatel.me:7005/api/';
+// export const BASE_URL = 'https://isp.gigatel.me:7003/api/';
+// export const BASE_URL_2 = 'https://isp.gigatel.me:7004/api/';
+// export const BASE_URL_3 = 'https://isp.gigatel.me:7005/api/';
+// export const BASE_URL_4 = 'https://isp.gigatel.me:7006/hrms/';
+
 
 export const API_ENVIRONMENT: 'DEV' | 'PROD' = /^https?:\/\/isp\./i.test(
   BASE_URL_2,
@@ -27,6 +31,10 @@ export const selectCompany = BASE_URL + 'Account/SelectCompany';
 export const getEmpDeviceList = BASE_URL + 'Account/GetEmpDeviceList';
 export const dashboardList = BASE_URL + 'AppDashboard/DashboardList2';
 export const getAppModules = BASE_URL + 'Policy/GetUserModuleAppModules?';
+export const getUserCompanies =
+  BASE_URL_4 + 'Policy/GetUserCompanyies';
+export const getCircuitsWithDetails =
+  BASE_URL_2 + 'Circuit/GetCircuitPaggiWithDetails';
 //! Attendance
 export const viewAttendance = BASE_URL + 'Attendance/ViewAttendance';
 export const viewAttendanceInOutReport =

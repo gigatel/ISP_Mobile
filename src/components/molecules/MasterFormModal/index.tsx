@@ -190,7 +190,7 @@ export const MasterFormModal: FC<MasterFormModalProps> = ({
                   <View style={styles.col}>
                     <View style={styles.formControl2}>
                       <Text style={styles.latlng}>
-                        Select Address<Text style={styles.text2}>*</Text>
+                        Exact Mapped Address (if found)
                       </Text>
                     </View>
                     <TouchableOpacity
@@ -199,7 +199,7 @@ export const MasterFormModal: FC<MasterFormModalProps> = ({
                       <View pointerEvents="none">
                         <TextInput
                           style={styles.compactInput}
-                          placeholder="Select Address"
+                          placeholder="No exact mapped address"
                           placeholderTextColor={COLORS.colorDarkslategray}
                           value={selectedAddress}
                           editable={false}

@@ -407,7 +407,8 @@ const isValidCoordinate = (
   Number.isFinite(coordinate?.latitude) &&
   Number.isFinite(coordinate?.longitude) &&
   Math.abs(coordinate?.latitude ?? 0) <= 90 &&
-  Math.abs(coordinate?.longitude ?? 0) <= 180;
+  Math.abs(coordinate?.longitude ?? 0) <= 180 &&
+  !(coordinate?.latitude === 0 && coordinate?.longitude === 0);
 
 const getMasterCoordinate = (master: any): Coordinate | null => {
   const latLng =
@@ -1509,8 +1510,9 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           return null;
         }
 
-        const data =
-          (await Location.getAddressFromLatLong()) as DataType.GeoAddress;
+        const data = (await Location.getAddressFromLatLong(
+          true,
+        )) as DataType.GeoAddress;
         const nextPosition = {
           latitude: Number(data?.lat),
           longitude: Number(data?.long),
@@ -1533,22 +1535,6 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
           (!/^address not found$/i.test(returnedAddress)
             ? returnedAddress
             : '');
-
-        if (!nextAddress) {
-          try {
-            const refreshedAddress = await Location.getAddressWithLatLong(
-              nextPosition.latitude,
-              nextPosition.longitude,
-            );
-            nextAddress =
-              asCleanText(refreshedAddress?.addressList?.[0]) ||
-              asCleanText(refreshedAddress?.address);
-          } catch (error) {
-            console.warn('[AllMasters] Current address lookup failed:', error);
-          }
-        }
-
-        nextAddress = nextAddress || getCoordinateAddressText(nextPosition);
 
         setCurrentPosition(nextPosition);
         setCurrentAddress(nextAddress);
@@ -1973,7 +1959,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
         returnToRouteHub: isRouteHubMode,
         routeInitialMasters: masters,
         currentPosition,
-        currentAddress: currentLocationAddress,
+        currentAddress,
       });
       return;
     }
@@ -1982,7 +1968,7 @@ const AllMasters: FC<AllMastersProps> = ({navigation, route}) => {
       selectedMasterType: asCleanText(route.params?.selectedMasterType),
       selectedMasterLabel: asCleanText(route.params?.selectedMasterLabel),
       currentPosition,
-      currentAddress: currentLocationAddress,
+      currentAddress,
     });
   };
 

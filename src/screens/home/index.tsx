@@ -30,7 +30,10 @@ import React, {
   useState,
 } from 'react';
 import {
+  ActivityIndicator,
+  Animated,
   AppState,
+  Easing,
   StyleSheet,
   Text,
   Platform,
@@ -39,6 +42,7 @@ import {
   StatusBar,
   NativeModules,
   NativeEventEmitter,
+  ScrollView,
 } from 'react-native';
 import {connect, useDispatch} from 'react-redux';
 import DeviceInfo from 'react-native-device-info';
@@ -51,6 +55,7 @@ type MobileVersion = {
   version_name?: string;
   version_code?: string | number;
   description?: string;
+  created_on?: string;
 };
 
 type OperationalCounts = {
@@ -387,13 +392,18 @@ const moduleNavigation = (item: DataType.SubModule) => {
 
 // ===== Update Gate =====
 const UpdateGateScreen = ({children}: {children: React.ReactNode}) => (
-  <View style={styles.updateScreen}>
+  <ScrollView
+    style={styles.updateScreen}
+    contentContainerStyle={styles.updateScreenContent}
+    showsVerticalScrollIndicator={false}>
     <View style={styles.updateScreenInner}>{children}</View>
-  </View>
+  </ScrollView>
 );
 
 const UpdateRequiredCard = ({
   versionName,
+  description,
+  publishedOn,
   onUpdatePress,
   projectNames,
   currentVersionName,
@@ -405,6 +415,8 @@ const UpdateRequiredCard = ({
   total,
 }: {
   versionName?: string;
+  description?: string;
+  publishedOn?: string;
   onUpdatePress: () => void | Promise<void>;
   projectNames: string[];
   currentVersionName?: string;
@@ -414,41 +426,152 @@ const UpdateRequiredCard = ({
   percent?: number;
   downloaded?: number;
   total?: number;
-}) => (
-  <View style={styles.updateCard}>
-    <Text style={styles.updateTitle}>Update Required</Text>
-    <Text style={styles.updateSubtitle}>
-      A new version {versionName ? `(${versionName}) ` : ''}is available for{' '}
-      {projectNames.join(', ')} and you are using an older version of the
-      application. Please update to continue.
-    </Text>
-    {(currentVersionName || currentBuild || serverVersionCode) && (
-      <Text style={styles.updateNote}>
-        App: v{currentVersionName ?? '—'} (build {currentBuild ?? '—'}){'\n'}
-        Server version code: {serverVersionCode ?? '—'}
+}) => {
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 1100,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 1100,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulse]);
+
+  const progress =
+    typeof percent === 'number' && percent >= 0
+      ? Math.min(100, Math.max(0, percent))
+      : 0;
+
+  return (
+    <View style={styles.updateCard}>
+      <View style={styles.updateVisual}>
+        <Animated.View
+          style={[
+            styles.updatePulse,
+            {
+              opacity: pulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.32, 0],
+              }),
+              transform: [
+                {
+                  scale: pulse.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.85, 1.35],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+        <View style={styles.updateIconCircle}>
+          <Text style={styles.updateIcon}>↓</Text>
+        </View>
+        <View style={styles.updateShieldBadge}>
+          <Text style={styles.updateShieldIcon}>✓</Text>
+        </View>
+      </View>
+
+      <View style={styles.updateRequiredBadge}>
+        <View style={styles.updateRequiredDot} />
+        <Text style={styles.updateRequiredText}>IMPORTANT UPDATE</Text>
+      </View>
+      <Text style={styles.updateTitle}>A new version is ready</Text>
+      <Text style={styles.updateSubtitle}>
+        Update {projectNames.join(', ')} to keep using the latest features and
+        improvements.
       </Text>
-    )}
-    {downloading ? (
-      <Text style={styles.updateNote}>
-        Downloading…
-        {typeof percent === 'number' && percent >= 0
-          ? ` ${percent.toFixed(0)}%`
-          : ''}
-        {typeof downloaded === 'number' &&
-        typeof total === 'number' &&
-        total > 0
-          ? ` • ${formatBytes(downloaded)} / ${formatBytes(total)}`
-          : ''}
+
+      <View style={styles.versionCompareRow}>
+        <View style={styles.versionCompareItem}>
+          <Text style={styles.versionCompareLabel}>INSTALLED</Text>
+          <Text style={styles.versionCompareValue}>
+            v{currentVersionName ?? '—'}
+          </Text>
+          <Text style={styles.versionCompareBuild}>
+            Build {currentBuild ?? '—'}
+          </Text>
+        </View>
+        <View style={styles.versionArrowCircle}>
+          <Text style={styles.versionArrow}>›</Text>
+        </View>
+        <View style={[styles.versionCompareItem, styles.versionCompareLatest]}>
+          <Text style={styles.versionCompareLabelLatest}>LATEST</Text>
+          <Text style={styles.versionCompareValueLatest}>
+            v{versionName ?? serverVersionCode ?? '—'}
+          </Text>
+          <Text style={styles.versionCompareBuildLatest}>
+            Build {serverVersionCode ?? '—'}
+          </Text>
+        </View>
+      </View>
+
+      {!!description && (
+        <View style={styles.releaseNotes}>
+          <Text style={styles.releaseNotesIcon}>✦</Text>
+          <View style={styles.releaseNotesCopy}>
+            <Text style={styles.releaseNotesTitle}>What’s new</Text>
+            <Text style={styles.releaseNotesText}>{description}</Text>
+          </View>
+        </View>
+      )}
+
+      {downloading && (
+        <View style={styles.downloadPanel}>
+          <View style={styles.downloadLabelRow}>
+            <View style={styles.downloadStatusRow}>
+              <ActivityIndicator size="small" color="#6D20D8" />
+              <Text style={styles.downloadLabel}>Downloading update</Text>
+            </View>
+            <Text style={styles.downloadPercent}>
+              {progress > 0 ? `${progress.toFixed(0)}%` : '…'}
+            </Text>
+          </View>
+          <View style={styles.progressTrack}>
+            <View
+              style={[styles.progressFill, {width: `${progress}%` as any}]}
+            />
+          </View>
+          {typeof downloaded === 'number' && total && total > 0 ? (
+            <Text style={styles.downloadBytes}>
+              {formatBytes(downloaded)} of {formatBytes(total)}
+            </Text>
+          ) : null}
+        </View>
+      )}
+
+      <Buttons
+        type="primary"
+        title={downloading ? 'Downloading securely…' : 'Download & Update'}
+        disabled={downloading}
+        onPress={() => void onUpdatePress()}
+        viewStyle={
+          [
+            styles.updateBtn,
+            downloading ? styles.updateBtnDisabled : undefined,
+          ] as any
+        }
+      />
+      <Text style={styles.updateFooter}>
+        🔒 Secure update from Gigatel
+        {publishedOn ? `  •  ${publishedOn}` : ''}
       </Text>
-    ) : null}
-    <Buttons
-      type="primary"
-      title={downloading ? 'Downloading…' : 'Update Now'}
-      onPress={() => void onUpdatePress()}
-      viewStyle={styles.updateBtn}
-    />
-  </View>
-);
+    </View>
+  );
+};
 
 // ===== HOME SCREEN =====
 const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
@@ -636,28 +759,35 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
 
   useFocusEffect(
     useCallback(() => {
-      void refreshHomeData(false);
+      // Always ask DashboardList2 for the latest mobileAppVersion1 on focus.
+      // The regular dashboard cache must never delay a mandatory APK update.
+      void refreshHomeData(true);
     }, [refreshHomeData]),
   );
 
   const serverVersionCode: string = String(
-    dashboardList?.mobileAppVersion1?.version_code ??
-      dashboardList?.mobileAppVersion?.version_code ??
-      '',
+    dashboardList?.mobileAppVersion1?.version_code ?? '',
   );
 
   // ── Forced update gate ───────────────────────────────────────────────────────
   const [forcedUpdateRequired, setForcedUpdateRequired] = useState(false);
-  const {forcedAccessUrl, forcedVersionName, forcedProjectName} =
-    useMemo(() => {
-      const mv1: MobileVersion | undefined = dashboardList?.mobileAppVersion1;
-      return {
-        forcedAccessUrl: mv1?.access_url as string | undefined,
-        forcedVersionName: mv1?.version_name as string | undefined,
-        forcedProjectName:
-          (mv1?.project_name as string | undefined) ?? 'Employee Master',
-      };
-    }, [dashboardList]);
+  const {
+    forcedAccessUrl,
+    forcedVersionName,
+    forcedProjectName,
+    forcedDescription,
+    forcedPublishedOn,
+  } = useMemo(() => {
+    const mv1: MobileVersion | undefined = dashboardList?.mobileAppVersion1;
+    return {
+      forcedAccessUrl: mv1?.access_url as string | undefined,
+      forcedVersionName: mv1?.version_name as string | undefined,
+      forcedProjectName:
+        (mv1?.project_name as string | undefined) ?? 'Employee Master',
+      forcedDescription: mv1?.description,
+      forcedPublishedOn: mv1?.created_on,
+    };
+  }, [dashboardList]);
   useEffect(() => {
     const interval = setInterval(() => {
       const addrData = Preferences.getData(Preferences.KEY.LAST_GEO_ADDRESS);
@@ -738,7 +868,7 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
   }, [hideDashboardModules]);
 
   const onUpdatePress = useCallback(async () => {
-    const raw = forcedAccessUrl;
+    const raw = forcedAccessUrl?.trim();
     if (!raw) {
       Common.showToast('Update URL not found');
       return;
@@ -1071,6 +1201,8 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
         <UpdateGateScreen>
           <UpdateRequiredCard
             versionName={forcedVersionName}
+            description={forcedDescription}
+            publishedOn={forcedPublishedOn}
             onUpdatePress={() => void onUpdatePress()}
             projectNames={[forcedProjectName]}
             currentVersionName={appVersionName}
@@ -1361,9 +1493,12 @@ const styles = StyleSheet.create({
   // ── Update gate ───────────────────────────────────────────────────────────────
   updateScreen: {
     flex: 1,
-    backgroundColor: COLORS.BACKGROUND_DEFAULT,
+    backgroundColor: '#F4F0FC',
+  },
+  updateScreenContent: {
+    flexGrow: 1,
     paddingHorizontal: SIZE.MS(16),
-    paddingVertical: SIZE.MS(24),
+    paddingVertical: SIZE.MS(18),
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1373,39 +1508,250 @@ const styles = StyleSheet.create({
   },
   updateCard: {
     backgroundColor: COLORS.WHITE,
-    borderRadius: SIZE.MS(12),
-    paddingVertical: SIZE.MS(20),
-    paddingHorizontal: SIZE.MS(16),
+    borderRadius: SIZE.MS(26),
+    borderWidth: 1,
+    borderColor: '#E6DDF7',
+    paddingVertical: SIZE.MS(24),
+    paddingHorizontal: SIZE.MS(20),
     ...STYLES.SHADOW_PRIMARY_3,
   },
+  updateVisual: {
+    width: SIZE.MS(104),
+    height: SIZE.MS(104),
+    alignSelf: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: SIZE.MVS(12),
+  },
+  updatePulse: {
+    position: 'absolute',
+    width: SIZE.MS(92),
+    height: SIZE.MS(92),
+    borderRadius: SIZE.MS(46),
+    backgroundColor: '#8B5CF6',
+  },
+  updateIconCircle: {
+    width: SIZE.MS(76),
+    height: SIZE.MS(76),
+    borderRadius: SIZE.MS(38),
+    backgroundColor: '#6D20D8',
+    borderWidth: SIZE.MS(6),
+    borderColor: '#EEE6FB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#6D20D8',
+    shadowOffset: {width: 0, height: 7},
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  updateIcon: {
+    color: '#FFF',
+    fontSize: SIZE.MS(38),
+    fontFamily: FONTS.BOLD,
+    lineHeight: SIZE.MS(43),
+  },
+  updateShieldBadge: {
+    position: 'absolute',
+    right: SIZE.MS(6),
+    bottom: SIZE.MS(11),
+    width: SIZE.MS(29),
+    height: SIZE.MS(29),
+    borderRadius: SIZE.MS(15),
+    backgroundColor: '#14A66A',
+    borderWidth: 3,
+    borderColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  updateShieldIcon: {
+    color: '#FFF',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(13),
+  },
+  updateRequiredBadge: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0E7FF',
+    paddingHorizontal: SIZE.MS(10),
+    paddingVertical: SIZE.MVS(5),
+    borderRadius: SIZE.MS(14),
+    marginBottom: SIZE.MVS(9),
+  },
+  updateRequiredDot: {
+    width: SIZE.MS(6),
+    height: SIZE.MS(6),
+    borderRadius: SIZE.MS(3),
+    backgroundColor: '#6D20D8',
+    marginRight: SIZE.MS(6),
+  },
+  updateRequiredText: {
+    color: '#6D20D8',
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MS(9),
+    letterSpacing: 0.9,
+  },
   updateTitle: {
-    fontFamily: FONTS.MEDIUM,
-    fontSize: SIZE.MVS(22),
-    color: COLORS.PRIMARY_DARK,
-    marginBottom: SIZE.MS(10),
+    fontFamily: FONTS.BOLD,
+    fontSize: SIZE.MVS(23),
+    color: '#17132D',
+    marginBottom: SIZE.MS(7),
     textAlign: 'center',
   },
   updateSubtitle: {
     fontFamily: FONTS.REGULAR,
-    fontSize: SIZE.MVS(14),
-    color: COLORS.TEXT_DARK,
-    marginBottom: SIZE.MS(16),
+    fontSize: SIZE.MVS(13),
+    color: '#68627A',
+    marginBottom: SIZE.MS(18),
     lineHeight: SIZE.MVS(20),
     textAlign: 'center',
   },
-  updateBtn: {
-    alignSelf: 'center',
-    paddingHorizontal: SIZE.MS(18),
-    height: SIZE.MVS(44),
-    borderRadius: SIZE.MS(10),
-    marginTop: SIZE.MS(6),
-    marginBottom: SIZE.MS(10),
+  versionCompareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SIZE.MVS(14),
   },
-  updateNote: {
-    marginTop: SIZE.MS(6),
-    marginBottom: SIZE.MS(6),
-    fontSize: SIZE.MVS(12),
-    color: COLORS.TEXT_LIGHT,
+  versionCompareItem: {
+    flex: 1,
+    minHeight: SIZE.MVS(75),
+    borderRadius: SIZE.MS(14),
+    backgroundColor: '#F6F4F9',
+    borderWidth: 1,
+    borderColor: '#E9E5EE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SIZE.MS(8),
+  },
+  versionCompareLatest: {
+    backgroundColor: '#F1EAFE',
+    borderColor: '#CFBAF4',
+  },
+  versionCompareLabel: {
+    fontFamily: FONTS.BOLD,
+    color: '#918B9D',
+    fontSize: SIZE.MS(8),
+    letterSpacing: 0.7,
+  },
+  versionCompareLabelLatest: {
+    fontFamily: FONTS.BOLD,
+    color: '#6D20D8',
+    fontSize: SIZE.MS(8),
+    letterSpacing: 0.7,
+  },
+  versionCompareValue: {
+    fontFamily: FONTS.BOLD,
+    color: '#504A5B',
+    fontSize: SIZE.MS(15),
+    marginTop: 3,
+  },
+  versionCompareValueLatest: {
+    fontFamily: FONTS.BOLD,
+    color: '#5B16B7',
+    fontSize: SIZE.MS(15),
+    marginTop: 3,
+  },
+  versionCompareBuild: {
+    fontFamily: FONTS.REGULAR,
+    color: '#918B9D',
+    fontSize: SIZE.MS(9),
+    marginTop: 2,
+  },
+  versionCompareBuildLatest: {
+    fontFamily: FONTS.REGULAR,
+    color: '#7950B5',
+    fontSize: SIZE.MS(9),
+    marginTop: 2,
+  },
+  versionArrowCircle: {
+    width: SIZE.MS(28),
+    height: SIZE.MS(28),
+    borderRadius: SIZE.MS(14),
+    marginHorizontal: SIZE.MS(7),
+    backgroundColor: '#6D20D8',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  versionArrow: {
+    color: '#FFF',
+    fontSize: SIZE.MS(23),
+    lineHeight: SIZE.MS(25),
+  },
+  releaseNotes: {
+    flexDirection: 'row',
+    backgroundColor: '#F8F6FB',
+    borderRadius: SIZE.MS(13),
+    padding: SIZE.MS(12),
+    marginBottom: SIZE.MVS(14),
+  },
+  releaseNotesIcon: {
+    color: '#6D20D8',
+    fontSize: SIZE.MS(18),
+    marginRight: SIZE.MS(9),
+  },
+  releaseNotesCopy: {flex: 1},
+  releaseNotesTitle: {
+    fontFamily: FONTS.SEMI_BOLD,
+    color: '#29233A',
+    fontSize: SIZE.MS(11),
+    marginBottom: 3,
+  },
+  releaseNotesText: {
+    fontFamily: FONTS.REGULAR,
+    color: '#6E687A',
+    fontSize: SIZE.MS(10),
+    lineHeight: SIZE.MVS(15),
+  },
+  downloadPanel: {
+    marginBottom: SIZE.MVS(12),
+  },
+  downloadLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SIZE.MVS(7),
+  },
+  downloadStatusRow: {flexDirection: 'row', alignItems: 'center'},
+  downloadLabel: {
+    marginLeft: SIZE.MS(7),
+    fontFamily: FONTS.MEDIUM,
+    color: '#4D465B',
+    fontSize: SIZE.MS(10),
+  },
+  downloadPercent: {
+    fontFamily: FONTS.BOLD,
+    color: '#6D20D8',
+    fontSize: SIZE.MS(11),
+  },
+  progressTrack: {
+    height: SIZE.MVS(8),
+    borderRadius: SIZE.MS(4),
+    backgroundColor: '#EAE4F2',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: SIZE.MS(4),
+    backgroundColor: '#6D20D8',
+  },
+  downloadBytes: {
+    marginTop: SIZE.MVS(5),
+    textAlign: 'right',
+    fontFamily: FONTS.REGULAR,
+    color: '#8B8497',
+    fontSize: SIZE.MS(9),
+  },
+  updateBtn: {
+    width: '100%',
+    height: SIZE.MVS(48),
+    borderRadius: SIZE.MS(14),
+    marginBottom: SIZE.MS(11),
+  },
+  updateBtnDisabled: {opacity: 0.72},
+  updateFooter: {
+    fontFamily: FONTS.REGULAR,
+    color: '#918B9D',
+    fontSize: SIZE.MS(9),
     textAlign: 'center',
   },
 

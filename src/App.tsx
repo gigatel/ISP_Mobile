@@ -409,6 +409,12 @@ const App = () => {
     initializeApp();
   }, []);
 
+  // Configure the fused high-accuracy provider before any screen requests a
+  // position. Individual screens can then share the same reliable provider.
+  useEffect(() => {
+    Location.initializeConfig();
+  }, []);
+
   useEffect(() => {
     (async () => {
       await notifee.requestPermission({

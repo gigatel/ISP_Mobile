@@ -78,104 +78,122 @@ export const useAddFollowUp = () => {
 
   const addFollowUp = async (payload: any) => {
     return new Promise(resolve => {
-      Geolocation.getCurrentPosition(async res => {
-        try {
-          setLoading(true);
-          const response = await ticketService.addFollowUp(
-            payload.assignTaskId,
-            payload.chamberId,
-            payload.remark,
-            payload.images,
-            {lat: res?.coords.latitude, lng: res?.coords.longitude},
-            payload.selectedChamber,
-          );
-          setLoading(false);
-          const isResponseSuccess = response?.success;
-          if (isResponseSuccess) {
-            resolve(response);
-          } else {
-            setError(response?.message);
+      Geolocation.getCurrentPosition(
+        async res => {
+          try {
+            setLoading(true);
+            const response = await ticketService.addFollowUp(
+              payload.assignTaskId,
+              payload.chamberId,
+              payload.remark,
+              payload.images,
+              {lat: res?.coords.latitude, lng: res?.coords.longitude},
+              payload.selectedChamber,
+            );
+            setLoading(false);
+            const isResponseSuccess = response?.success;
+            if (isResponseSuccess) {
+              resolve(response);
+            } else {
+              setError(response?.message);
+              resolve(null);
+            }
+          } catch (err: any) {
+            setLoading(false);
+            setError(err?.message || 'Failed to submit follow-up');
             resolve(null);
           }
-        } catch (err: any) {
+        },
+        locationError => {
           setLoading(false);
-          setError(err?.message || 'Failed to submit follow-up');
+          setError(locationError.message || 'Unable to get current location');
           resolve(null);
-        }
-      });
+        },
+        {enableHighAccuracy: true, timeout: 30000, maximumAge: 0},
+      );
     });
   };
 
   // Two-phase submission that matches Android FollowUpGtplActivity flow
   const addTwoPhaseFollowUp = async (payload: TwoPhaseFollowUpPayload) => {
     return new Promise(resolve => {
-      Geolocation.getCurrentPosition(async pos => {
-        try {
-          setLoading(true);
+      Geolocation.getCurrentPosition(
+        async pos => {
+          try {
+            setLoading(true);
 
-          const emp = ticketService.getEmployeeData(); // ✅ REAL EMP
-          const location = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          };
+            const emp = ticketService.getEmployeeData(); // ✅ REAL EMP
+            const location = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            };
 
-          /* ========= PHASE 1 ========= */
-          const basicRes = await ticketService.addFollowUp(
-            payload.basic.assignTaskId,
-            payload.basic.chamberId,
-            payload.basic.remark,
-            payload.basic.primaryImage ? [payload.basic.primaryImage] : [],
-            location,
-            payload.basic.selectedChamber,
-          );
+            /* ========= PHASE 1 ========= */
+            const basicRes = await ticketService.addFollowUp(
+              payload.basic.assignTaskId,
+              payload.basic.chamberId,
+              payload.basic.remark,
+              payload.basic.primaryImage ? [payload.basic.primaryImage] : [],
+              location,
+              payload.basic.selectedChamber,
+            );
 
-          if (!basicRes?.success) {
+            if (!basicRes?.success) {
+              setLoading(false);
+              return resolve(null);
+            }
+
+            /* ========= NO ISSUE ========= */
+            if (!payload.issue || !payload.issue.issueId) {
+              setLoading(false);
+              return resolve(basicRes);
+            }
+
+            /* ========= PHASE 2 ========= */
+            const issuePayload: FollowUpWithIssuePayload = {
+              complaintId: payload.basic.assignTaskId,
+              chamberId: payload.basic.chamberId,
+              chamberIdStr: payload.basic.selectedChamber?.chamberIdStr || '',
+              chamberName: payload.basic.selectedChamber?.chamberName || '',
+              isIssueFound: true,
+              issueCategory: payload.issue.issueCategory,
+              issueId: payload.issue.issueId,
+              complaintFollowImage: payload.issue.issueImages.map(img => ({
+                imageUrl: img.includes('base64,')
+                  ? img.split('base64,')[1]
+                  : img,
+                imageExtention: 'jpg',
+              })),
+              lat: location.lat.toString(),
+              lng: location.lng.toString(),
+              gpsLocation:
+                payload.basic.selectedChamber?.chamberName ||
+                `${location.lat},${location.lng}`,
+              remark: payload.issue.issueRemarks,
+              empId: emp.empId.toString(), // ✅ REAL EMP ID
+              companyCode: payload.common.companyCode,
+            };
+
+            const issueRes = await ticketService.addComplaintFollowUp(
+              issuePayload,
+              location,
+              payload.basic.selectedChamber,
+            );
+
             setLoading(false);
-            return resolve(null);
-          }
-
-          /* ========= NO ISSUE ========= */
-          if (!payload.issue || !payload.issue.issueId) {
+            resolve(issueRes);
+          } catch (e) {
             setLoading(false);
-            return resolve(basicRes);
+            resolve(null);
           }
-
-          /* ========= PHASE 2 ========= */
-          const issuePayload: FollowUpWithIssuePayload = {
-            complaintId: payload.basic.assignTaskId,
-            chamberId: payload.basic.chamberId,
-            chamberIdStr: payload.basic.selectedChamber?.chamberIdStr || '',
-            chamberName: payload.basic.selectedChamber?.chamberName || '',
-            isIssueFound: true,
-            issueCategory: payload.issue.issueCategory,
-            issueId: payload.issue.issueId,
-            complaintFollowImage: payload.issue.issueImages.map(img => ({
-              imageUrl: img.includes('base64,') ? img.split('base64,')[1] : img,
-              imageExtention: 'jpg',
-            })),
-            lat: location.lat.toString(),
-            lng: location.lng.toString(),
-            gpsLocation:
-              payload.basic.selectedChamber?.chamberName ||
-              `${location.lat},${location.lng}`,
-            remark: payload.issue.issueRemarks,
-            empId: emp.empId.toString(), // ✅ REAL EMP ID
-            companyCode: payload.common.companyCode,
-          };
-
-          const issueRes = await ticketService.addComplaintFollowUp(
-            issuePayload,
-            location,
-            payload.basic.selectedChamber,
-          );
-
+        },
+        locationError => {
           setLoading(false);
-          resolve(issueRes);
-        } catch (e) {
-          setLoading(false);
+          setError(locationError.message || 'Unable to get current location');
           resolve(null);
-        }
-      });
+        },
+        {enableHighAccuracy: true, timeout: 30000, maximumAge: 0},
+      );
     });
   };
 

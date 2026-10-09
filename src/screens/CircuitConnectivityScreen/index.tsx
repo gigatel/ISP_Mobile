@@ -1,4 +1,4 @@
-import React, {useCallback, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,21 +13,8 @@ import {
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import {FONTS, IMAGES, SIZE} from '@res';
-
-const SAMPLE_CUSTOMERS = [
-  {
-    customerId: '3',
-    customerName: 'SIFY TECHNOLOGIES PRIVATE LIMITED',
-  },
-  {
-    customerId: '20',
-    customerName: 'GTPL BROADBAND PRIVATE LIMITED',
-  },
-  {
-    customerId: '81',
-    customerName: 'TATA COMMUNICATIONS LIMITED',
-  },
-];
+import {HeaderPattern} from '../InfraConnectivityScreen/ConnectivityIcons';
+import {companyService, UserCompany} from '../../services/companyService';
 
 const valueOf = (item: any, ...keys: string[]) => {
   for (const key of keys) {
@@ -41,42 +28,67 @@ const valueOf = (item: any, ...keys: string[]) => {
 const CircuitConnectivityScreen = ({navigation}: any) => {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
-  const [customers, setCustomers] = useState<any[]>(SAMPLE_CUSTOMERS);
+  const [connectivityType, setConnectivityType] = useState<
+    'infra' | 'customer'
+  >('infra');
+  const [typeOpen, setTypeOpen] = useState(false);
+  const [companies, setCompanies] = useState<UserCompany[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
-  const loadCustomers = useCallback((refresh = false) => {
+  const loadCompanies = useCallback(async (refresh = false) => {
     refresh ? setRefreshing(true) : setLoading(true);
     setError('');
-    setCustomers(SAMPLE_CUSTOMERS);
-    requestAnimationFrame(() => {
+
+    try {
+      const response = await companyService.getUserCompanies();
+      if (response.success) {
+        setCompanies(response.data);
+      } else {
+        setCompanies([]);
+        setError(response.message || 'Failed to load companies');
+      }
+    } catch (loadError: any) {
+      setCompanies([]);
+      setError(loadError?.message || 'Failed to load companies');
+    } finally {
       setLoading(false);
       setRefreshing(false);
-    });
+    }
   }, []);
 
-  const filteredCustomers = useMemo(() => {
+  useEffect(() => {
+    loadCompanies();
+  }, [loadCompanies]);
+
+  const filteredCompanies = useMemo(() => {
     const search = query.trim().toLowerCase();
     if (!search) {
-      return customers;
+      return companies;
     }
-    return customers.filter(item =>
+    return companies.filter(item =>
       [
-        valueOf(item, 'companyName', 'customerName', 'name', 'CompanyName'),
-        valueOf(item, 'circuitName', 'CircuitName'),
-        valueOf(item, 'circuitId', 'CircuitId'),
+        valueOf(item, 'name', 'companyName', 'CompanyName'),
+        valueOf(item, 'companyCode', 'CompanyCode'),
+        valueOf(item, 'organizationName', 'OrganizationName'),
       ]
         .join(' ')
         .toLowerCase()
         .includes(search),
     );
-  }, [customers, query]);
+  }, [companies, query]);
 
-  const renderCustomer = ({item}: {item: any}) => {
+  const renderCompany = ({item}: {item: UserCompany}) => {
     const companyName = String(
-      valueOf(item, 'companyName', 'customerName', 'name', 'CompanyName') ||
-        'Unnamed customer',
+      valueOf(
+        item,
+        'organizationName',
+        'OrganizationName',
+        'name',
+        'companyName',
+        'CompanyName',
+      ) || 'Unnamed company',
     );
     return (
       <TouchableOpacity
@@ -84,7 +96,10 @@ const CircuitConnectivityScreen = ({navigation}: any) => {
         accessibilityRole="button"
         accessibilityLabel={`Open circuits for ${companyName}`}
         onPress={() =>
-          navigation.navigate('InfraConnectivity', {customer: item})
+          navigation.navigate('InfraConnectivity', {
+            company: item,
+            connectivityType,
+          })
         }
         style={styles.customerCard}>
         <View style={styles.customerIconWrap}>
@@ -93,7 +108,7 @@ const CircuitConnectivityScreen = ({navigation}: any) => {
         <Text numberOfLines={2} style={styles.customerName}>
           {companyName}
         </Text>
-        <Text style={styles.chevron}>›</Text>
+        <Image source={IMAGES.rightarrow} style={styles.chevronIcon} />
       </TouchableOpacity>
     );
   };
@@ -105,59 +120,91 @@ const CircuitConnectivityScreen = ({navigation}: any) => {
         start={{x: 0, y: 0}}
         end={{x: 1, y: 1}}
         style={[styles.header, {paddingTop: insets.top}]}>
+        <HeaderPattern />
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Go back"
           onPress={navigation.goBack}
           style={styles.backButton}>
-          <Text style={styles.backArrow}>‹</Text>
+          <Image source={IMAGES.arrowBack} style={styles.backImage} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Circuit</Text>
       </LinearGradient>
 
       <View style={styles.body}>
-        <View style={styles.searchBox}>
-          <Image source={IMAGES.search} style={styles.searchIcon} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search by Circuit / Customer"
-            placeholderTextColor="#777D8E"
-            returnKeyType="search"
-            autoCapitalize="none"
-            style={styles.searchInput}
-          />
+        <View style={styles.filterRow}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Connectivity Type"
+            accessibilityState={{expanded: typeOpen}}
+            onPress={() => setTypeOpen(!typeOpen)}
+            style={styles.typeButton}>
+            <Text style={styles.typeText}>
+              {connectivityType === 'infra'
+                ? 'Infra Connectivity'
+                : 'Customer End Connectivity'}
+            </Text>
+            <Image source={IMAGES.down} style={styles.dropdownIcon} />
+          </TouchableOpacity>
+          <View style={styles.searchBox}>
+            <Image source={IMAGES.search} style={styles.searchIcon} />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search"
+              placeholderTextColor="#777D8E"
+              returnKeyType="search"
+              autoCapitalize="none"
+              style={styles.searchInput}
+            />
+          </View>
         </View>
-
+        {typeOpen && (
+          <View style={styles.typeMenu}>
+            {(['infra', 'customer'] as const).map(type => (
+              <TouchableOpacity
+                key={type}
+                accessibilityRole="button"
+                accessibilityState={{selected: connectivityType === type}}
+                style={styles.typeOption}
+                onPress={() => {
+                  setConnectivityType(type);
+                  setTypeOpen(false);
+                }}>
+                <Text
+                  style={[
+                    styles.typeText,
+                    connectivityType === type && styles.selectedType,
+                  ]}>
+                  {type === 'infra'
+                    ? 'Infra Connectivity'
+                    : 'Customer End Connectivity'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
         {loading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color="#7440E8" size="large" />
-            <Text style={styles.stateText}>Loading customers…</Text>
+            <Text style={styles.stateText}>Loading companies…</Text>
           </View>
         ) : (
           <FlatList
-            data={filteredCustomers}
-            renderItem={renderCustomer}
+            data={filteredCompanies}
+            renderItem={renderCompany}
             keyExtractor={(item, index) =>
-              String(
-                valueOf(
-                  item,
-                  'customerCompanyId',
-                  'customerId',
-                  'id',
-                  'CustomerId',
-                ) || index,
-              )
+              String(valueOf(item, 'id', 'companyId', 'CompanyId') || index)
             }
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             contentContainerStyle={
-              filteredCustomers.length ? styles.list : styles.emptyList
+              filteredCompanies.length ? styles.list : styles.emptyList
             }
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
-                onRefresh={() => loadCustomers(true)}
+                onRefresh={() => loadCompanies(true)}
                 colors={['#7440E8']}
                 tintColor="#7440E8"
               />
@@ -166,14 +213,14 @@ const CircuitConnectivityScreen = ({navigation}: any) => {
               <View style={styles.centerState}>
                 <Image source={IMAGES.Circuit} style={styles.emptyIcon} />
                 <Text style={styles.emptyTitle}>
-                  {error ? 'Could not load circuits' : 'No customer found'}
+                  {error ? 'Could not load companies' : 'No company found'}
                 </Text>
                 <Text style={styles.stateText}>
-                  {error || 'Try a different customer or circuit name.'}
+                  {error || 'Try a different company name or code.'}
                 </Text>
                 {!!error && (
                   <TouchableOpacity
-                    onPress={() => loadCustomers()}
+                    onPress={() => loadCompanies()}
                     style={styles.retryButton}>
                     <Text style={styles.retryText}>Retry</Text>
                   </TouchableOpacity>
@@ -189,22 +236,41 @@ const CircuitConnectivityScreen = ({navigation}: any) => {
 
 export default CircuitConnectivityScreen;
 
-const shadow = {
-  shadowColor: '#261449',
-  shadowOffset: {width: 0, height: 3},
-  shadowOpacity: 0.08,
-  shadowRadius: 8,
-  elevation: 3,
-};
-
 const styles = StyleSheet.create({
+  filterRow: {flexDirection: 'row', gap: 8},
+  typeButton: {
+    width: '43%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    minHeight: 44,
+    backgroundColor: '#FFF',
+    borderRadius: 6,
+  },
+  dropdownIcon: {
+    width: 18,
+    height: 18,
+    tintColor: '#737987',
+    resizeMode: 'contain',
+  },
+  selectedType: {color: '#7440E8'},
+  typeText: {fontSize: 11, color: '#515663', flexShrink: 1},
+  typeMenu: {
+    backgroundColor: '#FFF',
+    borderRadius: 6,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#E8EAF0',
+  },
+  typeOption: {padding: 14},
   screen: {flex: 1, backgroundColor: '#F3F5F9'},
   header: {
-    minHeight: SIZE.MVS(96),
+    minHeight: SIZE.MVS(90),
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: SIZE.MS(12),
-    paddingBottom: SIZE.MVS(18),
+    paddingBottom: SIZE.MVS(12),
   },
   backButton: {
     width: SIZE.MS(34),
@@ -212,6 +278,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  backImage: {width: 22, height: 22, tintColor: '#FFF', resizeMode: 'contain'},
   backArrow: {fontSize: SIZE.MS(34), lineHeight: SIZE.MS(34), color: '#FFF'},
   headerTitle: {
     color: '#FFF',
@@ -221,8 +288,8 @@ const styles = StyleSheet.create({
   },
   body: {flex: 1, paddingHorizontal: SIZE.MS(16), paddingTop: SIZE.MVS(14)},
   searchBox: {
-    ...shadow,
-    minHeight: SIZE.MVS(48),
+    flex: 1,
+    minHeight: SIZE.MVS(44),
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFF',
@@ -248,8 +315,7 @@ const styles = StyleSheet.create({
   list: {paddingTop: SIZE.MVS(10), paddingBottom: SIZE.MVS(24)},
   emptyList: {flexGrow: 1},
   customerCard: {
-    ...shadow,
-    minHeight: SIZE.MVS(50),
+    minHeight: SIZE.MVS(42),
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFF',
@@ -264,7 +330,7 @@ const styles = StyleSheet.create({
     width: SIZE.MS(28),
     height: SIZE.MS(28),
     borderRadius: SIZE.MS(7),
-    backgroundColor: '#EEE9FF',
+    backgroundColor: '#FFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -280,6 +346,12 @@ const styles = StyleSheet.create({
     color: '#343845',
     fontFamily: FONTS.MEDIUM,
     fontSize: SIZE.MS(12),
+  },
+  chevronIcon: {
+    width: 12,
+    height: 12,
+    tintColor: '#8250E9',
+    resizeMode: 'contain',
   },
   chevron: {color: '#8250E9', fontSize: SIZE.MS(25)},
   centerState: {

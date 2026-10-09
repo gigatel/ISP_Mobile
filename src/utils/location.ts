@@ -10,11 +10,9 @@ import {
 } from 'react-native-android-location-enabler';
 import {
   check,
-  checkMultiple,
   openSettings,
   PERMISSIONS,
   request,
-  requestMultiple,
 } from 'react-native-permissions';
 import {alert, error, log} from './common';
 import {getData, setData} from './preferences';
@@ -40,6 +38,24 @@ const OLA_REVERSE_GEOCODE_URL =
 const OLA_API_KEY = OLA_MAP_API;
 const REVERSE_GEOCODE_CACHE_MS = 60_000;
 const CACHED_ADDRESS_RADIUS_METERS = 500;
+// Infrastructure masters need the address at the GPS fix itself. A reverse
+// geocoder can otherwise return a popular place from much farther away.
+const EXACT_ADDRESS_RADIUS_METERS = 25;
+const PRIMARY_GPS_TIMEOUT_MS = 20_000;
+const RETRY_GPS_TIMEOUT_MS = 30_000;
+const RECENT_FIX_MAX_AGE_MS = 2 * 60_000;
+
+const isUsableCoordinate = (lat: unknown, long: unknown) => {
+  const latitude = Number(lat);
+  const longitude = Number(long);
+  return (
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    Math.abs(latitude) <= 90 &&
+    Math.abs(longitude) <= 180 &&
+    !(latitude === 0 && longitude === 0)
+  );
+};
 
 const distanceInMeters = (
   firstLat: number,
@@ -91,7 +107,10 @@ export const initializeConfig = async () => {
       skipPermissionRequests: false,
       authorizationLevel: 'always',
       enableBackgroundLocationUpdates: true,
-      locationProvider: 'auto',
+      // Force Android's fused provider. With `auto`, some devices select the
+      // satellite-only provider for high-accuracy requests and return no fix
+      // even while a fresh fused/network coordinate is available.
+      locationProvider: Platform.OS === 'android' ? 'playServices' : 'auto',
     } as any);
   } catch (e) {
     __DEV__ && console.warn('initializeConfig error', e);
@@ -141,6 +160,97 @@ const olaReverseGeocodeRequest = (
     xhr.onerror = () => resolve(null);
     xhr.ontimeout = () => resolve(null);
 
+    xhr.send();
+  });
+
+const getResultCoordinate = (item: any) => {
+  const latitude = Number(
+    item?.geometry?.location?.lat ??
+      item?.geometry?.location?.latitude ??
+      item?.location?.lat ??
+      item?.location?.latitude ??
+      item?.lat ??
+      item?.latitude,
+  );
+  const longitude = Number(
+    item?.geometry?.location?.lng ??
+      item?.geometry?.location?.lon ??
+      item?.geometry?.location?.longitude ??
+      item?.location?.lng ??
+      item?.location?.lon ??
+      item?.location?.longitude ??
+      item?.lng ??
+      item?.lon ??
+      item?.longitude,
+  );
+
+  return Number.isFinite(latitude) && Number.isFinite(longitude)
+    ? {latitude, longitude}
+    : null;
+};
+
+/** Strict lookup used for masters: never use cached or distant-place data. */
+const olaExactReverseGeocodeRequest = (
+  lat: number,
+  long: number,
+): Promise<string[]> =>
+  new Promise(resolve => {
+    if (!OLA_API_KEY) {
+      resolve([]);
+      return;
+    }
+
+    const url = `${OLA_REVERSE_GEOCODE_URL}?latlng=${lat},${long}&api_key=${OLA_API_KEY}`;
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.setRequestHeader(
+      'X-Request-Id',
+      `isp-mobile-exact-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+    );
+    xhr.timeout = 10000;
+
+    xhr.onload = () => {
+      try {
+        if (xhr.status < 200 || xhr.status >= 300) {
+          resolve([]);
+          return;
+        }
+
+        const json = JSON.parse(xhr.responseText);
+        const results = json?.results || json?.geocodingResults || [];
+        const addresses = results
+          .filter((item: any) => {
+            const coordinate = getResultCoordinate(item);
+            return (
+              coordinate !== null &&
+              distanceInMeters(
+                lat,
+                long,
+                coordinate.latitude,
+                coordinate.longitude,
+              ) <= EXACT_ADDRESS_RADIUS_METERS
+            );
+          })
+          .map(
+            (item: any) =>
+              item?.formatted_address || item?.formattedAddress || '',
+          )
+          .filter(
+            (value: string, index: number, values: string[]) =>
+              Boolean(value) && values.indexOf(value) === index,
+          )
+          .slice(0, 5);
+        resolve(addresses);
+      } catch {
+        resolve([]);
+      }
+    };
+
+    xhr.onerror = () => resolve([]);
+    xhr.ontimeout = () => resolve([]);
     xhr.send();
   });
 
@@ -208,15 +318,20 @@ const olaReverseGeocode = async (
 // ─────────────────────────────────────────────────────────────────────────────
 // Public address helpers
 // ─────────────────────────────────────────────────────────────────────────────
-export const getAddressFromLatLong = async (): Promise<DataType.GeoAddress> => {
+export const getAddressFromLatLong = async (
+  exactAddressOnly = false,
+): Promise<DataType.GeoAddress> => {
   try {
     const info = (await getGeoLocation()) as DataType.GeoLocation;
     if (!info)
       return {address: 'Address Not Found', addressList: [], lat: 0, long: 0};
     const {latitude: lat, longitude: long} = info?.coords;
-    const addressList = await olaReverseGeocode(lat, long);
+    const addressList = exactAddressOnly
+      ? await olaExactReverseGeocodeRequest(lat, long)
+      : await olaReverseGeocode(lat, long);
     return {
-      address: addressList?.[0] || 'Address Not Found',
+      address:
+        addressList?.[0] || (exactAddressOnly ? '' : 'Address Not Found'),
       addressList: addressList || [],
       lat,
       long,
@@ -278,12 +393,19 @@ export const startLocationWatch = () => {
       if (typeof lat !== 'number' || typeof long !== 'number') return;
 
       // Update in-memory fix
-      lastFix = {lat, long, ts: Date.now()};
+      const locationTs = Number(pos?.timestamp) || Date.now();
+      lastFix = {lat, long, ts: locationTs};
 
       // Mirror to Preferences (best-effort)
       try {
         const prev = (getData('LAST_GEO_ADDRESS') ?? {}) as any;
-        setData('LAST_GEO_ADDRESS', {...prev, lat, long});
+        setData('LAST_GEO_ADDRESS', {
+          ...prev,
+          lat,
+          long,
+          accuracy: Number(pos?.coords?.accuracy) || undefined,
+          locationTs,
+        });
       } catch (e) {
         __DEV__ && console.warn('[LocationWatch] setData failed', e);
       }
@@ -304,7 +426,14 @@ export const startLocationWatch = () => {
         console.log('📍 Address changed:', address);
         lastKnownAddress = address;
         try {
-          setData('LAST_GEO_ADDRESS', {lat, long, address});
+          const previous = (getData('LAST_GEO_ADDRESS') ?? {}) as any;
+          setData('LAST_GEO_ADDRESS', {
+            ...previous,
+            lat,
+            long,
+            address,
+            locationTs,
+          });
         } catch (_) {}
       }
 
@@ -348,36 +477,129 @@ export const stopLocationWatch = () => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-export const getGeoLocation = async (): Promise<GeolocationResponse> => {
-  return new Promise((resolve, reject) => {
-    try {
-      Geolocation.getCurrentPosition(
-        info => {
-          try {
-            const add = getData('LAST_GEO_ADDRESS') as DataType.GeoAddress;
-            setData('LAST_GEO_ADDRESS', {
-              ...add,
-              lat: info.coords.latitude,
-              long: info.coords.longitude,
-            });
-          } catch (e) {
-            __DEV__ && console.warn('setData LAST_GEO_ADDRESS fail', e);
-          }
-          resolve(info);
-        },
-        err => {
-          error('Error fetching address: ', err?.message ?? '');
-          const loc = getData('LAST_GEO_ADDRESS');
-          reject({
-            coords: {latitude: loc?.lat ?? 0, longitude: loc?.long ?? 0},
-          });
-        },
-        {timeout: 10000, maximumAge: 0, enableHighAccuracy: false},
+const requestHighAccuracyPosition = (
+  timeout: number,
+  maximumAge: number,
+): Promise<GeolocationResponse> =>
+  new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      const timeoutError: any = new Error(
+        'High-accuracy GPS request timed out.',
       );
-    } catch (e) {
-      reject(e);
-    }
+      timeoutError.code = 3;
+      reject(timeoutError);
+    }, timeout);
+
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      callback();
+    };
+
+    Geolocation.getCurrentPosition(
+      position => finish(() => resolve(position)),
+      locationError => finish(() => reject(locationError)),
+      {
+        timeout,
+        maximumAge,
+        enableHighAccuracy: true,
+      },
+    );
   });
+
+const saveLocationFix = (info: GeolocationResponse) => {
+  const lat = Number(info?.coords?.latitude);
+  const long = Number(info?.coords?.longitude);
+  if (!isUsableCoordinate(lat, long)) {
+    return;
+  }
+
+  const ts = Number(info?.timestamp) || Date.now();
+  lastFix = {lat, long, ts};
+  try {
+    const previous = getData('LAST_GEO_ADDRESS') as DataType.GeoAddress;
+    setData('LAST_GEO_ADDRESS', {
+      ...previous,
+      lat,
+      long,
+      accuracy: Number(info?.coords?.accuracy) || undefined,
+      locationTs: ts,
+    });
+  } catch (saveError) {
+    __DEV__ && console.warn('setData LAST_GEO_ADDRESS fail', saveError);
+  }
+};
+
+const getRecentSavedFix = (): GeolocationResponse | null => {
+  const saved = (getData('LAST_GEO_ADDRESS') ?? {}) as any;
+  const memoryFix =
+    lastFix && Date.now() - lastFix.ts <= RECENT_FIX_MAX_AGE_MS
+      ? lastFix
+      : null;
+  const savedTs = Number(saved?.locationTs);
+  const savedFix =
+    isUsableCoordinate(saved?.lat, saved?.long) &&
+    Number.isFinite(savedTs) &&
+    Date.now() - savedTs <= RECENT_FIX_MAX_AGE_MS
+      ? {lat: Number(saved.lat), long: Number(saved.long), ts: savedTs}
+      : null;
+  const fix = memoryFix ?? savedFix;
+
+  if (!fix) {
+    return null;
+  }
+
+  return {
+    coords: {
+      latitude: fix.lat,
+      longitude: fix.long,
+      accuracy: Number(saved?.accuracy) || 0,
+      altitude: null,
+      heading: null,
+      speed: null,
+    },
+    timestamp: fix.ts,
+  } as GeolocationResponse;
+};
+
+export const getGeoLocation = async (): Promise<GeolocationResponse> => {
+  let lastError: any;
+  const attempts = [
+    {timeout: PRIMARY_GPS_TIMEOUT_MS, maximumAge: 0},
+    {timeout: RETRY_GPS_TIMEOUT_MS, maximumAge: 30_000},
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const info = await requestHighAccuracyPosition(
+        attempt.timeout,
+        attempt.maximumAge,
+      );
+      if (isUsableCoordinate(info?.coords?.latitude, info?.coords?.longitude)) {
+        saveLocationFix(info);
+        return info;
+      }
+      lastError = new Error('GPS returned invalid coordinates.');
+    } catch (locationError: any) {
+      lastError = locationError;
+      error('Error fetching location: ', locationError?.message ?? '');
+    }
+  }
+
+  const recentFix = getRecentSavedFix();
+  if (recentFix) {
+    return recentFix;
+  }
+
+  throw lastError ?? new Error('Unable to obtain a current GPS fix.');
 };
 
 export const watchGeoLocation = (): {id: number | null; stop: () => void} => {
@@ -388,10 +610,17 @@ export const watchGeoLocation = (): {id: number | null; stop: () => void} => {
         const lat = res?.coords?.latitude;
         const long = res?.coords?.longitude;
         if (typeof lat === 'number' && typeof long === 'number') {
-          lastFix = {lat, long, ts: Date.now()};
+          const locationTs = Number(res?.timestamp) || Date.now();
+          lastFix = {lat, long, ts: locationTs};
           try {
             const prev = (getData('LAST_GEO_ADDRESS') ?? {}) as any;
-            setData('LAST_GEO_ADDRESS', {...prev, lat, long});
+            setData('LAST_GEO_ADDRESS', {
+              ...prev,
+              lat,
+              long,
+              accuracy: Number(res?.coords?.accuracy) || undefined,
+              locationTs,
+            });
           } catch {}
         }
       },
@@ -506,27 +735,33 @@ export const checkGps = async () => {
 
 export const checkPermission = async () => {
   try {
-    let permission;
     const gps = await checkGps();
-    permission = gps ? permission : 'denied';
-    if (Platform.OS === 'android') {
-      const perm = await checkMultiple([
-        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
-        PERMISSIONS.ANDROID.ACCESS_BACKGROUND_LOCATION,
-      ]);
-      if (
-        perm['android.permission.ACCESS_BACKGROUND_LOCATION'] === 'granted' &&
-        perm['android.permission.ACCESS_FINE_LOCATION'] === 'granted'
-      ) {
-        permission = 'granted';
-      } else {
-        permission = await requestPermission();
-      }
-    } else {
-      permission = await check(PERMISSIONS.IOS.LOCATION_ALWAYS);
-      if (permission === 'denied') permission = await requestPermission();
+    if (!gps) {
+      return 'denied';
     }
-    return permission;
+
+    if (Platform.OS === 'android') {
+      const fineLocation = await check(
+        PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+      );
+      if (fineLocation === 'granted') {
+        return 'granted';
+      }
+      if (fineLocation === 'blocked' || fineLocation === 'unavailable') {
+        return fineLocation;
+      }
+      return requestPermission();
+    }
+
+    const always = await check(PERMISSIONS.IOS.LOCATION_ALWAYS);
+    const whenInUse = await check(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+    if (always === 'granted' || whenInUse === 'granted') {
+      return 'granted';
+    }
+    if (always === 'blocked' && whenInUse === 'blocked') {
+      return 'blocked';
+    }
+    return requestPermission();
   } catch (err) {
     error('Location Error');
     return 'denied';
@@ -534,30 +769,23 @@ export const checkPermission = async () => {
 };
 
 export const requestPermission = async () => {
-  let permission;
   if (Platform.OS === 'android') {
-    const perm = await requestMultiple([
-      PERMISSIONS.ANDROID.ACCESS_BACKGROUND_LOCATION,
-      PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
-    ]);
-    if (perm['android.permission.ACCESS_BACKGROUND_LOCATION'] !== 'granted') {
-      alert({
-        title: 'Background Location',
-        msg: 'Please enable background location\nPermissions > Location > "Allow all the time"',
-        onPress: () => openLocationSetting(),
-      });
-    } else if (perm['android.permission.ACCESS_FINE_LOCATION'] !== 'granted') {
+    const permission = await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);
+    if (permission !== 'granted') {
       alert({
         title: 'Location',
-        msg: 'Please enable location permission to continue',
+        msg: 'Please enable precise location permission to continue',
         onPress: () => openLocationSetting(),
       });
     }
-    permission = perm;
-  } else if (Platform.OS === 'ios') {
-    permission = await request(PERMISSIONS.IOS.LOCATION_ALWAYS);
+    return permission;
   }
-  return permission;
+
+  if (Platform.OS === 'ios') {
+    return request(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+  }
+
+  return 'unavailable';
 };
 
 const openLocationSetting = () => {

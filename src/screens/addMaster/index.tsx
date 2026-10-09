@@ -83,7 +83,11 @@ const AIR_PLACED_MASTER_TYPES = new Set([
 const LOCATION_MATCH_TOLERANCE = 0.000001;
 
 const isValidCoordinate = (coord?: Coordinate | null): coord is Coordinate =>
-  Number.isFinite(coord?.latitude) && Number.isFinite(coord?.longitude);
+  Number.isFinite(coord?.latitude) &&
+  Number.isFinite(coord?.longitude) &&
+  Math.abs(coord?.latitude ?? 0) <= 90 &&
+  Math.abs(coord?.longitude ?? 0) <= 180 &&
+  !(coord?.latitude === 0 && coord?.longitude === 0);
 
 const isSameCoordinate = (first: Coordinate, second: Coordinate) =>
   Math.abs(first.latitude - second.latitude) <= LOCATION_MATCH_TOLERANCE &&
@@ -504,7 +508,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         return;
       }
 
-      const locationData = (await Location.getAddressFromLatLong()) as any;
+      const locationData = (await Location.getAddressFromLatLong(true)) as any;
       const currentPosition = {
         latitude: Number(locationData?.lat),
         longitude: Number(locationData?.long),
@@ -633,7 +637,7 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
         return;
       }
 
-      const data: any = await Location.getAddressFromLatLong();
+      const data: any = await Location.getAddressFromLatLong(true);
       console.log('📦 Location Data:', data);
 
       if (data?.lat && data?.long) {
@@ -672,7 +676,11 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
           setMasterAddress(firstAddress);
         }
 
-        Common.showToast('Location fetched! Please select address.');
+        Common.showToast(
+          data?.addressList?.length
+            ? 'Exact coordinates and address fetched.'
+            : 'Coordinates fetched. Enter the address manually.',
+        );
       } else {
         Alert.alert('Error', 'Unable to fetch coordinates');
       }
@@ -755,6 +763,20 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
 
   // ── Camera ─────────────────────────────────────────────────────────────────
   const openCameraForSlot = async (slot: 1 | 2) => {
+    const coordinate = parseLatLng(latLngText);
+    const captureAddress = masterAddress.trim();
+    if (!coordinate) {
+      Alert.alert('Lat/Lng', 'Fetch or enter valid coordinates first.');
+      return;
+    }
+    if (!captureAddress) {
+      Alert.alert(
+        'Address Required',
+        'Enter the exact master address before capturing the image.',
+      );
+      return;
+    }
+
     // ✅ Check/request camera permission before launching
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) return;
@@ -772,7 +794,14 @@ const AddMaster: FC<ScreenProps.addMaster> = ({navigation}) => {
       const uri = res.assets[0]?.uri;
       if (!uri) return;
       try {
-        const watermarkedUri = await ImageWatermark.applyLocationWatermark(uri);
+        const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+          uri,
+          {
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            address: captureAddress,
+          },
+        );
         if (slot === 1) setImage1(watermarkedUri);
         else setImage2(watermarkedUri);
       } catch (error) {

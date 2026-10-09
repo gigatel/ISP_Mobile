@@ -539,8 +539,8 @@ const PatrollerTask: FC<ScreenProps.PatrollerTask> = ({
             setIsPositionFailed(true);
           },
           {
-            enableHighAccuracy: false,
-            timeout: 10000,
+            enableHighAccuracy: true,
+            timeout: 30000,
             maximumAge: 0,
           },
         );

@@ -306,7 +306,7 @@ export default function FollowUpScreen() {
           },
           {
             enableHighAccuracy: true,
-            timeout: 15000,
+            timeout: 30000,
             maximumAge: 10000,
           },
         );

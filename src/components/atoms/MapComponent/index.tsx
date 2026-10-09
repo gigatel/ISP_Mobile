@@ -456,7 +456,7 @@ const MapComponent: React.FC<{
       },
       () => {},
       {
-        enableHighAccuracy: false,
+        enableHighAccuracy: true,
         timeout: QUICK_CACHED_TIMEOUT_MS,
         maximumAge: LAST_KNOWN_MAX_AGE_MS,
       },

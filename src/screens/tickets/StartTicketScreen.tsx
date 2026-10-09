@@ -125,7 +125,7 @@ export const StartTicketScreen = ({
         console.log('⚠️ No cached position, getting fresh...');
       },
       {
-        enableHighAccuracy: false,
+        enableHighAccuracy: true,
         timeout: 1000,
         maximumAge: 300000,
       },
@@ -152,7 +152,7 @@ export const StartTicketScreen = ({
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000,
+        timeout: 30000,
         maximumAge: 0,
       },
     );

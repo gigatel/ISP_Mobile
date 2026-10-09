@@ -1631,7 +1631,7 @@ const FiberChangeScreen: FC<Props> = ({navigation, route}) => {
             reject(error);
           }
         };
-        requestCurrentPosition(false, 8000, 60000).then(onSuccess, onFailure);
+        requestCurrentPosition(true, 8000, 60000).then(onSuccess, onFailure);
         requestCurrentPosition(true, 20000, 0).then(onSuccess, onFailure);
       });
       setCurrentPosition(position);

@@ -156,7 +156,7 @@ const ChamberDetailCorrection: FC<ScreenProps.ChamberCorrectionDetail> = ({
       },
       () => {},
       {
-        enableHighAccuracy: false,
+        enableHighAccuracy: true,
         timeout: 1500,
         maximumAge: 10 * 60 * 1000,
       },
@@ -312,7 +312,7 @@ const ChamberDetailCorrection: FC<ScreenProps.ChamberCorrectionDetail> = ({
         console.log('⚠️ No cached position, getting fresh...');
       },
       {
-        enableHighAccuracy: false,
+        enableHighAccuracy: true,
         timeout: 1000,
         maximumAge: 300000,
       },
@@ -391,7 +391,7 @@ const ChamberDetailCorrection: FC<ScreenProps.ChamberCorrectionDetail> = ({
       },
       {
         enableHighAccuracy: true,
-        timeout: 20000,
+        timeout: 30000,
         maximumAge: 0,
       },
     );

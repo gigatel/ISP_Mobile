@@ -1230,7 +1230,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                 );
               },
               () => {},
-              {enableHighAccuracy: false, timeout: 30000, maximumAge: 60000},
+              {enableHighAccuracy: true, timeout: 30000, maximumAge: 60000},
             );
           },
           {enableHighAccuracy: true, timeout: 20000, maximumAge: 10000},
@@ -1406,7 +1406,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
                 longitude: position.coords.longitude,
               }),
             err => reject(err),
-            {enableHighAccuracy: false, timeout: 20000, maximumAge: 5000},
+            {enableHighAccuracy: true, timeout: 20000, maximumAge: 5000},
           );
         },
         {enableHighAccuracy: true, timeout: 15000, maximumAge: 1000},
@@ -2111,7 +2111,7 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
         });
         return;
       }
-      const data: any = await Location.getAddressFromLatLong();
+      const data: any = await Location.getAddressFromLatLong(true);
       if (data?.lat && data?.long) {
         setLatLngText(`${data.lat}, ${data.long}`);
         setSelectedAddress('');
@@ -2141,7 +2141,11 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
           setShowAddressDropdown(false);
         }
 
-        Common.showToast('Location fetched! Please select address.');
+        Common.showToast(
+          data?.addressList?.length
+            ? 'Exact coordinates and address fetched.'
+            : 'Coordinates fetched. Enter the address manually.',
+        );
       } else {
         showRouteAlert({
           title: 'Location Not Found',
@@ -2290,6 +2294,25 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
   };
 
   const openCameraForSlot = async (imageSlot: 1 | 2) => {
+    const coordinate = parseLatLng(latLngText);
+    const captureAddress = masterAddress.trim();
+    if (!coordinate) {
+      showRouteAlert({
+        title: 'Lat/Lng Required',
+        message: 'Fetch or enter valid coordinates before capturing an image.',
+        tone: 'location',
+      });
+      return;
+    }
+    if (!captureAddress) {
+      showRouteAlert({
+        title: 'Address Required',
+        message: 'Enter the exact master address before capturing an image.',
+        tone: 'warning',
+      });
+      return;
+    }
+
     const hasPermission = await requestCameraPermission(
       getMasterTypeLabel(selectedType, 'route'),
     );
@@ -2309,8 +2332,14 @@ const AddRouteScreen: FC<ScreenProps.AddRouteScreen> = ({navigation}) => {
       const uri = response.assets[0]?.uri;
       if (uri) {
         try {
-          const watermarkedUri =
-            await ImageWatermark.applyLocationWatermark(uri);
+          const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+            uri,
+            {
+              latitude: coordinate.latitude,
+              longitude: coordinate.longitude,
+              address: captureAddress,
+            },
+          );
           if (imageSlot === 1) setImage1(watermarkedUri);
           else setImage2(watermarkedUri);
         } catch (error) {

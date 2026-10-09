@@ -1,0 +1,71 @@
+diff --git a/node_modules/@react-native-community/geolocation/android/src/main/java/com/reactnativecommunity/geolocation/PlayServicesLocationManager.java b/node_modules/@react-native-community/geolocation/android/src/main/java/com/reactnativecommunity/geolocation/PlayServicesLocationManager.java
+index f16b7ae..a67fd2c 100644
+--- a/node_modules/@react-native-community/geolocation/android/src/main/java/com/reactnativecommunity/geolocation/PlayServicesLocationManager.java
++++ b/node_modules/@react-native-community/geolocation/android/src/main/java/com/reactnativecommunity/geolocation/PlayServicesLocationManager.java
+@@ -17,7 +17,6 @@ import com.facebook.react.bridge.WritableMap;
+ import com.facebook.react.common.SystemClock;
+ import com.facebook.react.modules.core.DeviceEventManagerModule;
+ import com.google.android.gms.location.FusedLocationProviderClient;
+-import com.google.android.gms.location.LocationAvailability;
+ import com.google.android.gms.location.LocationCallback;
+ import com.google.android.gms.location.LocationRequest;
+ import com.google.android.gms.location.LocationResult;
+@@ -80,12 +79,6 @@ public class PlayServicesLocationManager extends BaseLocationManager {
+                             .emit("geolocationDidChange", locationToMap(locationResult.getLastLocation()));
+             }
+ 
+-            @Override
+-            public void onLocationAvailability(LocationAvailability locationAvailability) {
+-                if (!locationAvailability.isLocationAvailable()) {
+-                    emitError(PositionError.POSITION_UNAVAILABLE, "Location not available (FusedLocationProvider).");
+-                }
+-            }
+         };
+ 
+         checkLocationSettings(options, mLocationCallback, null);
+@@ -162,25 +155,35 @@ public class PlayServicesLocationManager extends BaseLocationManager {
+ 
+                 if (location == null) {
+                     callbackHolder.error(PositionError.buildError(PositionError.POSITION_UNAVAILABLE, "No location provided (FusedLocationProvider/lastLocation)."));
+-                    mFusedLocationClient.removeLocationUpdates(mSingleLocationCallback);
+-                    mSingleLocationCallback = null;
++                    stopSingleLocationUpdates(this);
+                     return;
+                 }
+ 
+                 callbackHolder.success(location);
+-                mFusedLocationClient.removeLocationUpdates(mSingleLocationCallback);
+-                mSingleLocationCallback = null;
++                stopSingleLocationUpdates(this);
+             }
+ 
+-            @Override
+-            public void onLocationAvailability(@NonNull LocationAvailability locationAvailability) {
+-                if (!locationAvailability.isLocationAvailable()) {
+-                    callbackHolder.error(PositionError.buildError(PositionError.POSITION_UNAVAILABLE, "Location not available (FusedLocationProvider/lastLocation)."));
+-                }
+-            }
+         };
+     }
+ 
++    /**
++     * A one-shot callback must remove itself. Using the shared
++     * mSingleLocationCallback field here races when two screens request a
++     * position at the same time: the first result can clear the second
++     * callback, and the second result then passes null to Play Services and
++     * crashes the whole process.
++     */
++    private void stopSingleLocationUpdates(LocationCallback callback) {
++        if (callback == null) {
++            return;
++        }
++
++        mFusedLocationClient.removeLocationUpdates(callback);
++        if (mSingleLocationCallback == callback) {
++            mSingleLocationCallback = null;
++        }
++    }
++
+     private static class CallbackHolder {
+         Callback success;
+         Callback error;

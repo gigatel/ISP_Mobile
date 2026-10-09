@@ -83,7 +83,10 @@ const parseLatLng = (latLng?: string | null): Coordinate | null => {
   };
 
   return Number.isFinite(coordinate.latitude) &&
-    Number.isFinite(coordinate.longitude)
+    Number.isFinite(coordinate.longitude) &&
+    Math.abs(coordinate.latitude) <= 90 &&
+    Math.abs(coordinate.longitude) <= 180 &&
+    !(coordinate.latitude === 0 && coordinate.longitude === 0)
     ? coordinate
     : null;
 };
@@ -125,8 +128,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         }
       : null;
   }, [initialMasterLabel, initialMasterType, isRouteMasterSelectionFlow]);
-  const initialAddress = asCleanText(route.params?.currentAddress);
   const initialLatLng = getLatLngText(route.params?.currentPosition ?? null);
+  const routeAddress = asCleanText(route.params?.currentAddress);
+  // Some upstream screens use "lat, lng" as a display fallback. Coordinates
+  // are not an address, so keep the form empty and request manual entry.
+  const initialAddress = parseLatLng(routeAddress) ? '' : routeAddress;
   const initialAddressParts = useMemo(
     () => parseAddressComponents(initialAddress),
     [initialAddress],
@@ -146,6 +152,8 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const [pincode, setPincode] = useState(initialAddressParts.pincode);
   const [image1, setImage1] = useState('');
   const [image2, setImage2] = useState('');
+  const [image1LocationKey, setImage1LocationKey] = useState('');
+  const [image2LocationKey, setImage2LocationKey] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>(
     initialAddress
@@ -160,6 +168,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   );
   const [showMasterTypeDropdown, setShowMasterTypeDropdown] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [addressLookupMessage, setAddressLookupMessage] = useState(
+    initialAddress
+      ? 'Address matched to the current GPS location.'
+      : 'No exact mapped address found. Enter the master address manually.',
+  );
 
   useEffect(() => {
     const showEvent =
@@ -200,6 +213,16 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     [latLngText],
   );
 
+  const getCurrentLocationKey = () => {
+    const coordinate = parseLatLng(latLngText);
+    const normalizedAddress = asCleanText(masterAddress).toLowerCase();
+    return coordinate && normalizedAddress
+      ? `${coordinate.latitude.toFixed(7)},${coordinate.longitude.toFixed(
+          7,
+        )}|${normalizedAddress}`
+      : '';
+  };
+
   const applyAddress = (address: string) => {
     setSelectedAddress(address);
     setMasterAddress(address);
@@ -224,6 +247,8 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     setPincode(initialAddressParts.pincode);
     setImage1('');
     setImage2('');
+    setImage1LocationKey('');
+    setImage2LocationKey('');
     setPreviewImage(null);
     setAddressSuggestions(
       initialAddress
@@ -232,6 +257,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     );
     setShowAddressDropdown(false);
     setShowMasterTypeDropdown(false);
+    setAddressLookupMessage(
+      initialAddress
+        ? 'Address matched to the current GPS location.'
+        : 'No exact mapped address found. Enter the master address manually.',
+    );
   };
 
   const requestCameraPermission = async () => {
@@ -275,6 +305,20 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   };
 
   const openCameraForSlot = async (slot: 1 | 2) => {
+    const coordinate = parseLatLng(latLngText);
+    const captureAddress = asCleanText(masterAddress);
+    if (!coordinate) {
+      Alert.alert('Lat/Lng', 'Fetch or enter valid coordinates first.');
+      return;
+    }
+    if (!captureAddress) {
+      Alert.alert(
+        'Address Required',
+        'Enter the exact master address before capturing the image.',
+      );
+      return;
+    }
+
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) {
       Alert.alert('Camera Permission Required', 'Please allow camera access.');
@@ -301,11 +345,23 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       }
 
       try {
-        const watermarkedUri = await ImageWatermark.applyLocationWatermark(uri);
+        const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+          uri,
+          {
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            address: captureAddress,
+          },
+        );
+        const locationKey = `${coordinate.latitude.toFixed(
+          7,
+        )},${coordinate.longitude.toFixed(7)}|${captureAddress.toLowerCase()}`;
         if (slot === 1) {
           setImage1(watermarkedUri);
+          setImage1LocationKey(locationKey);
         } else {
           setImage2(watermarkedUri);
+          setImage2LocationKey(locationKey);
         }
       } catch (error) {
         Common.error('Unable to watermark master image:', error);
@@ -327,13 +383,16 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         return;
       }
 
-      const data: any = await Location.getAddressFromLatLong();
-      if (!data?.lat || !data?.long) {
+      const data: any = await Location.getAddressFromLatLong(true);
+      if (!parseLatLng(`${data?.lat}, ${data?.long}`)) {
         Alert.alert('Location', 'Unable to fetch your current location.');
         return;
       }
 
       setLatLngText(`${data.lat}, ${data.long}`);
+      applyAddress('');
+      setAddressSuggestions([]);
+      setShowAddressDropdown(false);
 
       if (data?.addressList?.length) {
         const suggestions = data.addressList.map(
@@ -344,13 +403,17 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
           }),
         );
         setAddressSuggestions(suggestions);
-        setShowAddressDropdown(true);
+        setShowAddressDropdown(suggestions.length > 1);
         applyAddress(data.addressList[0]);
-      } else if (data?.address) {
-        setAddressSuggestions([
-          {id: 0, label: data.address, value: data.address},
-        ]);
-        applyAddress(data.address);
+        setAddressLookupMessage(
+          'Exact nearby address found. Verify or edit it before capture.',
+        );
+        Common.showToast('Exact coordinates and address fetched.');
+      } else {
+        setAddressLookupMessage(
+          'No exact mapped address exists here. Enter the master address manually.',
+        );
+        Common.showToast('Coordinates fetched. Enter the address manually.');
       }
     } catch (error: any) {
       Alert.alert('Location', error?.message || 'Failed to fetch location.');
@@ -369,11 +432,6 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
 
     if (!latLngText.trim() || !selectedCoordinate) {
       Alert.alert('Lat/Lng', 'Please enter a valid Lat/Lng.');
-      return;
-    }
-
-    if (!selectedAddress.trim()) {
-      Alert.alert('Address', 'Please select address.');
       return;
     }
 
@@ -412,6 +470,18 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       return;
     }
 
+    const currentLocationKey = getCurrentLocationKey();
+    if (
+      (image1 && image1LocationKey !== currentLocationKey) ||
+      (image2 && image2LocationKey !== currentLocationKey)
+    ) {
+      Alert.alert(
+        imageLabel,
+        'The coordinates or address changed after capture. Please recapture the image so its watermark matches this master.',
+      );
+      return;
+    }
+
     if (!remarks.trim()) {
       Alert.alert('Remarks', 'Remarks is required.');
       return;
@@ -423,7 +493,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       Name: masterName,
       MasterType: selectedMasterLabel,
       Address: masterAddress.trim(),
-      SelectedAddress: selectedAddress.trim(),
+      SelectedAddress: masterAddress.trim(),
       City: city.trim(),
       State: stateName.trim(),
       Country: country.trim() || 'India',
@@ -480,7 +550,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         masterType: selectedMasterType || selectedMasterLabel.toLowerCase(),
         MasterType: selectedMasterLabel,
         address: masterAddress.trim(),
-        selectedAddress: selectedAddress.trim(),
+        selectedAddress: masterAddress.trim(),
         city: city.trim(),
         state: stateName.trim(),
         country: country.trim() || 'India',
@@ -586,7 +656,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               route.params?.fiberChangeInstallationScope ?? 'partial',
             installationProgress: route.params?.fiberChangeInstallationProgress,
             currentPosition: selectedCoordinate,
-            currentAddress: selectedAddress.trim(),
+            currentAddress: masterAddress.trim(),
             addedMaster: resolvedAddedMaster,
             addedMasterKey,
           });
@@ -596,7 +666,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         if (route.params?.returnToRouteHub) {
           (navigation as any).popTo('Route-Master-Hub', {
             currentPosition: selectedCoordinate,
-            currentAddress: selectedAddress.trim(),
+            currentAddress: masterAddress.trim(),
             initialMasters: route.params?.routeInitialMasters ?? [],
             addedMaster: resolvedAddedMaster,
             addedMasterKey,
@@ -608,7 +678,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
           routeName: asCleanText(route.params?.routeName) || 'Unnamed Route',
           routeDraft: route.params?.routeDraft ?? {},
           currentPosition: selectedCoordinate,
-          currentAddress: selectedAddress.trim(),
+          currentAddress: masterAddress.trim(),
           selectedMaster: resolvedAddedMaster,
           selectedMasterVersion: `${addedMasterKey}-${createdMasterId || 0}`,
         };
@@ -626,7 +696,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
           selectedMasterType || selectedMasterLabel.toLowerCase(),
         selectedMasterLabel,
         currentPosition: selectedCoordinate,
-        currentAddress: selectedAddress.trim(),
+        currentAddress: masterAddress.trim(),
         initialMasters: nearestApiMasters,
         addedMaster,
         addedMasterKey,
@@ -661,7 +731,15 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
             </TouchableOpacity>
             <TouchableOpacity
               activeOpacity={0.85}
-              onPress={() => (slot === 1 ? setImage1('') : setImage2(''))}
+              onPress={() => {
+                if (slot === 1) {
+                  setImage1('');
+                  setImage1LocationKey('');
+                } else {
+                  setImage2('');
+                  setImage2LocationKey('');
+                }
+              }}
               style={styles.removeImageButton}>
               <Text style={styles.removeImageText}>x</Text>
             </TouchableOpacity>
@@ -834,11 +912,10 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               </View>
             ) : null}
 
-            <Text style={styles.label}>
-              Select Address<Text style={styles.required}> *</Text>
-            </Text>
+            <Text style={styles.label}>Exact mapped address (if found)</Text>
             <TouchableOpacity
               activeOpacity={0.8}
+              disabled={addressSuggestions.length === 0}
               onPress={() => setShowAddressDropdown(prev => !prev)}
               style={styles.selectAddressInput}>
               <Text
@@ -847,7 +924,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                   !selectedAddress && styles.placeholderText,
                 ]}
                 numberOfLines={1}>
-                {selectedAddress || 'Select'}
+                {selectedAddress || 'No exact mapped address'}
               </Text>
               <Image source={IMAGES.down} style={styles.downIcon} />
             </TouchableOpacity>
@@ -871,13 +948,15 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               </View>
             ) : null}
 
+            <Text style={styles.addressHelpText}>{addressLookupMessage}</Text>
+
             <Text style={styles.label}>
               Address<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
               value={masterAddress}
               onChangeText={setMasterAddress}
-              placeholder="Enter Address"
+              placeholder="Enter the exact master address"
               placeholderTextColor="#9CA3AF"
               style={styles.input}
             />
@@ -1285,6 +1364,14 @@ const styles = StyleSheet.create({
     fontSize: SIZE.MS(12),
     fontFamily: FONTS.SEMI_BOLD,
     color: '#263241',
+  },
+  addressHelpText: {
+    marginTop: SIZE.MS(5),
+    marginBottom: SIZE.MS(2),
+    fontSize: SIZE.MS(10),
+    lineHeight: SIZE.MS(14),
+    fontFamily: FONTS.REGULAR,
+    color: '#667085',
   },
   input: {
     height: SIZE.MS(36),

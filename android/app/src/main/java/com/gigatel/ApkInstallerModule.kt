@@ -16,6 +16,8 @@ import java.net.URL
 class ApkInstallerModule(private val reactCtx: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactCtx) {
 
+  private var listenerCount = 0
+
   companion object {
     private const val EVENT_PROGRESS = "ApkInstallerProgress"
     private const val EVENT_DONE = "ApkInstallerDone"
@@ -23,6 +25,19 @@ class ApkInstallerModule(private val reactCtx: ReactApplicationContext) :
   }
 
   override fun getName() = "ApkInstaller"
+
+  // Required by React Native's NativeEventEmitter contract. Event delivery is
+  // still handled by RCTDeviceEventEmitter below; these methods let RN track
+  // whether JavaScript currently has listeners without emitting warnings.
+  @ReactMethod
+  fun addListener(eventName: String) {
+    listenerCount += 1
+  }
+
+  @ReactMethod
+  fun removeListeners(count: Int) {
+    listenerCount = (listenerCount - count).coerceAtLeast(0)
+  }
 
   // ------------------------
   // Permissions / Settings
