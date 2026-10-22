@@ -1,4 +1,5 @@
 import {APIs, URLs} from '@apis';
+import {fetchWithAppHeaders} from '../../apis/headers';
 import {Buttons} from '@atoms';
 import {LocationPermission, SyncOfflineDataSheet} from '@molecules';
 import {RootStackParamList} from '@navigation/navigator';
@@ -221,7 +222,7 @@ const normalizeUrl = (raw: string) => {
 };
 const probeUrl = async (url: string): Promise<HeadProbe> => {
   try {
-    const res = await fetch(url, {method: 'HEAD' as any});
+    const res = await fetchWithAppHeaders(url, {method: 'HEAD' as any});
     const ct = res.headers.get('content-type');
     const cl = parseInt(res.headers.get('content-length') || '', 10);
     return {
@@ -233,7 +234,7 @@ const probeUrl = async (url: string): Promise<HeadProbe> => {
     };
   } catch (_e) {
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithAppHeaders(url, {
         method: 'GET',
         headers: {Range: 'bytes=0-0'},
       } as any);
@@ -1241,6 +1242,9 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
             }
             onCircuitConnectivity={() =>
               navigator?.getParent()?.navigate('CircuitConnectivity')
+            }
+            onLastMileConnectivity={() =>
+              navigator?.getParent()?.navigate('LastMileConnectivity')
             }
             onModulePress={moduleNavigation}
           />

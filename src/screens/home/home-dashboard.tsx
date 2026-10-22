@@ -6,6 +6,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import React, {useEffect, useMemo, useRef} from 'react';
 import type {PendingSLDJob} from './index';
 import Svg, {Circle, Path} from 'react-native-svg';
+import SplitterIcon from '../LastMileConnectivityScreen/SplitterIcon';
 import {
   ActivityIndicator,
   Animated,
@@ -43,6 +44,7 @@ type DashboardProps = {
   onAddMaster: () => void;
   onRouteFiber: () => void;
   onCircuitConnectivity: () => void;
+  onLastMileConnectivity: () => void;
   onModulePress: (item: DataType.SubModule) => void;
 };
 
@@ -336,6 +338,7 @@ export const HomeDashboard = ({
   onAddMaster,
   onRouteFiber,
   onCircuitConnectivity,
+  onLastMileConnectivity,
   onModulePress,
 }: DashboardProps) => {
   const {width} = useWindowDimensions();
@@ -476,7 +479,12 @@ export const HomeDashboard = ({
           />
         </View>
 
-        <View style={styles.singleActionRow}>
+        <View
+          style={[
+            styles.actionsRow,
+            styles.secondActionRow,
+            compact && styles.actionsColumn,
+          ]}>
           <ActionCard
             title="Circuit Connectivity"
             subtitle="View customer circuits and infrastructure"
@@ -484,6 +492,15 @@ export const HomeDashboard = ({
             bg="#E9EFFF"
             icon={IMAGES.Circuit}
             onPress={onCircuitConnectivity}
+          />
+          <ActionCard
+            title="Last Mile Connectivity with Splitter"
+            subtitle="View nearby splitters and last mile connections"
+            color="#7947E8"
+            bg="#F0E8FF"
+            icon={IMAGES.Circuit}
+            iconNode={<SplitterIcon size={30} color="#7947E8" />}
+            onPress={onLastMileConnectivity}
           />
         </View>
 
@@ -891,7 +908,7 @@ const styles = StyleSheet.create({
   },
   linkText: {fontFamily: FONTS.MEDIUM, color: '#7020DE', fontSize: SIZE.MS(12)},
   actionsRow: {flexDirection: 'row', gap: SIZE.MS(9)},
-  singleActionRow: {flexDirection: 'row', marginTop: SIZE.MVS(9)},
+  secondActionRow: {marginTop: SIZE.MVS(9)},
   actionsColumn: {flexDirection: 'column'},
   actionCard: {
     ...shadow,

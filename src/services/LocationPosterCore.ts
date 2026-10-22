@@ -5,6 +5,7 @@ import { Preferences, Common, Location } from '@utils';
 import { PostLocationApi } from '@slices/attendance.slice';
 import type { StoreDispatch } from '@reducers';
 import { API_BASE_URL } from '@env'; // ⚠️ set in your .env
+import { applyXhrAppHeaders } from '../apis/headers';
 
 let dispatchRef: StoreDispatch | null = null;
 
@@ -30,6 +31,7 @@ function xhrPost(url: string, body: Record<string, any>, token: string): Promise
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
+    applyXhrAppHeaders(xhr, 'POST', url);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.timeout = 15000;

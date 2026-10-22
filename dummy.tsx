@@ -1,4 +1,5 @@
-import {OLA_MAP_API} from '@env';
+import {getOlaMapApiKey} from './src/utils/olaMapKey';
+import {fetchWithAppHeaders} from './src/apis/headers';
 import Geolocation, {
   GeolocationResponse,
 } from '@react-native-community/geolocation';
@@ -24,7 +25,6 @@ import {Preferences} from '@utils';
 
 const OLA_BASE = 'https://api.olamaps.io/places/v1';
 const USER_AGENT = 'TopSchoolApp/1.0 (support@topschool.app)';
-const OLA_MAPS_API_KEY: string = OLA_MAP_API;
 
 type PreciseOpts = {
   desiredAccuracy?: number;
@@ -63,7 +63,7 @@ const fetchWithTimeout = async (
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithAppHeaders(url, {
       ...opts,
       signal: ctrl.signal,
       headers: {
@@ -120,6 +120,7 @@ const composeFromOla = (root: any): string => {
 };
 
 const reverseGeocodeOla = async (lat: number, lon: number): Promise<string> => {
+  const OLA_MAPS_API_KEY = getOlaMapApiKey();
   console.log('latlng');
   if (!OLA_MAPS_API_KEY) return '';
   try {
@@ -330,6 +331,8 @@ export const initializeConfig = async () => {
   OLA MAPS - REVERSE GEOCODE (PUBLIC)
 ========================================================= */
 export const fetchOlaReverseGeocode = async (lat: number, lon: number) => {
+  const OLA_MAPS_API_KEY = getOlaMapApiKey();
+  if (!OLA_MAPS_API_KEY) return {address: 'Address Not Found', lat, long: lon};
   try {
     if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
       return {address: 'Invalid coordinates', lat: 0, long: 0};
@@ -337,7 +340,7 @@ export const fetchOlaReverseGeocode = async (lat: number, lon: number) => {
     const url = `${OLA_BASE}/reverse-geocode?latlng=${lat},${lon}&api_key=${encodeURIComponent(
       OLA_MAPS_API_KEY,
     )}`;
-    const res = await fetch(url);
+    const res = await fetchWithAppHeaders(url);
     const json = await res.json();
     const results = json?.results || json?.geocodingResults || [];
     if (!results.length) {
@@ -366,12 +369,13 @@ export const fetchOlaReverseGeocode = async (lat: number, lon: number) => {
   OLA MAPS - FORWARD GEOCODE (PUBLIC)
 ========================================================= */
 export const fetchOlaForwardGeocode = async (query: string) => {
+  const OLA_MAPS_API_KEY = getOlaMapApiKey();
   try {
     if (!query || query.trim() === '') {
       console.warn('⚠️ Empty search query');
       return [];
     }
-    if (!OLA_MAP_API) {
+    if (!OLA_MAPS_API_KEY) {
       console.error('❌ OLA_MAP_API key missing');
       return [];
     }
@@ -379,7 +383,7 @@ export const fetchOlaForwardGeocode = async (query: string) => {
       query,
     )}&api_key=${encodeURIComponent(OLA_MAPS_API_KEY)}`;
     console.log('🔍 Searching address with Ola Maps (FREE):', query);
-    const response = await fetch(url, {
+    const response = await fetchWithAppHeaders(url, {
       method: 'GET',
       headers: {
         Accept: 'application/json',

@@ -3,6 +3,7 @@ import { navigate, reset } from '@navigation/services';
 import { createAsyncThunk, createEntityAdapter, createSlice } from '@reduxjs/toolkit';
 import { CONSTANT, STRINGS } from '@res';
 import { Common, Preferences, Security } from '@utils';
+import {setOlaMapApiKey} from '../../utils/olaMapKey';
 const LOGIN = 'login';
 const otpAdapter = createEntityAdapter();
 const SELECT_COMPANY_PAYLOAD = {selectedCompanyId: 0};
@@ -111,6 +112,7 @@ export const verifyOtpApi = createAsyncThunk(
         const loginUserInfo = loginRes?.loginUserInfo;
         const loginToken = loginRes?.token ?? '';
 
+        setOlaMapApiKey(loginUserInfo?.olaKey);
         Preferences.setData('API_AUTH_TOKEN', loginToken);
         Preferences.setData('LOGIN_RESPONSE', loginUserInfo);
         Preferences.setData('EMPLOYEE_ID', loginUserInfo?.employeeId);

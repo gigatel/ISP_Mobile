@@ -15,7 +15,7 @@ import MapView, {Marker, UrlTile, Polyline, Callout} from 'react-native-maps';
 import {BackHeader} from '@molecules';
 import {Screen} from '@organisms';
 import {COLORS, SIZE} from '@res';
-import {OLA_MAP_API} from '@env';
+import {getOlaMapApiKey} from '../../utils/olaMapKey';
 import {FONTS, IMAGES} from '@res';
 
 /* ================= TYPES ================= */
@@ -41,6 +41,7 @@ type MapPoint = {
 
 const ChamberDetailsScreen: FC = () => {
   const navigation = useNavigation();
+  const olaMapApiKey = getOlaMapApiKey();
   const handleBackPress = useCallback(() => {
     navigation.goBack();
   }, [navigation]);
@@ -149,9 +150,11 @@ const ChamberDetailsScreen: FC = () => {
               zoomEnabled={true}
               pitchEnabled={true}
               rotateEnabled={true}>
-              <UrlTile
-                urlTemplate={`https://api.olamaps.io/tiles/v1/{z}/{x}/{y}.png?key=${OLA_MAP_API}`}
-              />
+              {olaMapApiKey ? (
+                <UrlTile
+                  urlTemplate={`https://api.olamaps.io/tiles/v1/{z}/{x}/{y}.png?key=${encodeURIComponent(olaMapApiKey)}`}
+                />
+              ) : null}
               <Polyline
                 coordinates={connectedPoints}
                 strokeColor="#4A90E2"

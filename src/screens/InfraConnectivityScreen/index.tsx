@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  FlatList,
   Image,
   RefreshControl,
   ScrollView,
@@ -15,10 +16,19 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import {FONTS, IMAGES, SIZE} from '@res';
 import ConnectivityMap from './ConnectivityMap';
+import CustomerConnectivityCards, {
+  CustomerCard,
+  customerCardsOf,
+  customerField,
+} from './CustomerConnectivityCards';
+import {
+  customerSplitterView,
+  previousSplitterMatch,
+} from './customerSplitterChain';
+import {customerMapItemsOf} from './customerMapItems';
 import {ConnectivityIcon, HeaderPattern} from './ConnectivityIcons';
 import {
   Coordinate,
-  distanceToItem,
   previousSplitterOf,
   typeOf,
   nodeIdOf,
@@ -29,6 +39,7 @@ import {checkPermission, getGeoLocation} from '../../utils/location';
 import {circuitConnectivityService} from '../../services/circuitConnectivityService';
 
 const PURPLE = '#7B4AEE';
+const PAGE_SIZE = 10;
 
 const valueOf = (item: any, ...keys: string[]) => {
   for (const key of keys) {
@@ -81,12 +92,6 @@ const joinCodeAndName = (code: any, name: any) => {
   return `(${safeCode}) ${safeName}`;
 };
 
-const masterLabelOf = (item: any, prefix: 'from' | 'to') =>
-  joinCodeAndName(
-    valueOf(item, `${prefix}MasterType`, `${prefix}MasterCode`),
-    valueOf(item, `${prefix}MasterName`),
-  );
-
 const routeLabelOf = (item: any) =>
   joinCodeAndName(
     valueOf(item, 'fiberCode', 'FiberCode'),
@@ -94,7 +99,7 @@ const routeLabelOf = (item: any) =>
   );
 
 const isRouteDetail = (item: any) =>
-  Number(valueOf(item, 'routeFiberId', 'RouteFiberId')) > 0 ||
+  Number(valueOf(item, 'routeFiberMappingId', 'RouteFiberMappingId')) > 0 ||
   !!valueOf(item, 'routeName', 'RouteName') ||
   String(valueOf(item, 'infraType', 'InfraType'))
     .toLowerCase()
@@ -186,6 +191,23 @@ const Field = ({label, value, wide = false}: any) => (
   </View>
 );
 
+const MasterDetailsCell = ({row, side}: {row: any; side: 'from' | 'to'}) => (
+  <View style={[styles.masterCell, styles.masterDetailsCell]}>
+    {(['Name', 'Type', 'Address'] as const).map(label => (
+      <Text key={label} selectable style={styles.masterDetailValue}>
+        <Text style={styles.masterDetailLabel}>{label}: </Text>
+        {display(
+          valueOf(
+            row,
+            `${side}Master${label}`,
+            `${side === 'from' ? 'From' : 'To'}Master${label}`,
+          ),
+        )}
+      </Text>
+    ))}
+  </View>
+);
+
 const RouteTable = ({rows}: {rows: any[]}) => (
   <View style={styles.tableCard}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -212,13 +234,8 @@ const RouteTable = ({rows}: {rows: any[]}) => (
             <Text style={[styles.bodyCell, styles.routeCell]}>
               {routeLabelOf(row)}
             </Text>
-            <Text style={[styles.bodyCell, styles.masterCell]}>
-              {valueOf(row, 'fromMaster', 'FromMaster') ||
-                masterLabelOf(row, 'from')}
-            </Text>
-            <Text style={[styles.bodyCell, styles.masterCell]}>
-              {valueOf(row, 'toMaster', 'ToMaster') || masterLabelOf(row, 'to')}
-            </Text>
+            <MasterDetailsCell row={row} side="from" />
+            <MasterDetailsCell row={row} side="to" />
           </View>
         ))}
       </View>
@@ -289,7 +306,7 @@ const InfraCard = ({item}: {item: any}) => (
     <Field
       wide
       label="Rack Name"
-      value={valueOf(item, 'rackName', 'RackName')}
+      value={valueOf(item, 'rackname', 'rackName', 'RackName')}
     />
     <View style={styles.fieldRow}>
       <Field
@@ -324,24 +341,24 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
   const customer = route?.params?.connectivityType === 'customer';
   const [mapVisible, setMapVisible] = useState(false);
   const [radius, setRadius] = useState(300);
+  const [filterMode, setFilterMode] = useState<'all' | 'name' | 'nearby'>(
+    'all',
+  );
+  const [nameQuery, setNameQuery] = useState('');
   const [location, setLocation] = useState<Coordinate | null>(null);
   const [locationError, setLocationError] = useState('');
   const [locating, setLocating] = useState(false);
   const [focusedNode, setFocusedNode] = useState<any>(null);
-  useEffect(() => {
-    if (!mapVisible) {
-      return;
-    }
-    const subscription = BackHandler.addEventListener(
-      'hardwareBackPress',
-      () => {
-        setMapVisible(false);
-        return true;
-      },
-    );
-    return () => subscription.remove();
-  }, [mapVisible]);
-  const scrollRef = useRef<ScrollView>(null);
+  const [splitterStep, setSplitterStep] = useState(0);
+  const [previousSplitters, setPreviousSplitters] = useState<CustomerCard[]>(
+    [],
+  );
+  const [splitterLoading, setSplitterLoading] = useState(false);
+  const [splitterError, setSplitterError] = useState('');
+  const splitterRequest = useRef(0);
+  const splitterLoadingRef = useRef(false);
+  const [customerConnectionIndex, setCustomerConnectionIndex] = useState(0);
+  const scrollRef = useRef<FlatList<any>>(null);
   const candidate = route?.params?.initialCircuit;
   const initialCircuit =
     candidate &&
@@ -352,18 +369,22 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
   const [circuits, setCircuits] = useState<any[]>(
     initialCircuit ? [initialCircuit] : [],
   );
-  const [selectedCircuit, setSelectedCircuit] = useState<any>(
-    initialCircuit ?? null,
-  );
-  const [infraItems, setInfraItems] = useState<any[]>(
-    asList(initialCircuit?.details),
-  );
-  const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedCircuit, setSelectedCircuit] = useState<any>(null);
+  const [infraItems, setInfraItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const requestSequence = useRef(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const pageRef = useRef(0);
+  const loadingMoreRef = useRef(false);
+  const pagePayloadRef = useRef<
+    | Parameters<typeof circuitConnectivityService.getCircuitsWithDetails>[0]
+    | null
+  >(null);
+  const loadedCircuitsRef = useRef<any[]>([]);
   useEffect(
     () => () => {
       requestSequence.current++;
@@ -371,8 +392,40 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
     [],
   );
 
+  const returnToCircuitList = useCallback(() => {
+    setMapVisible(false);
+    setSelectedCircuit(null);
+    setFocusedNode(null);
+    setSplitterStep(0);
+    setCustomerConnectionIndex(0);
+    scrollRef.current?.scrollToOffset({offset: 0, animated: false});
+  }, []);
+  const goBack = useCallback(() => {
+    if (mapVisible) {
+      setMapVisible(false);
+    } else if (selectedCircuit) {
+      returnToCircuitList();
+    } else {
+      navigation.goBack();
+    }
+  }, [mapVisible, selectedCircuit, returnToCircuitList, navigation]);
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (mapVisible || selectedCircuit) {
+          goBack();
+          return true;
+        }
+        return false;
+      },
+    );
+    return () => subscription.remove();
+  }, [mapVisible, selectedCircuit, goBack]);
+
   const locate = useCallback(async () => {
     setLocating(true);
+    setLocation(null);
     setLocationError('');
     try {
       if ((await checkPermission()) !== 'granted') {
@@ -384,17 +437,47 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
         longitude: fix.coords.longitude,
       });
     } catch (e: any) {
+      setRefreshing(false);
       setLocationError(e?.message || 'Could not get current location.');
     } finally {
       setLocating(false);
     }
   }, []);
-  useEffect(() => {
+  const activateNearby = () => {
+    returnToCircuitList();
+    setFilterMode('nearby');
+    setNameQuery('');
     locate();
-  }, [locate]);
+  };
+  const showAll = () => {
+    returnToCircuitList();
+    setFilterMode('all');
+    setNameQuery('');
+    setLocationError('');
+  };
+  const searchByName = (text: string) => {
+    returnToCircuitList();
+    setNameQuery(text);
+    setFilterMode(text.trim() ? 'name' : 'all');
+    setLocationError('');
+  };
+  const changeRadius = (step: number) => {
+    setRadius(value => Math.max(100, value + step));
+    if (filterMode !== 'nearby') {
+      activateNearby();
+    }
+  };
+  const activeLocation = filterMode === 'nearby' ? location : null;
+  const activeRange = filterMode === 'nearby' ? radius : null;
+  const activeName = filterMode === 'name' ? nameQuery.trim() : '';
   useEffect(() => {
     setInfraItems(asList(selectedCircuit?.details));
+    if (!selectedCircuit) {
+      setMapVisible(false);
+    }
     setFocusedNode(null);
+    setSplitterStep(0);
+    setCustomerConnectionIndex(0);
   }, [selectedCircuit]);
 
   const load = useCallback(
@@ -411,103 +494,162 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
         return;
       }
 
+      if (filterMode === 'nearby' && !activeLocation) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+
       const sequence = ++requestSequence.current;
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+      setPageError('');
+      setHasMore(false);
+      pagePayloadRef.current = null;
+      pageRef.current = 0;
       refresh ? setRefreshing(true) : setLoading(true);
       setError('');
 
-      const response = await circuitConnectivityService.getCircuitsWithDetails({
+      const payload = {
         page: 1,
-        size: 100,
-        search: query.trim(),
+        size: PAGE_SIZE,
+        search: '',
         companyId,
-      });
+        CircuitType: customer ? ('Customer' as const) : ('Infra' as const),
+        CustomerSearch: customer ? activeName : '',
+        InfraSearch: customer ? '' : activeName,
+        Range: activeRange,
+        LatLng: activeLocation
+          ? `${activeLocation.latitude}, ${activeLocation.longitude}`
+          : '',
+      };
+      const response = await circuitConnectivityService.getCircuitsWithDetails(
+        payload,
+      );
 
-      if (response.success) {
-        const total = Math.max(response.recordsFiltered, response.recordsTotal);
-        for (let page = 2; (page - 1) * 100 < total; page++) {
-          if (sequence !== requestSequence.current) {
-            return;
-          }
-          const next = await circuitConnectivityService.getCircuitsWithDetails({
-            page,
-            size: 100,
-            search: query.trim(),
-            companyId,
-          });
-          if (!next.success) {
-            response.success = false;
-            response.message = next.message;
-            break;
-          }
-          response.data.push(...next.data);
-          if (!next.data.length) {
-            break;
-          }
-        }
-      }
       if (sequence !== requestSequence.current) {
         return;
       }
 
       if (response.success) {
-        const list = response.data
-          .map(normalizeCircuit)
-          .filter(
-            item =>
-              !circuitModeOf(item) ||
-              circuitModeOf(item) === (customer ? 'customer' : 'infra'),
-          );
+        const list = response.data.map(normalizeCircuit);
+        loadedCircuitsRef.current = list;
+        pagePayloadRef.current = payload;
+        pageRef.current = 1;
+        setHasMore(
+          response.data.length === PAGE_SIZE &&
+            list.length < response.recordsFiltered,
+        );
         setCircuits(list);
 
-        if (list.length) {
-          setSelectedCircuit((current: any) => {
-            if (query.trim() && current) {
-              return current;
-            }
-            const updated =
-              list.find(item => circuitIdOf(item) === circuitIdOf(current)) ??
-              list[0];
-            return updated;
-          });
-        } else if (!query.trim() && !list.length) {
-          setSelectedCircuit(null);
-          setInfraItems([]);
-        }
+        setSelectedCircuit((current: any) =>
+          current
+            ? list.find(item => circuitIdOf(item) === circuitIdOf(current)) ??
+              null
+            : null,
+        );
       } else {
         setCircuits([]);
+        setSelectedCircuit(null);
+        setInfraItems([]);
         setError(response.message || 'Failed to load circuits');
       }
 
       setLoading(false);
       setRefreshing(false);
     },
-    [companyId, customer, query],
+    [companyId, customer, activeLocation, activeName, activeRange, filterMode],
   );
 
   useEffect(() => {
-    const debounce = setTimeout(load, query.trim() ? 400 : 0);
-    return () => clearTimeout(debounce);
-  }, [load, query]);
+    const sequenceRef = requestSequence;
+    pagePayloadRef.current = null;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    setHasMore(false);
+    setPageError('');
+    const debounce = setTimeout(load, 400);
+    return () => {
+      clearTimeout(debounce);
+      sequenceRef.current++;
+    };
+  }, [load]);
 
-  const matchingCircuits = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    if (!search) {
-      return circuits;
-    }
-    return circuits;
-  }, [circuits, query]);
+  const loadMore = useCallback(
+    async (retry = false) => {
+      const payload = pagePayloadRef.current;
+      if (
+        selectedCircuit ||
+        loading ||
+        refreshing ||
+        loadingMoreRef.current ||
+        !hasMore ||
+        !payload ||
+        (pageError && !retry)
+      ) {
+        return;
+      }
+      const sequence = requestSequence.current;
+      const nextPage = pageRef.current + 1;
+      loadingMoreRef.current = true;
+      setLoadingMore(true);
+      setPageError('');
+      try {
+        const response =
+          await circuitConnectivityService.getCircuitsWithDetails({
+            ...payload,
+            page: nextPage,
+          });
+        if (sequence !== requestSequence.current) {
+          return;
+        }
+        if (!response.success) {
+          setPageError(response.message || 'Could not load more circuits.');
+          return;
+        }
+        const previousCount = loadedCircuitsRef.current.length;
+        const merged = new Map(
+          loadedCircuitsRef.current.map((item, index) => [
+            circuitIdOf(item) || `loaded-${index}`,
+            item,
+          ]),
+        );
+        response.data
+          .map(normalizeCircuit)
+          .forEach((item, index) =>
+            merged.set(circuitIdOf(item) || `page-${nextPage}-${index}`, item),
+          );
+        const list = [...merged.values()];
+        loadedCircuitsRef.current = list;
+        pageRef.current = nextPage;
+        setCircuits(list);
+        setHasMore(
+          response.data.length === PAGE_SIZE &&
+            list.length > previousCount &&
+            list.length < response.recordsFiltered,
+        );
+      } catch (e: any) {
+        if (sequence === requestSequence.current) {
+          setPageError(e?.message || 'Could not load more circuits.');
+        }
+      } finally {
+        if (sequence === requestSequence.current) {
+          loadingMoreRef.current = false;
+          setLoadingMore(false);
+        }
+      }
+    },
+    [selectedCircuit, loading, refreshing, hasMore, pageError],
+  );
 
   const selectCircuit = (circuit: any) => {
     setSelectedCircuit(circuit);
-    setQuery('');
-    setSearchOpen(false);
-    setLoading(true);
     setError('');
     setInfraItems(asList(circuit?.details));
     setFocusedNode(null);
-    requestAnimationFrame(() => {
-      setLoading(false);
-    });
+    setSplitterStep(0);
+    setCustomerConnectionIndex(0);
+    scrollRef.current?.scrollToOffset({offset: 0, animated: false});
   };
 
   const routeRowsFor = (item: any) => {
@@ -538,14 +680,127 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
     () => (infraItems.length ? infraItems : defaultRows),
     [infraItems, defaultRows],
   );
+  const customerCards = useMemo(
+    () => customerCardsOf(allItems, selectedCircuit),
+    [allItems, selectedCircuit],
+  );
+  const customerView = useMemo(() => {
+    const base = customerSplitterView(
+      customerCards,
+      customerConnectionIndex,
+      0,
+    );
+    const customerData = base.cards.find(
+      card => card.kind === 'customer',
+    )?.data;
+    const connectedCode = customerField(customerData, 'splitterCode');
+    const connectedId = customerField(customerData, 'splitterId');
+    // Preserve the circuit response record's code and parentId. The local
+    // topology may merge this record with a physical splitter further upstream.
+    const first =
+      customerCards.find(
+        card =>
+          card.kind === 'splitter' &&
+          (connectedCode !== ''
+            ? String(customerField(card.data, 'splitterCode')) ===
+              String(connectedCode)
+            : connectedId !== '' &&
+              String(customerField(card.data, 'splitterId')) ===
+                String(connectedId)),
+      ) || base.path[0];
+    const splitterId = customerField(first?.data, 'splitterId');
+    const rawDetails = asList(
+      selectedCircuit?.fullDetails?.details ?? selectedCircuit?.details,
+    );
+    const rawConnections = asList(
+      selectedCircuit?.fullDetails?.splitterDetails ??
+        selectedCircuit?.splitterDetails,
+    );
+    const sameSplitter = (record: any) =>
+      Number(splitterId) > 0 &&
+      String(customerField(record, 'splitterId', 'deviceId')) ===
+        String(splitterId);
+    const recordId = (record: any) =>
+      customerField(record, 'splitterDetailId', 'id');
+    // Customer output legs can contain a display code. Their parent record,
+    // when it belongs to the same physical splitter, holds its actual API code.
+    const rawSplitter =
+      rawConnections.find(
+        record =>
+          sameSplitter(record) &&
+          String(recordId(record)) ===
+            String(customerField(customerData, 'parentId')),
+      ) ||
+      rawConnections.find(
+        record =>
+          sameSplitter(record) &&
+          String(recordId(record)) === String(recordId(first?.data)),
+      ) ||
+      rawDetails.find(
+        record =>
+          sameSplitter(record) && customerField(record, 'splitterCode') !== '',
+      );
+    const initial = first
+      ? {
+          ...first,
+          data: {
+            ...first.data,
+            ...rawSplitter,
+            requestSplitterCode: customerField(rawSplitter, 'splitterCode'),
+          },
+        }
+      : undefined;
+    const path = [...(initial ? [initial] : []), ...previousSplitters];
+    const step = Math.min(splitterStep, Math.max(0, path.length - 1));
+    const current = path[step]?.data;
+    const parentId = customerField(current, 'parentId');
+    const hasPrevious =
+      Number(parentId) > 0 &&
+      Number(customerField(current, 'splitterId')) > 0 &&
+      customerField(
+        current,
+        step === 0 ? 'requestSplitterCode' : 'splitterCode',
+      ) !== '' &&
+      !path
+        .slice(0, step + 1)
+        .some(
+          card =>
+            String(customerField(card.data, 'splitterDetailId', 'id')) ===
+            String(parentId),
+        );
+    return {
+      ...base,
+      path,
+      step,
+      hasPrevious,
+      missingDetails: false,
+      cards: [
+        ...path.slice(0, step + 1).reverse(),
+        ...base.cards.filter(card => card.kind === 'customer'),
+      ],
+    };
+  }, [
+    customerCards,
+    customerConnectionIndex,
+    splitterStep,
+    previousSplitters,
+    selectedCircuit,
+  ]);
+  useEffect(() => {
+    const requestRef = splitterRequest;
+    requestRef.current++;
+    splitterLoadingRef.current = false;
+    setPreviousSplitters([]);
+    setSplitterStep(0);
+    setSplitterLoading(false);
+    setSplitterError('');
+    return () => {
+      requestRef.current++;
+    };
+  }, [customerCards, customerConnectionIndex]);
   const visibleItems = useMemo(() => {
-    const nearby = customer
-      ? allItems
-      : location
-      ? allItems.filter(item => distanceToItem(location, item) <= radius)
-      : [];
     if (!focusedNode) {
-      return nearby;
+      return allItems;
     }
     const id = nodeIdOf(focusedNode);
     const edges = allItems.filter(
@@ -568,10 +823,32 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
         !edges.includes(item),
     );
     return [focusedNode, ...edges, ...connectedNodes];
-  }, [allItems, customer, location, radius, focusedNode]);
-  const unlocatedCount = allItems.filter(
-    item => !Number.isFinite(distanceToItem({latitude: 0, longitude: 0}, item)),
-  ).length;
+  }, [allItems, focusedNode]);
+  const mapItems = useMemo(() => {
+    if (customer) {
+      const customerCard = customerView.cards.find(
+        card => card.kind === 'customer',
+      );
+      return customerMapItemsOf(
+        [
+          ...customerView.path.slice(0, customerView.step + 1),
+          ...(customerCard ? [customerCard] : []),
+        ],
+        allItems.filter(isRouteDetail),
+      );
+    }
+    if (focusedNode) {
+      return visibleItems;
+    }
+    return selectedCircuit ? [selectedCircuit] : [];
+  }, [
+    allItems,
+    selectedCircuit,
+    customer,
+    customerView,
+    focusedNode,
+    visibleItems,
+  ]);
   const topologyItems = useMemo(() => withEndpointNodes(allItems), [allItems]);
   const groupedItems = useMemo(() => {
     const groups: any[] = [];
@@ -596,27 +873,92 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
       .find(item => typeOf(item).includes('customer')) ??
     [...topologyItems].reverse().find(item => typeOf(item).includes('split'));
   const previousSplitter = previousSplitterOf(topologyItems, currentNode);
-  const viewPrevious = () => {
+  const viewPrevious = async () => {
+    if (customer) {
+      if (!customerView.hasPrevious || splitterLoadingRef.current) {
+        return;
+      }
+      const current = customerView.path[customerView.step].data;
+      const sequence = ++splitterRequest.current;
+      splitterLoadingRef.current = true;
+      setSplitterLoading(true);
+      setSplitterError('');
+      try {
+        const response =
+          await circuitConnectivityService.getPreviousSplitterDetails(
+            Number(customerField(current, 'splitterId')),
+            String(
+              customerField(
+                current,
+                customerView.step === 0
+                  ? 'requestSplitterCode'
+                  : 'splitterCode',
+              ),
+            ),
+            false,
+          );
+        if (sequence !== splitterRequest.current) {
+          return;
+        }
+        const match = response.success
+          ? previousSplitterMatch(
+              response.data,
+              customerField(current, 'parentId'),
+            )
+          : undefined;
+        if (!match) {
+          setSplitterError(
+            response.success
+              ? 'No previous splitter matched this splitter’s parent ID.'
+              : response.message,
+          );
+          return;
+        }
+        setPreviousSplitters([
+          ...previousSplitters.slice(0, customerView.step),
+          {kind: 'splitter', data: match, previous: true},
+        ]);
+        setSplitterStep(customerView.step + 1);
+        scrollRef.current?.scrollToOffset({offset: 0, animated: true});
+      } catch (e: any) {
+        if (sequence === splitterRequest.current) {
+          setSplitterError(
+            e?.message || 'Could not load previous splitter. Try again.',
+          );
+        }
+      } finally {
+        if (sequence === splitterRequest.current) {
+          splitterLoadingRef.current = false;
+          setSplitterLoading(false);
+        }
+      }
+      return;
+    }
     if (previousSplitter) {
       setFocusedNode(previousSplitter);
-      scrollRef.current?.scrollTo({y: 0, animated: true});
+      scrollRef.current?.scrollToOffset({offset: 0, animated: true});
     }
   };
+  const splitterActionDisabled = splitterLoading || !customerView.hasPrevious;
   const previousButton = customer && (
     <TouchableOpacity
       accessibilityRole="button"
-      disabled={!previousSplitter}
+      accessibilityLabel="View previous splitter"
+      disabled={splitterActionDisabled}
       onPress={viewPrevious}
       style={[
         styles.previousButton,
-        !previousSplitter && styles.mapButtonDisabled,
+        splitterActionDisabled && styles.mapButtonDisabled,
       ]}>
       <LinearGradient
         pointerEvents="none"
         colors={['#8A54FA', '#6031D0']}
         style={[StyleSheet.absoluteFill, styles.buttonGradient]}
       />
-      <Text style={styles.retryText}>View Previous Splitter</Text>
+      {splitterLoading && <ActivityIndicator color="#FFF" />}
+      <Text style={styles.retryText}>
+        {splitterLoading ? 'Loading connectivity…' : 'View Previous Splitter'}
+      </Text>
     </TouchableOpacity>
   );
 
@@ -631,30 +973,31 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Go back"
-          onPress={() =>
-            mapVisible ? setMapVisible(false) : navigation.goBack()
-          }
+          onPress={goBack}
           style={styles.backButton}>
           <Image source={IMAGES.arrowBack} style={styles.backImage} />
         </TouchableOpacity>
         <Text numberOfLines={1} style={styles.headerTitle}>
           {customer ? 'Customer End Connectivity' : 'Infra Connectivity'}
         </Text>
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={() => setMapVisible(!mapVisible)}
-          style={styles.mapButton}>
-          <View style={styles.mapIcon}>
-            {mapVisible ? (
-              <Image source={IMAGES.close} style={styles.closeImage} />
-            ) : (
-              <ConnectivityIcon size={18} />
-            )}
-          </View>
-          <Text style={styles.mapButtonText}>
-            {mapVisible ? 'Close Map' : 'View Map'}
-          </Text>
-        </TouchableOpacity>
+        {selectedCircuit && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={mapVisible ? 'Close map' : 'View map'}
+            onPress={() => setMapVisible(!mapVisible)}
+            style={styles.mapButton}>
+            <View style={styles.mapIcon}>
+              {mapVisible ? (
+                <Image source={IMAGES.close} style={styles.closeImage} />
+              ) : (
+                <ConnectivityIcon size={18} />
+              )}
+            </View>
+            <Text style={styles.mapButtonText}>
+              {mapVisible ? 'Close Map' : 'View Map'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </LinearGradient>
 
       {mapVisible ? (
@@ -666,190 +1009,389 @@ const InfraConnectivityScreen = ({navigation, route}: any) => {
               : {paddingBottom: Math.max(insets.bottom, 12)},
           ]}>
           <ConnectivityMap
-            items={visibleItems}
-            location={location}
-            radius={radius}
+            items={mapItems}
+            location={activeLocation}
+            radius={activeRange ?? 0}
             customer={customer}
           />
         </View>
       ) : (
-        <ScrollView
+        <FlatList
           ref={scrollRef}
           style={styles.scroll}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          data={selectedCircuit || loading || error ? [] : circuits}
+          keyExtractor={(item, index) => circuitIdOf(item) || String(index)}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          onEndReached={() => loadMore()}
+          onEndReachedThreshold={0.4}
+          renderItem={({item, index}) => (
+            <TouchableOpacity
+              key={`${circuitIdOf(item)}-${index}`}
+              accessibilityRole="button"
+              accessibilityLabel={`Select circuit ${circuitNameOf(item)}`}
+              onPress={() => selectCircuit(item)}
+              style={styles.circuitListCard}>
+              <View style={styles.circuitListHeader}>
+                <Image source={IMAGES.Circuit} style={styles.resultIcon} />
+                <Text style={styles.circuitListName}>
+                  {circuitNameOf(item)}
+                </Text>
+              </View>
+              <Field
+                wide
+                label="Connectivity Type"
+                value={
+                  valueOf(item, 'connectivityType', 'ConnectivityType') ||
+                  (customer ? 'Customer End' : 'Infra')
+                }
+              />
+              <Field wide label="Circuit ID" value={circuitIdOf(item)} />
+              <View pointerEvents="none" style={styles.circuitListArrow}>
+                <Image source={IMAGES.rightarrow} style={styles.listChevron} />
+              </View>
+            </TouchableOpacity>
+          )}
+          ListFooterComponent={
+            !selectedCircuit && circuits.length > 0 && !loading && !error ? (
+              <View style={styles.paginationFooter}>
+                {loadingMore ? (
+                  <>
+                    <ActivityIndicator color={PURPLE} />
+                    <Text style={styles.stateText}>Loading more circuits…</Text>
+                  </>
+                ) : pageError ? (
+                  <>
+                    <Text style={styles.stateText}>{pageError}</Text>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry loading more circuits"
+                      onPress={() => loadMore(true)}
+                      style={styles.retryButton}>
+                      <Text style={styles.retryText}>Retry</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : hasMore ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Load more circuits"
+                    onPress={() => loadMore()}
+                    style={styles.retryButton}>
+                    <Text style={styles.retryText}>Load more</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.stateText}>All circuits loaded</Text>
+                )}
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => load(true)}
+              onRefresh={() => {
+                setRefreshing(true);
+                if (filterMode === 'nearby') {
+                  locate();
+                } else {
+                  load(true);
+                }
+              }}
               colors={[PURPLE]}
               tintColor={PURPLE}
             />
-          }>
-          {searchOpen && (
-            <View style={styles.searchRow}>
-              <View style={styles.searchBox}>
+          }
+          ListHeaderComponent={
+            <>
+              <View style={styles.nameSearchBox}>
                 <Image source={IMAGES.search} style={styles.searchIcon} />
                 <TextInput
-                  value={query}
-                  onChangeText={setQuery}
-                  placeholder="Search by Circuit Name / Circuit ID"
+                  accessibilityLabel={
+                    customer ? 'Search by customer name' : 'Search infra'
+                  }
+                  value={nameQuery}
+                  onChangeText={searchByName}
+                  placeholder={
+                    customer ? 'Search by customer name' : 'Search infra'
+                  }
                   placeholderTextColor="#777D8E"
+                  autoCapitalize="none"
+                  returnKeyType="search"
                   style={styles.searchInput}
                 />
+                {!!nameQuery && (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear name search"
+                    onPress={showAll}
+                    style={styles.clearSearch}>
+                    <Text style={styles.rangeSymbol}>×</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-            </View>
-          )}
-
-          {searchOpen && (
-            <View style={styles.searchResults}>
-              {matchingCircuits.map(item => (
+              <View style={styles.filterOptions}>
                 <TouchableOpacity
-                  key={circuitIdOf(item)}
-                  onPress={() => selectCircuit(item)}
-                  style={styles.circuitResult}>
-                  <Image source={IMAGES.Circuit} style={styles.resultIcon} />
-                  <View style={styles.resultCopy}>
-                    <Text style={styles.resultTitle}>
-                      {circuitNameOf(item)}
-                    </Text>
-                    <Text style={styles.resultSubtitle}>
-                      {circuitIdOf(item)}
-                    </Text>
-                  </View>
+                  accessibilityRole="button"
+                  accessibilityLabel="Show all connectivity"
+                  accessibilityState={{selected: filterMode === 'all'}}
+                  onPress={showAll}
+                  style={[
+                    styles.filterOption,
+                    filterMode === 'all' && styles.activeFilter,
+                  ]}>
+                  <Text
+                    style={[
+                      styles.filterOptionText,
+                      filterMode === 'all' && styles.activeFilterText,
+                    ]}>
+                    All
+                  </Text>
                 </TouchableOpacity>
-              ))}
-              {!matchingCircuits.length && (
-                <Text style={styles.noMatch}>No matching circuit found.</Text>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Filter nearby connectivity"
+                  accessibilityState={{selected: filterMode === 'nearby'}}
+                  disabled={locating}
+                  onPress={activateNearby}
+                  style={[
+                    styles.filterOption,
+                    filterMode === 'nearby' && styles.activeFilter,
+                  ]}>
+                  <Text
+                    style={[
+                      styles.filterOptionText,
+                      filterMode === 'nearby' && styles.activeFilterText,
+                    ]}>
+                    Nearby
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.detailsHeading}>
+                <Text style={styles.sectionTitle}>
+                  {selectedCircuit ? 'Circuit Details' : 'Circuits'}
+                </Text>
+                <View style={styles.rangeControl}>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Decrease location range by 100 metres"
+                    disabled={radius <= 100 || locating}
+                    onPress={() => changeRadius(-100)}
+                    style={styles.rangeButton}>
+                    <Text style={styles.rangeSymbol}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.rangeText}>
+                    {filterMode === 'nearby' ? `${radius}m` : 'Range'}
+                  </Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Increase location range by 100 metres"
+                    disabled={locating}
+                    onPress={() => changeRadius(100)}
+                    style={styles.rangeButton}>
+                    <Text style={styles.rangeSymbol}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              {selectedCircuit && (
+                <>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Back to circuit list"
+                    onPress={returnToCircuitList}
+                    style={styles.backToList}>
+                    <Image
+                      source={IMAGES.arrowBack}
+                      style={styles.backToListIcon}
+                    />
+                    <Text style={styles.backToListText}>
+                      Back to circuit list
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.sectionRule} />
+                  <Field
+                    wide
+                    label="Connectivity Type"
+                    value={
+                      valueOf(
+                        selectedCircuit,
+                        'connectivityType',
+                        'ConnectivityType',
+                      ) || (customer ? 'Customer End' : 'Infra')
+                    }
+                  />
+                  <Field
+                    wide
+                    label="Circuit Name"
+                    value={circuitNameOf(selectedCircuit)}
+                  />
+                  <Field
+                    wide
+                    label="Circuit ID"
+                    value={circuitIdOf(selectedCircuit)}
+                  />
+                </>
               )}
-            </View>
-          )}
 
-          <View style={styles.detailsHeading}>
-            <Text style={styles.sectionTitle}>Circuit Details</Text>
-            {!customer && (
-              <View style={styles.rangeControl}>
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityLabel="Decrease location range by 100 metres"
-                  disabled={radius <= 100}
-                  onPress={() => setRadius(value => Math.max(100, value - 100))}
-                  style={styles.rangeButton}>
-                  <Text style={styles.rangeSymbol}>−</Text>
-                </TouchableOpacity>
-                <Text style={styles.rangeText}>{radius}m</Text>
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  accessibilityLabel="Increase location range by 100 metres"
-                  onPress={() => setRadius(value => value + 100)}
-                  style={styles.rangeButton}>
-                  <Text style={styles.rangeSymbol}>+</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-          <View style={styles.sectionRule} />
-          <Field
-            wide
-            label="Connectivity Type"
-            value={customer ? 'Customer End' : 'Infra'}
-          />
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Choose circuit"
-            accessibilityState={{expanded: searchOpen}}
-            onPress={() => setSearchOpen(!searchOpen)}
-            style={styles.circuitPicker}>
-            <Field
-              wide
-              label="Circuit Name"
-              value={circuitNameOf(selectedCircuit)}
-            />
-            <Image source={IMAGES.downArrow} style={styles.circuitPickerIcon} />
-          </TouchableOpacity>
-          <Field wide label="Circuit ID" value={circuitIdOf(selectedCircuit)} />
-
-          {!customer && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              disabled={locating}
-              onPress={locate}>
-              <Text style={styles.locationStatus}>
-                {locating
-                  ? 'Finding current location…'
-                  : locationError ||
-                    `Within ${radius}m of current location · Refresh location`}
-              </Text>
-            </TouchableOpacity>
-          )}
-          {!!error && !!selectedCircuit && (
-            <Text style={styles.locationStatus}>{error}</Text>
-          )}
-          {focusedNode && (
-            <TouchableOpacity onPress={() => setFocusedNode(null)}>
-              <Text style={styles.locationStatus}>
-                Show full customer connectivity
-              </Text>
-            </TouchableOpacity>
-          )}
-          {!customer && !loading && unlocatedCount > 0 && (
-            <Text style={styles.stateText}>
-              {unlocatedCount} records have no location coordinates and cannot
-              be filtered by range.
-            </Text>
-          )}
-          {loading ? (
-            <View style={styles.loadingState}>
-              <ActivityIndicator size="large" color={PURPLE} />
-              <Text style={styles.stateText}>
-                Loading circuit connectivity…
-              </Text>
-            </View>
-          ) : error && !selectedCircuit ? (
-            <View style={styles.loadingState}>
-              <Text style={styles.errorTitle}>Circuit details unavailable</Text>
-              <Text style={styles.stateText}>{error}</Text>
               <TouchableOpacity
-                onPress={() => load()}
-                style={styles.retryButton}>
-                <Text style={styles.retryText}>Retry</Text>
+                accessibilityRole="button"
+                disabled={locating || filterMode !== 'nearby'}
+                onPress={locate}>
+                <Text style={styles.locationStatus}>
+                  {filterMode === 'nearby'
+                    ? locating
+                      ? 'Finding current location…'
+                      : locationError ||
+                        `Within ${radius}m of current location · Refresh location`
+                    : filterMode === 'name'
+                    ? `Searching ${
+                        customer ? 'customers' : 'infra'
+                      } across all locations`
+                    : 'Showing all company connectivity'}
+                </Text>
               </TouchableOpacity>
-            </View>
-          ) : visibleItems.length ? (
-            groupedItems.map((group, index) => (
-              <View
-                key={`${index}-${display(
-                  valueOf(group.item, 'id', 'Id', 'chamberId'),
-                )}`}>
-                {group.routeGroup ? (
-                  <RouteTable rows={group.rows} />
-                ) : (
-                  <InfraCard item={group.item} />
-                )}
-                {index < groupedItems.length - 1 && (
-                  <View style={styles.connector} />
-                )}
-              </View>
-            ))
-          ) : (
-            <View style={styles.emptyState}>
-              <Image source={IMAGES.Circuit} style={styles.emptyIcon} />
-              <Text style={styles.errorTitle}>No connectivity data found</Text>
-              <Text style={styles.stateText}>
-                {error ||
-                  (!customer
-                    ? locationError ||
-                      (locating
-                        ? 'Waiting for current location.'
-                        : `No located records within ${radius}m. Increase the range to see more.`)
-                    : 'No customer end connectivity records were returned for this company.')}
-              </Text>
-            </View>
-          )}
-        </ScrollView>
+              {!!error && !!selectedCircuit && (
+                <Text style={styles.locationStatus}>{error}</Text>
+              )}
+              {(focusedNode || (customer && splitterStep > 0)) && (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Return to customer connection"
+                  onPress={() => {
+                    splitterRequest.current++;
+                    splitterLoadingRef.current = false;
+                    setSplitterLoading(false);
+                    setSplitterError('');
+                    setFocusedNode(null);
+                    setSplitterStep(0);
+                  }}>
+                  <Text style={styles.locationStatus}>
+                    Return to customer connection
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {loading ? (
+                <View style={styles.loadingState}>
+                  <ActivityIndicator size="large" color={PURPLE} />
+                  <Text style={styles.stateText}>
+                    Loading circuit connectivity…
+                  </Text>
+                </View>
+              ) : error && !selectedCircuit ? (
+                <View style={styles.loadingState}>
+                  <Text style={styles.errorTitle}>
+                    Circuit details unavailable
+                  </Text>
+                  <Text style={styles.stateText}>{error}</Text>
+                  <TouchableOpacity
+                    onPress={() => load()}
+                    style={styles.retryButton}>
+                    <Text style={styles.retryText}>Retry</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : !selectedCircuit && circuits.length ? null : customer &&
+                selectedCircuit ? (
+                <View>
+                  {customerView.customers.length > 1 && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.customerChoices}>
+                      {customerView.customers.map((card, index) => (
+                        <TouchableOpacity
+                          key={index}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Choose customer connection ${
+                            index + 1
+                          }`}
+                          accessibilityState={{
+                            selected: index === customerConnectionIndex,
+                          }}
+                          onPress={() => {
+                            setCustomerConnectionIndex(index);
+                            setSplitterStep(0);
+                          }}
+                          style={[
+                            styles.filterOption,
+                            index === customerConnectionIndex &&
+                              styles.activeFilter,
+                          ]}>
+                          <Text
+                            style={[
+                              styles.filterOptionText,
+                              index === customerConnectionIndex &&
+                                styles.activeFilterText,
+                            ]}>
+                            {card.data.customerName || `Customer ${index + 1}`}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+                  <CustomerConnectivityCards
+                    items={allItems}
+                    circuit={selectedCircuit}
+                    cards={customerView.cards}
+                  />
+                  {!!splitterError && (
+                    <Text style={styles.stateText}>{splitterError}</Text>
+                  )}
+                  {customerView.missingDetails && (
+                    <Text style={styles.stateText}>
+                      Only the upstream splitter ID was returned by the API. Its
+                      other details are unavailable.
+                    </Text>
+                  )}
+                </View>
+              ) : selectedCircuit && visibleItems.length ? (
+                groupedItems.map((group, index) => (
+                  <View
+                    key={`${index}-${display(
+                      valueOf(group.item, 'id', 'Id', 'chamberId'),
+                    )}`}>
+                    {group.routeGroup ? (
+                      <RouteTable rows={group.rows} />
+                    ) : (
+                      <InfraCard item={group.item} />
+                    )}
+                    {index < groupedItems.length - 1 && (
+                      <View style={styles.connector} />
+                    )}
+                  </View>
+                ))
+              ) : (
+                <View style={styles.emptyState}>
+                  <Image source={IMAGES.Circuit} style={styles.emptyIcon} />
+                  <Text style={styles.errorTitle}>
+                    No connectivity data found
+                  </Text>
+                  <Text style={styles.stateText}>
+                    {error ||
+                      (filterMode === 'nearby'
+                        ? locationError ||
+                          (locating
+                            ? 'Waiting for current location.'
+                            : `No data within ${radius}m. Search by ${
+                                customer ? 'customer name' : 'infra'
+                              } above or increase the range.`)
+                        : filterMode === 'name'
+                        ? `No matching ${
+                            customer ? 'customer' : 'infra'
+                          } found. Try a different search.`
+                        : `No ${
+                            customer ? 'customer end' : 'infra'
+                          } connectivity records were returned for this company.`)}
+                  </Text>
+                </View>
+              )}
+            </>
+          }
+        />
       )}
-      {customer && (
+      {customer && selectedCircuit && (
         <View
           style={[
             styles.bottomActions,
@@ -873,15 +1415,86 @@ const shadow = {
 };
 
 const styles = StyleSheet.create({
-  circuitPicker: {flexDirection: 'row', alignItems: 'center', paddingRight: 20},
-  circuitPickerIcon: {
+  paginationFooter: {alignItems: 'center', paddingVertical: 18, gap: 6},
+  circuitList: {paddingTop: 4},
+  circuitListCard: {
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E8EAF0',
+    borderRadius: 8,
+    padding: 12,
+    paddingRight: 38,
+    marginBottom: 10,
+  },
+  circuitListArrow: {
     position: 'absolute',
-    right: 0,
-    width: 12,
-    height: 12,
-    tintColor: '#737987',
+    top: 0,
+    bottom: 0,
+    right: 12,
+    justifyContent: 'center',
+  },
+  circuitListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  circuitListName: {
+    flex: 1,
+    fontFamily: FONTS.MEDIUM,
+    fontSize: 13,
+    color: '#343842',
+  },
+  listChevron: {
+    width: 14,
+    height: 14,
+    tintColor: PURPLE,
     resizeMode: 'contain',
   },
+  backToList: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+  },
+  backToListIcon: {
+    width: 18,
+    height: 18,
+    tintColor: PURPLE,
+    resizeMode: 'contain',
+  },
+  backToListText: {color: PURPLE, fontSize: 12, fontFamily: FONTS.MEDIUM},
+  customerChoices: {marginBottom: 10},
+  nameSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: '#E9EAF0',
+  },
+  clearSearch: {
+    width: 32,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterOptions: {flexDirection: 'row', gap: 8, marginTop: 8, marginBottom: 4},
+  filterOption: {
+    paddingHorizontal: 16,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E4DFEF',
+  },
+  activeFilter: {backgroundColor: PURPLE, borderColor: PURPLE},
+  filterOptionText: {fontSize: 12, color: '#515663'},
+  activeFilterText: {color: '#FFF'},
   mapContent: {flex: 1, padding: 12, gap: 10},
   mapWithFooter: {paddingBottom: 0},
   bottomActions: {
@@ -1002,6 +1615,7 @@ const styles = StyleSheet.create({
     fontSize: SIZE.MS(11),
   },
   searchResults: {
+    maxHeight: 240,
     ...shadow,
     backgroundColor: '#FFF',
     borderRadius: SIZE.MS(9),
@@ -1112,7 +1726,25 @@ const styles = StyleSheet.create({
   serialCell: {width: SIZE.MS(34), textAlign: 'center'},
   typeCell: {width: SIZE.MS(64)},
   routeCell: {width: SIZE.MS(140)},
-  masterCell: {width: SIZE.MS(130)},
+  masterCell: {width: SIZE.MS(170)},
+  masterDetailsCell: {
+    paddingHorizontal: SIZE.MS(8),
+    paddingVertical: SIZE.MVS(7),
+    gap: SIZE.MVS(4),
+    borderRightWidth: 1,
+    borderTopWidth: 1,
+    borderColor: '#D9E0EB',
+  },
+  masterDetailLabel: {
+    fontFamily: FONTS.MEDIUM,
+    color: '#656B78',
+  },
+  masterDetailValue: {
+    fontFamily: FONTS.REGULAR,
+    fontSize: SIZE.MS(10),
+    lineHeight: SIZE.MVS(14),
+    color: '#343842',
+  },
   connector: {
     alignSelf: 'center',
     width: 0,

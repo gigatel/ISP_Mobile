@@ -17,7 +17,8 @@ import {
 import {alert, error, log} from './common';
 import {getData, setData} from './preferences';
 import {postNowWithCoords} from '../../src/services/LocationPosterCore';
-import {OLA_MAP_API} from '@env';
+import {getOlaMapApiKey} from './olaMapKey';
+import {applyXhrAppHeaders} from '../apis/headers';
 
 let watchId: number | null = null;
 let lastFix: {lat: number; long: number; ts: number} | null = null;
@@ -35,7 +36,6 @@ let reverseGeocodeInFlight: {
 
 const OLA_REVERSE_GEOCODE_URL =
   'https://api.olamaps.io/places/v1/reverse-geocode';
-const OLA_API_KEY = OLA_MAP_API;
 const REVERSE_GEOCODE_CACHE_MS = 60_000;
 const CACHED_ADDRESS_RADIUS_METERS = 500;
 // Infrastructure masters need the address at the GPS fix itself. A reverse
@@ -125,9 +125,15 @@ const olaReverseGeocodeRequest = (
   long: number,
 ): Promise<string[] | null> =>
   new Promise(resolve => {
-    const url = `${OLA_REVERSE_GEOCODE_URL}?latlng=${lat},${long}&api_key=${OLA_API_KEY}`;
+    const OLA_API_KEY = getOlaMapApiKey();
+    if (!OLA_API_KEY) {
+      resolve([]);
+      return;
+    }
+    const url = `${OLA_REVERSE_GEOCODE_URL}?latlng=${lat},${long}&api_key=${encodeURIComponent(OLA_API_KEY)}`;
     const xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
+    applyXhrAppHeaders(xhr, 'GET', url);
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.setRequestHeader(
       'X-Request-Id',
@@ -160,6 +166,7 @@ const olaReverseGeocodeRequest = (
     xhr.onerror = () => resolve(null);
     xhr.ontimeout = () => resolve(null);
 
+    console.log('[Ola Maps API] reverse-geocode OLA_MAP_API:', OLA_API_KEY);
     xhr.send();
   });
 
@@ -195,14 +202,16 @@ const olaExactReverseGeocodeRequest = (
   long: number,
 ): Promise<string[]> =>
   new Promise(resolve => {
+    const OLA_API_KEY = getOlaMapApiKey();
     if (!OLA_API_KEY) {
       resolve([]);
       return;
     }
 
-    const url = `${OLA_REVERSE_GEOCODE_URL}?latlng=${lat},${long}&api_key=${OLA_API_KEY}`;
+    const url = `${OLA_REVERSE_GEOCODE_URL}?latlng=${lat},${long}&api_key=${encodeURIComponent(OLA_API_KEY)}`;
     const xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
+    applyXhrAppHeaders(xhr, 'GET', url);
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.setRequestHeader(
       'X-Request-Id',
@@ -251,6 +260,7 @@ const olaExactReverseGeocodeRequest = (
 
     xhr.onerror = () => resolve([]);
     xhr.ontimeout = () => resolve([]);
+    console.log('[Ola Maps API] exact reverse-geocode OLA_MAP_API:', OLA_API_KEY);
     xhr.send();
   });
 
@@ -262,7 +272,7 @@ const olaReverseGeocode = async (
     console.warn('❌ Invalid coordinates');
     return [];
   }
-  if (!OLA_API_KEY) {
+  if (!getOlaMapApiKey()) {
     console.error('❌ OLA_API_KEY missing');
     return nearbyCachedAddress(lat, long);
   }
@@ -322,7 +332,9 @@ export const getAddressFromLatLong = async (
   exactAddressOnly = false,
 ): Promise<DataType.GeoAddress> => {
   try {
-    const info = (await getGeoLocation()) as DataType.GeoLocation;
+    // Master address lookups must also use a fresh device fix, rather than
+    // silently falling back to coordinates captured before the user tapped Fetch.
+    const info = (await getGeoLocation(exactAddressOnly)) as DataType.GeoLocation;
     if (!info)
       return {address: 'Address Not Found', addressList: [], lat: 0, long: 0};
     const {latitude: lat, longitude: long} = info?.coords;
@@ -413,7 +425,7 @@ export const startLocationWatch = () => {
       // Reverse geocode — XHR based, survives Android 16 background
       let addressList: string[] = [];
       try {
-        if (OLA_API_KEY) {
+        if (getOlaMapApiKey()) {
           addressList = await olaReverseGeocode(lat, long);
         }
       } catch (e) {
@@ -570,11 +582,13 @@ const getRecentSavedFix = (): GeolocationResponse | null => {
   } as GeolocationResponse;
 };
 
-export const getGeoLocation = async (): Promise<GeolocationResponse> => {
+export const getGeoLocation = async (
+  requireFreshFix = false,
+): Promise<GeolocationResponse> => {
   let lastError: any;
   const attempts = [
     {timeout: PRIMARY_GPS_TIMEOUT_MS, maximumAge: 0},
-    {timeout: RETRY_GPS_TIMEOUT_MS, maximumAge: 30_000},
+    {timeout: RETRY_GPS_TIMEOUT_MS, maximumAge: requireFreshFix ? 0 : 30_000},
   ];
 
   for (const attempt of attempts) {
@@ -594,7 +608,7 @@ export const getGeoLocation = async (): Promise<GeolocationResponse> => {
     }
   }
 
-  const recentFix = getRecentSavedFix();
+  const recentFix = requireFreshFix ? null : getRecentSavedFix();
   if (recentFix) {
     return recentFix;
   }

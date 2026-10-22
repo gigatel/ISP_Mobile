@@ -61,6 +61,9 @@ import SelectRouteToChangeFiberScreen from '@screens/SelectRouteToChangeFiberScr
 import FiberChangeScreen from '@screens/FiberChangeScreen';
 import InstallFiberWithSLDScreen from '@screens/InstallFiberWithSLDScreen';
 import CircuitConnectivityScreen from '@screens/CircuitConnectivityScreen';
+import LastMileConnectivityScreen from '@screens/LastMileConnectivityScreen';
+import LastMileSplitterDetailsScreen from '@screens/LastMileConnectivityScreen/SplitterDetailsScreen';
+import type {Splitter} from '@screens/LastMileConnectivityScreen/types';
 import InfraConnectivityScreen from '@screens/InfraConnectivityScreen';
 import type {PausedRouteSnapshot} from '../services/pausedRouteStorage';
 export interface RootStackParamList {
@@ -183,6 +186,8 @@ export interface RootStackParamList {
   ChamberReport: undefined;
   SearchCustomer: undefined;
   CircuitConnectivity: undefined;
+  LastMileConnectivity: undefined;
+  LastMileSplitterDetails: {splitter: Splitter};
   InfraConnectivity: {
     company: Record<string, any>;
     initialCircuit?: Record<string, any>;
@@ -384,6 +389,14 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
       <Stack.Screen
         name="CircuitConnectivity"
         component={CircuitConnectivityScreen}
+      />
+      <Stack.Screen
+        name="LastMileConnectivity"
+        component={LastMileConnectivityScreen}
+      />
+      <Stack.Screen
+        name="LastMileSplitterDetails"
+        component={LastMileSplitterDetailsScreen}
       />
       <Stack.Screen
         name="InfraConnectivity"

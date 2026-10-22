@@ -32,6 +32,13 @@ export const coordinateOf = (item: any, prefix = ''): Coordinate | null => {
     'lon',
   );
   if (lat === '' || lng === '') {
+    const combined = valueOf(item, 'latLng', 'LatLng', 'latlng');
+    if (typeof combined === 'string' && combined.split(',').length === 2) {
+      const [latitude, longitude] = combined
+        .split(',')
+        .map(part => part.trim());
+      return coordinateOf({latitude, longitude});
+    }
     return null;
   }
   const latitude = Number(lat),
@@ -163,6 +170,8 @@ export const typeOf = (item: any) =>
       'InfraType',
       'deviceMasterType',
       'DeviceMasterType',
+      'masterType',
+      'MasterType',
       'type',
       'Type',
     ),

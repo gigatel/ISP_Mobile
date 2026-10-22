@@ -1,4 +1,5 @@
-import {OLA_MAP_API} from '@env';
+import {getOlaMapApiKey} from './olaMapKey';
+import {getDownloadHeaders} from '../apis/headers';
 import {COLORS, FONTS} from '@res';
 import moment from 'moment';
 import ImageMarker, {
@@ -42,6 +43,7 @@ const MAP_SIZE = 256 * MAP_SCALE;
 const CARD_INSET = 6;
 
 const getMapTile = async (latitude: number, longitude: number) => {
+  const OLA_MAP_API = getOlaMapApiKey();
   if (!OLA_MAP_API) {
     return null;
   }
@@ -61,8 +63,10 @@ const getMapTile = async (latitude: number, longitude: number) => {
         'https://api.olamaps.io/tiles/v1/styles/default-light-standard/static/' +
         `${center}/256x256.png?marker=${marker}` +
         `&api_key=${encodeURIComponent(OLA_MAP_API)}`;
+      console.log('[Ola Maps API] static map OLA_MAP_API:', OLA_MAP_API);
       const result = await RNFS.downloadFile({
         fromUrl: url,
+        headers: getDownloadHeaders(url),
         toFile: downloadPath,
         connectionTimeout: 5000,
         readTimeout: 5000,

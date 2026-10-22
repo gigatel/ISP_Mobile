@@ -11,9 +11,18 @@ import {Alert} from 'react-native';
 import {resetStore} from '@reducers';
 import {store} from '../store/store';
 import {reset} from '@navigation/services';
+import {API_HEADERS, fetchWithAppHeaders, logApiRequest} from './headers';
 const TIMEOUT = 20000;
 const axiosInstance = axios.create({
   timeout: TIMEOUT,
+  headers: API_HEADERS,
+});
+axiosInstance.interceptors.request.use(config => {
+  Object.entries(API_HEADERS).forEach(([name, value]) => {
+    config.headers.set(name, value);
+  });
+  logApiRequest(config.method || 'GET', config.url, config.headers);
+  return config;
 });
 const STATIC_BEARER_TOKEN =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIiLCJlbWFpbCI6ImhlbHBkZXNrQGdpZ2F0ZWwuaW4iLCJqdGkiOiIwOGVkOGFlMy1hMDQ2LTQ3ODgtOWEyOS0xM2JhNmFhOWVmMzQiLCJVc2VySWQiOiIxNzQiLCJVc2VyRnVsbE5hbWUiOiJTaHViaGFtICBEb2JyaXlhbCIsIlVzZXJFbWFpbElkIjoiaGVscGRlc2tAZ2lnYXRlbC5pbiIsIlBob25lTnVtYmVyIjoiNzA2NTcwNDE0MSIsIkRlc2lnbmFpb25JZCI6IjMyNiIsIkRlc2lnbmFpb25OYW1lIjoiQXNzaXN0YW50IE1hbmFnZXIiLCJEZXBhcnRtZW50SWQiOiIwIiwiRGVwYXJ0bWVudE5hbWUiOiIiLCJPcmdhbml6YXRpb25JZCI6IjEiLCJPcmdhbml6YXRpb25OYW1lIjoiR2lnYXRlbCIsIkNvbXBhbnlJZCI6IjE2IiwiQ29tcGFueU5hbWUiOiJHaWdhdGVsIFRlY2hvbm9zb2Z0IFByaXZhdGUgTGltaXRlZCIsIlNlbGVjdGVkQ29tcGFueUlkIjoiMyIsIlNlbGVjdGVkQ29tcGFueU5hbWUiOiJHaWdhdGVsIFNvbHV0aW9ucyBQcml2YXRlIExpbWl0ZWQiLCJFbXBsb3llZUlkIjoiOTAyIiwiU2hpZnRUaW1lIjoiMDk6MzAtMTg6MzAiLCJTaGlmdElkIjoiNTMiLCJBcHBUeXBlIjoiV0VCIiwiUm9sZSI6IiIsImV4cCI6MTc3MDg3Nzg4NiwiaXNzIjoiVGVzdC5jb20iLCJhdWQiOiJUZXN0LmNvbSJ9.c056-ecpsDFoomMNGlncQfY9_c_yNMSry_pGxMrBJMw'; // Replace with your actual token
@@ -407,7 +416,7 @@ export const postRequestWithJson = ({
  */
 export const getAddressFromCoordinates = async (latitude, longitude) => {
   try {
-    const response = await fetch(
+    const response = await fetchWithAppHeaders(
       `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${CONSTANT.DIRECTION_API_KEY}`,
     );
     const json = await response.json();

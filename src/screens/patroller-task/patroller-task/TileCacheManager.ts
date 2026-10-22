@@ -5,6 +5,7 @@
 import { Common, Preferences } from '@utils';
 import RNFS from 'react-native-fs';
 import NetInfo from '@react-native-community/netinfo';
+import {getDownloadHeaders} from '../../../apis/headers';
 
 export type ProgressCallback = (total: number, percent: number) => void;
 
@@ -83,12 +84,13 @@ export class TileCacheManager {
               Common;
               await RNFS.mkdir(tileDir, { NSURLIsExcludedFromBackupKey: true });
               // Common.log('Downloa Tile Path:', tilePath);
+              const tileUrl = `https://c.tile.openstreetmap.org/${tile.zoom}/${tile.x}/${tile.y}.png`;
               await RNFS.downloadFile({
-                fromUrl: `https://c.tile.openstreetmap.org/${tile.zoom}/${tile.x}/${tile.y}.png`,
+                fromUrl: tileUrl,
                 toFile: tilePath,
-                headers: {
+                headers: getDownloadHeaders(tileUrl, {
                   'User-Agent': 'GigatelOfflineMap/1.0 (https://gigatel.com)',
-                },
+                }),
               }).promise;
               // Common.log('Downloaded:', tilePath);
             } else {

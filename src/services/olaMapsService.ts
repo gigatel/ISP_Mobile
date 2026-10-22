@@ -1,7 +1,7 @@
 // src/services/olaMapsService.ts
-import {OLA_MAP_API} from '@env';
+import {getOlaMapApiKey} from '../utils/olaMapKey';
+import {fetchWithAppHeaders} from '../apis/headers';
 
-const OLA_API_KEY = OLA_MAP_API;
 const OLA_BASE_URL = 'https://api.olamaps.io/places/v1';
 
 export interface OlaAddressResult {
@@ -13,8 +13,9 @@ export const olaReverseGeocode = async (
   lng: number,
 ): Promise<{ results: OlaAddressResult[] } | null> => {
   try {
+    const OLA_API_KEY = getOlaMapApiKey();
     if (!OLA_API_KEY) {
-      console.warn('❌ OLA_MAP_API key missing in env');
+      console.warn('❌ OLA_MAP_API key missing from login response');
       return null;
     }
 
@@ -25,9 +26,10 @@ export const olaReverseGeocode = async (
 
     const url =
       `${OLA_BASE_URL}/reverse-geocode` +
-      `?latlng=${lat},${lng}&api_key=${OLA_API_KEY}`;
+      `?latlng=${lat},${lng}&api_key=${encodeURIComponent(OLA_API_KEY)}`;
 
-    const res = await fetch(url);
+    console.log('[Ola Maps API] reverse-geocode OLA_MAP_API:', OLA_API_KEY);
+    const res = await fetchWithAppHeaders(url);
 
     if (!res.ok) {
       console.warn('❌ Ola API error:', res.status);
