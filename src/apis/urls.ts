@@ -37,6 +37,18 @@ export const getMasterDetailsByRouteFiberId =
   BASE_URL_2 + 'Circuit/GetMasterDetailsByRouteFiberId';
 export const getSplitterCustomerDetailsBySplitterId =
   BASE_URL_2 + 'Splitter/GetSplitterCustomerDetailsBySplitterId';
+export const getNearbyCustomerSplitters =
+  BASE_URL_2 + 'Splitter/GetNearbyCustomerSplitters';
+export const insertUpdateSplitterCustomerConnectivityAsync =
+  BASE_URL_2 + 'Splitter/InsertUpdateSplitterCustomerConnectivityAsync';
+export const getFiberTubeCoreColorForSplitter =
+  BASE_URL_2 + 'Splitter/GetFiberTubeCoreColorForSplitter';
+export const getNearbyConnectedRoutesByLatLng =
+  BASE_URL_2 + 'Circuit/GetNearbyConnectedRoutesByLatLng';
+export const getCustomerMasterDetailByMobNo =
+  BASE_URL_2 + 'CustomerMaster/GetCustomerMasterDetailByMobNo';
+export const getCustomerMasterDetailByMacAddress =
+  BASE_URL_2 + 'CustomerMaster/GetCustomerMasterDetailByMacAddress';
 //! Attendance
 export const viewAttendance = BASE_URL + 'Attendance/ViewAttendance';
 export const viewAttendanceInOutReport =

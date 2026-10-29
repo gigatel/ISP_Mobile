@@ -1,5 +1,28 @@
-import React, {useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
+import {PERMISSIONS, request, RESULTS} from 'react-native-permissions';
+import {getGeoLocation} from '../../utils/location';
 import {
+  distanceLabel,
+  getNearbyCustomerSplitters,
+  hasSplitterCoordinate,
+  powerLabel,
+  splitterTitle,
+  splitterRatio,
+} from '../../services/lastMileConnectivityService';
+import type {SplitterCoordinate} from '../../services/lastMileConnectivityService';
+import type {Splitter} from './types';
+import {
+  getDistinctCustomerMapLines,
+  loadSplitterCustomerLinks,
+} from '../../services/splitterCustomerMap';
+import type {
+  SplitterCustomerLink,
+  SplitterMapConnectionSummary,
+} from '../../services/splitterCustomerMap';
+import {
+  ActivityIndicator,
+  BackHandler,
   Image,
   Modal,
   Platform,
@@ -13,105 +36,366 @@ import {
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
-import Svg, {Path} from 'react-native-svg';
+import Svg, {Circle, Path} from 'react-native-svg';
 import MapView, {Marker, Polyline, PROVIDER_GOOGLE} from 'react-native-maps';
 import {Screen} from '@organisms';
 import {FONTS, IMAGES} from '@res';
 import type {RootStackParamList} from '@navigation/navigator';
 import PointerSvg from '../../res/images/pointer.svg';
 import SplitterIcon from './SplitterIcon';
+import SplitterMapDetails from './SplitterMapDetails';
+import CustomerMapDetails from './CustomerMapDetails';
+import {
+  getNumberedSplitterMarkers,
+  getSplitterListHeight,
+  getSplitterMapRegion,
+} from './layout';
 
-// Preview data only. No location permissions or connectivity APIs are required.
-const DEMO_LOCATION = {latitude: 28.6011693, longitude: 77.30364906};
-const SPLITTERS = [
-  {
-    id: 'SPL-11',
-    name: 'SPL-11- L3 - N1',
-    free: 4,
-    distance: 50,
-    latitude: 28.60215,
-    longitude: 77.30275,
-  },
-  {
-    id: 'SPL-12',
-    name: 'SPL-12- L3 - N1',
-    free: 3,
-    distance: 100,
-    latitude: 28.60165,
-    longitude: 77.30155,
-  },
-  {
-    id: 'SPL-13',
-    name: 'SPL-13- L3 - N1',
-    free: 6,
-    distance: 150,
-    latitude: 28.6009,
-    longitude: 77.3021,
-  },
-  {
-    id: 'SPL-14',
-    name: 'SPL-14- L3 - N1',
-    free: 2,
-    distance: 200,
-    latitude: 28.60265,
-    longitude: 77.30355,
-  },
-  {
-    id: 'SPL-15',
-    name: 'SPL-15- L3 - N1',
-    free: 5,
-    distance: 250,
-    latitude: 28.60035,
-    longitude: 77.3042,
-  },
-];
-const INITIAL_REGION = {
-  ...DEMO_LOCATION,
-  latitudeDelta: 0.006,
-  longitudeDelta: 0.006,
-};
-const ROUTE = [
-  SPLITTERS[0],
-  {latitude: 28.60195, longitude: 77.3041},
-  {latitude: 28.60085, longitude: 77.30365},
-  DEMO_LOCATION,
-];
 const GRADIENT = ['#8858F9', '#6036C4'];
+
+function CustomerMapIcon() {
+  return (
+    <Svg width={32} height={40} viewBox="0 0 32 40" fill="none">
+      <Path
+        d="M16 38C13 34 2 23 2 16a14 14 0 1 1 28 0c0 7-11 18-14 22Z"
+        fill="#168D70"
+        stroke="#FFFFFF"
+        strokeWidth={2}
+      />
+      <Circle cx={16} cy={11} r={4} fill="#FFFFFF" />
+      <Path d="M8 25v-2a8 8 0 0 1 16 0v2H8Z" fill="#FFFFFF" />
+    </Svg>
+  );
+}
 
 export default function LastMileConnectivityScreen({
   navigation,
 }: NativeStackScreenProps<RootStackParamList, 'LastMileConnectivity'>) {
   const insets = useSafeAreaInsets();
-  const {width, height} = useWindowDimensions();
-  const mapRef = useRef<MapView>(null);
-  const expandedMapRef = useRef<MapView>(null);
-  const scrollRef = useRef<ScrollView>(null);
+  const {width, height, fontScale} = useWindowDimensions();
+  const mapRef = useRef<MapView | null>(null);
+  const mainScrollRef = useRef<ScrollView>(null);
+  const splitterListRef = useRef<ScrollView>(null);
+  const [nearestSplitterId, setNearestSplitterId] = useState<string | null>(
+    null,
+  );
+  const [mapFocus, setMapFocus] = useState<'all' | 'location'>('all');
+  const expandedMapRef = useRef<MapView | null>(null);
   const [range, setRange] = useState(200);
   const [expanded, setExpanded] = useState(false);
-  const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
-  const visibleSplitters = SPLITTERS.slice(0, 4);
-  const listHeight = visibleSplitters.every(
-    splitter => cardHeights[splitter.id],
-  )
-    ? visibleSplitters.reduce(
-        (total, splitter) => total + cardHeights[splitter.id] + 8,
-        0,
-      )
-    : 500;
-  const compact = width < 380;
+  const [splitters, setSplitters] = useState<Splitter[]>([]);
+  const [position, setPosition] = useState<SplitterCoordinate | null>(null);
+  const positionRef = useRef<SplitterCoordinate | null>(null);
+  const requestId = useRef(0);
+  const [loading, setLoading] = useState(true);
+  const [locating, setLocating] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedMarker, setSelectedMarker] = useState<string | null>(null);
 
-  const recenter = () => {
-    (expanded ? expandedMapRef : mapRef).current?.animateToRegion(
-      INITIAL_REGION,
-      450,
+  const linkRequestId = useRef(0);
+  const [customerLinks, setCustomerLinks] = useState<SplitterCustomerLink[]>(
+    [],
+  );
+  const [connectionStats, setConnectionStats] = useState<
+    Record<string, SplitterMapConnectionSummary>
+  >({});
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linksFailed, setLinksFailed] = useState(false);
+  const [missingCoordinates, setMissingCoordinates] = useState(0);
+  const loadConnections = useCallback(async (items: Splitter[]) => {
+    const id = ++linkRequestId.current;
+    setCustomerLinks([]);
+    setConnectionStats({});
+    setLinksLoading(items.length > 0);
+    setLinksFailed(false);
+    setMissingCoordinates(0);
+    const result = await loadSplitterCustomerLinks(
+      items,
+      () => id === linkRequestId.current,
     );
-    if (!expanded) {
-      scrollRef.current?.scrollToEnd({animated: true});
+    if (id !== linkRequestId.current) {
+      return;
     }
+    setCustomerLinks(result.links);
+    setConnectionStats(result.connectionsBySplitter);
+    setMissingCoordinates(result.missingCoordinates);
+    setLinksFailed(result.failedSplitterIds.length > 0);
+    setLinksLoading(false);
+  }, []);
+  const customerCoordinates = customerLinks.map(link => link.coordinates[1]);
+  const customerMapLines = getDistinctCustomerMapLines(customerLinks);
+
+  const loadSplitters = useCallback(
+    async (freshLocation = false) => {
+      const id = ++requestId.current;
+      linkRequestId.current += 1;
+      setCustomerLinks([]);
+      setConnectionStats({});
+      setLinksLoading(false);
+      setLinksFailed(false);
+      setMissingCoordinates(0);
+      setLoading(true);
+      setError('');
+      setSelectedMarker(null);
+      setNearestSplitterId(null);
+      try {
+        let coordinate = positionRef.current;
+        if (freshLocation || !coordinate) {
+          setLocating(true);
+          const permission = await request(
+            Platform.OS === 'ios'
+              ? PERMISSIONS.IOS.LOCATION_WHEN_IN_USE
+              : PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION,
+          );
+          if (id !== requestId.current) {
+            return;
+          }
+          if (
+            permission !== RESULTS.GRANTED &&
+            permission !== RESULTS.LIMITED
+          ) {
+            throw new Error('Allow location access to find nearby splitters.');
+          }
+          const fix = await getGeoLocation(true);
+          if (id !== requestId.current) {
+            return;
+          }
+          coordinate = {
+            latitude: fix.coords.latitude,
+            longitude: fix.coords.longitude,
+          };
+          positionRef.current = coordinate;
+          setPosition(coordinate);
+          setLocating(false);
+        }
+        const nearby = await getNearbyCustomerSplitters(range, coordinate);
+        if (id !== requestId.current) {
+          return;
+        }
+        setSplitters(nearby);
+        setNearestSplitterId(
+          nearby.find(splitter => splitter.distance !== null)?.id ?? null,
+        );
+        if (freshLocation) {
+          splitterListRef.current?.scrollTo({y: 0, animated: true});
+          mainScrollRef.current?.scrollTo({y: 0, animated: true});
+        }
+        loadConnections(nearby);
+      } catch (failure: any) {
+        if (id === requestId.current) {
+          setSplitters([]);
+          setError(
+            failure?.message ||
+              'Could not load nearby splitters. Please retry.',
+          );
+        }
+      } finally {
+        if (id === requestId.current) {
+          setLoading(false);
+          setLocating(false);
+        }
+      }
+    },
+    [range, loadConnections],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      const timer = setTimeout(() => {
+        loadSplitters();
+      }, 250);
+      return () => {
+        clearTimeout(timer);
+        requestId.current += 1;
+        linkRequestId.current += 1;
+      };
+    }, [loadSplitters]),
+  );
+
+  const [cardHeights, setCardHeights] = useState<Record<string, number>>({});
+  const layoutKey = `${width}:${fontScale}`;
+  const listHeight = getSplitterListHeight(splitters, cardHeights, layoutKey);
+  const listReady = listHeight !== null;
+  const [inlineMapReady, setInlineMapReady] = useState(false);
+  const [expandedMapReady, setExpandedMapReady] = useState(false);
+  const [inlineMapSize, setInlineMapSize] = useState({width: 0, height: 0});
+  const [expandedMapSize, setExpandedMapSize] = useState({width: 0, height: 0});
+  const attachInlineMap = useCallback((map: MapView | null) => {
+    mapRef.current = map;
+    setInlineMapReady(false);
+  }, []);
+  const attachExpandedMap = useCallback((map: MapView | null) => {
+    expandedMapRef.current = map;
+    setExpandedMapReady(false);
+  }, []);
+  const inlineRegion = position
+    ? getSplitterMapRegion(
+        position,
+        splitters,
+        range,
+        inlineMapSize.width,
+        inlineMapSize.height,
+        mapFocus === 'location' ? [] : customerCoordinates,
+      )
+    : null;
+  const expandedRegion = position
+    ? getSplitterMapRegion(
+        position,
+        splitters,
+        range,
+        expandedMapSize.width,
+        expandedMapSize.height,
+        mapFocus === 'location' ? [] : customerCoordinates,
+      )
+    : null;
+  const inlineRegionKey = inlineRegion ? JSON.stringify(inlineRegion) : '';
+  const expandedRegionKey = expandedRegion
+    ? JSON.stringify(expandedRegion)
+    : '';
+
+  useEffect(() => {
+    if (
+      (loading && mapFocus !== 'location') ||
+      !listReady ||
+      !inlineMapReady ||
+      !inlineMapSize.width ||
+      !inlineMapSize.height ||
+      !inlineRegionKey
+    ) {
+      return;
+    }
+    mapRef.current?.animateToRegion(JSON.parse(inlineRegionKey), 0);
+  }, [
+    loading,
+    listReady,
+    inlineMapReady,
+    inlineMapSize.width,
+    inlineMapSize.height,
+    inlineRegionKey,
+    mapFocus,
+  ]);
+  useEffect(() => {
+    if (
+      !expanded ||
+      (loading && mapFocus !== 'location') ||
+      !listReady ||
+      !expandedMapReady ||
+      !expandedMapSize.width ||
+      !expandedMapSize.height ||
+      !expandedRegionKey
+    ) {
+      return;
+    }
+    expandedMapRef.current?.animateToRegion(JSON.parse(expandedRegionKey), 0);
+  }, [
+    expanded,
+    loading,
+    listReady,
+    expandedMapReady,
+    expandedMapSize.width,
+    expandedMapSize.height,
+    expandedRegionKey,
+    mapFocus,
+  ]);
+  const compact = width < 380;
+  const recenter = () => {
+    setMapFocus('location');
+    if (!expanded) {
+      mainScrollRef.current?.scrollTo({y: 0, animated: true});
+    }
+    splitterListRef.current?.scrollTo({y: 0, animated: true});
+    loadSplitters(true);
+  };
+  const toggleExpanded = (next: boolean) => {
+    setSelectedMarker(null);
+    setExpandedMapReady(false);
+    setExpandedMapSize({width: 0, height: 0});
+    setExpanded(next);
+  };
+  useEffect(() => {
+    if (!selectedMarker || expanded) {
+      return;
+    }
+    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelectedMarker(null);
+      return true;
+    });
+    return () => listener.remove();
+  }, [selectedMarker, expanded]);
+
+  const renderMarkerDetails = () => {
+    const customerLink = customerLinks.find(
+      link => `customer:${link.key}` === selectedMarker,
+    );
+    if (customerLink) {
+      const items = [
+        customerLink,
+        ...customerLinks.filter(
+          link =>
+            link.key !== customerLink.key &&
+            link.coordinates[1].latitude ===
+              customerLink.coordinates[1].latitude &&
+            link.coordinates[1].longitude ===
+              customerLink.coordinates[1].longitude,
+        ),
+      ];
+      return (
+        <CustomerMapDetails
+          key={`customer:${customerLink.key}`}
+          items={items}
+          maxHeight={height * 0.72}
+          bottomInset={insets.bottom}
+          onClose={() => setSelectedMarker(null)}
+          onOpen={link => {
+            setSelectedMarker(null);
+            if (expanded) {
+              toggleExpanded(false);
+            }
+            navigation.navigate('LastMileSplitterDetails', {
+              splitter: link.splitter,
+            });
+          }}
+        />
+      );
+    }
+    const group = getNumberedSplitterMarkers(splitters).find(
+      item => item.key === selectedMarker,
+    );
+    if (!group) {
+      return null;
+    }
+    return (
+      <SplitterMapDetails
+        key={group.key}
+        items={group.items}
+        connectionStats={connectionStats}
+        maxHeight={height * 0.72}
+        bottomInset={insets.bottom}
+        onClose={() => setSelectedMarker(null)}
+        onOpen={splitter => {
+          setSelectedMarker(null);
+          if (expanded) {
+            toggleExpanded(false);
+          }
+          navigation.navigate('LastMileSplitterDetails', {splitter});
+        }}
+      />
+    );
   };
 
   const renderMap = (fullScreen: boolean) => (
     <View
+      onLayout={({nativeEvent: {layout}}) => {
+        const setSize = fullScreen ? setExpandedMapSize : setInlineMapSize;
+        const border = fullScreen ? 0 : 10;
+        const mapWidth = Math.max(1, layout.width - border);
+        const mapHeight = Math.max(1, layout.height - border);
+        setSize(previous =>
+          previous.width === mapWidth && previous.height === mapHeight
+            ? previous
+            : {width: mapWidth, height: mapHeight},
+        );
+      }}
       style={
         fullScreen
           ? styles.expandedMap
@@ -120,35 +404,130 @@ export default function LastMileConnectivityScreen({
               {height: Math.max(280, Math.min(width * 0.85, height * 0.48))},
             ]
       }>
-      <MapView
-        ref={fullScreen ? expandedMapRef : mapRef}
-        style={StyleSheet.absoluteFill}
-        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
-        initialRegion={INITIAL_REGION}
-        toolbarEnabled={false}
-        showsMyLocationButton={false}>
-        <Polyline coordinates={ROUTE} strokeColor="#536DFF" strokeWidth={3} />
-        {SPLITTERS.map(splitter => (
+      {position ? (
+        <MapView
+          ref={fullScreen ? attachExpandedMap : attachInlineMap}
+          style={StyleSheet.absoluteFill}
+          provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+          initialRegion={getSplitterMapRegion(
+            position,
+            splitters,
+            range,
+            fullScreen ? width : width - 38,
+            fullScreen
+              ? height
+              : Math.max(280, Math.min(width * 0.85, height * 0.48)),
+            mapFocus === 'location' ? [] : customerCoordinates,
+          )}
+          onMapReady={() =>
+            (fullScreen ? setExpandedMapReady : setInlineMapReady)(true)
+          }
+          toolbarEnabled={false}
+          showsMyLocationButton={false}>
+          {customerMapLines.map(line => (
+            <Polyline
+              key={`customer-link:${line.key}`}
+              coordinates={line.coordinates}
+              strokeColor="#8050DF"
+              strokeWidth={2}
+              lineCap="round"
+              lineJoin="round"
+              geodesic={false}
+              zIndex={1}
+            />
+          ))}
+          {customerLinks.map(link => (
+            <Marker
+              key={`customer-avatar:${link.key}`}
+              pinColor="#168D70"
+              coordinate={link.coordinates[1]}
+              accessibilityLabel={`Customer ${
+                link.customer.name || 'Unnamed'
+              }, splitter ${link.splitterNumber}, leg ${
+                link.leg
+              }. View details.`}
+              zIndex={2}
+              onPress={event => {
+                event.stopPropagation();
+                setSelectedMarker(`customer:${link.key}`);
+              }}>
+              <CustomerMapIcon />
+            </Marker>
+          ))}
+          {getNumberedSplitterMarkers(splitters).map(group => (
+            <Marker
+              key={group.key}
+              coordinate={group.coordinate}
+              zIndex={3}
+              onPress={() => setSelectedMarker(group.key)}>
+              <View style={styles.mapPinGroup}>
+                {group.items.map(({splitter, number}) => (
+                  <View key={splitter.id} style={styles.mapPin}>
+                    <SplitterIcon size={14} />
+                    <Text style={styles.mapPinNumber}>{number}</Text>
+                  </View>
+                ))}
+              </View>
+            </Marker>
+          ))}
           <Marker
-            key={splitter.id}
-            coordinate={splitter}
-            title={splitter.name}
-            description={`Type: 1:8 | ${splitter.free} Free • ${splitter.distance}m`}>
-            <View style={styles.mapPin}>
-              <SplitterIcon size={19} />
+            coordinate={position}
+            title="You are here"
+            accessibilityLabel="Your current GPS location"
+            anchor={{x: 0.5, y: 0.5}}
+            zIndex={5}>
+            <View style={styles.currentLocationHalo}>
+              <View style={styles.currentLocationDot} />
             </View>
           </Marker>
-        ))}
-        <Marker
-          coordinate={DEMO_LOCATION}
-          title="You are here (sample location)">
-          <PointerSvg width={36} height={36} />
-        </Marker>
-      </MapView>
+        </MapView>
+      ) : (
+        <View style={styles.mapPlaceholder}>
+          <Text style={styles.stateText}>
+            Get your current location to view nearby splitters on the map.
+          </Text>
+        </View>
+      )}
+      <View style={styles.mapLinkSummary} pointerEvents="box-none">
+        {mapFocus === 'location' && (
+          <View style={styles.locationSummary}>
+            <Text style={styles.locationText}>
+              ● You are here · Nearby splitters
+            </Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Show all customer connections on map"
+              onPress={() => setMapFocus('all')}>
+              <Text style={styles.mapLinkRetry}>Show all connections</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <Text style={styles.mapLinkText}>
+          {linksLoading
+            ? 'Loading customer connections…'
+            : `${customerLinks.length} customer-to-splitter connections`}
+        </Text>
+        {missingCoordinates > 0 && (
+          <Text style={styles.mapLinkText}>
+            {missingCoordinates} connections have missing or invalid
+            coordinates.
+          </Text>
+        )}
+        {linksFailed && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Retry customer map connections"
+            onPress={() => loadConnections(splitters)}>
+            <Text style={styles.mapLinkRetry}>
+              Some connections could not load. Tap to retry.
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={fullScreen ? 'Collapse map' : 'Expand map'}
-        onPress={() => setExpanded(!fullScreen)}
+        onPress={() => toggleExpanded(!fullScreen)}
         style={styles.expandButton}>
         <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
           <Path
@@ -172,14 +551,17 @@ export default function LastMileConnectivityScreen({
       <TouchableOpacity
         activeOpacity={0.85}
         accessibilityRole="button"
-        accessibilityLabel="Where I am? Center map on sample location"
+        accessibilityLabel="Where I am? Refresh current location and nearby splitters"
+        disabled={loading}
         onPress={recenter}>
         <LinearGradient
           colors={GRADIENT}
           start={{x: 0, y: 0}}
           end={{x: 1, y: 1}}
           style={styles.whereButton}>
-          <Text style={styles.whereText}>Where I am?</Text>
+          <Text style={styles.whereText}>
+            {locating ? 'Locating…' : loading ? 'Loading…' : 'Where I am?'}
+          </Text>
         </LinearGradient>
       </TouchableOpacity>
     </View>
@@ -214,7 +596,10 @@ export default function LastMileConnectivityScreen({
                 accessibilityLabel="Decrease range"
                 accessibilityState={{disabled: range <= 100}}
                 disabled={range <= 100}
-                onPress={() => setRange(value => Math.max(100, value - 100))}
+                onPress={() => {
+                  setMapFocus('all');
+                  setRange(value => Math.max(100, value - 100));
+                }}
                 style={[styles.rangeButton, range <= 100 && styles.disabled]}>
                 <Text style={styles.rangeSign}>−</Text>
               </TouchableOpacity>
@@ -224,7 +609,10 @@ export default function LastMileConnectivityScreen({
                 accessibilityLabel="Increase range"
                 accessibilityState={{disabled: range >= 1000}}
                 disabled={range >= 1000}
-                onPress={() => setRange(value => Math.min(1000, value + 100))}
+                onPress={() => {
+                  setMapFocus('all');
+                  setRange(value => Math.min(1000, value + 100));
+                }}
                 style={[styles.rangeButton, range >= 1000 && styles.disabled]}>
                 <Text style={styles.rangeSign}>+</Text>
               </TouchableOpacity>
@@ -232,104 +620,159 @@ export default function LastMileConnectivityScreen({
           </View>
         </LinearGradient>
         <ScrollView
-          ref={scrollRef}
+          ref={mainScrollRef}
           nestedScrollEnabled
           style={styles.scroll}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}>
           <Text style={styles.sectionLabel}>Near by Splitters :</Text>
-          <View>
-            <View style={styles.timeline} />
-            <View
-              style={styles.locationBadge}
-              accessible
-              accessibilityLabel="Person with location pin">
-              <PointerSvg width={28} height={28} />
+          {loading && splitters.length === 0 ? (
+            <View style={styles.stateCard}>
+              <ActivityIndicator color="#8858F9" />
+              <Text style={styles.stateText}>
+                {locating
+                  ? 'Finding your current location…'
+                  : 'Loading nearby splitters…'}
+              </Text>
             </View>
-            <ScrollView
-              nestedScrollEnabled
-              accessibilityLabel="Nearby splitters"
-              style={[styles.splitterList, {height: listHeight}]}
-              showsVerticalScrollIndicator
-              contentContainerStyle={styles.list}>
-              {SPLITTERS.map((splitter, index) => (
-                <TouchableOpacity
-                  key={splitter.id}
-                  style={styles.card}
-                  activeOpacity={0.8}
-                  accessibilityRole="button"
-                  accessibilityLabel={`View ${splitter.name} details`}
-                  onPress={() =>
-                    navigation.navigate('LastMileSplitterDetails', {splitter})
-                  }
-                  onLayout={event => {
-                    if (index >= 4) {
-                      return;
+          ) : error ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.stateText}>{error}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => {
+                  loadSplitters(!position);
+                }}
+                style={styles.retryButton}>
+                <Text style={styles.whereText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : splitters.length === 0 ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.stateText}>
+                No splitters found within {range}m. Increase the range or
+                refresh your location.
+              </Text>
+            </View>
+          ) : (
+            <View>
+              <View style={styles.timeline} />
+              <View
+                style={styles.locationBadge}
+                accessible
+                accessibilityLabel="Person with location pin">
+                <PointerSvg width={28} height={28} />
+              </View>
+              <ScrollView
+                ref={splitterListRef}
+                nestedScrollEnabled
+                accessibilityLabel="Nearby splitters"
+                style={[
+                  styles.splitterList,
+                  {height: listHeight ?? Math.min(4, splitters.length) * 140},
+                ]}
+                showsVerticalScrollIndicator
+                contentContainerStyle={styles.list}>
+                {splitters.map((splitter, index) => (
+                  <TouchableOpacity
+                    key={`${layoutKey}:${splitter.id}`}
+                    style={[
+                      styles.card,
+                      splitter.id === nearestSplitterId && styles.nearestCard,
+                    ]}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Splitter ${index + 1}. View ${
+                      splitter.name
+                    } details${
+                      splitter.id === nearestSplitterId
+                        ? '. Nearest to your current location'
+                        : ''
+                    }`}
+                    onPress={() =>
+                      navigation.navigate('LastMileSplitterDetails', {splitter})
                     }
-                    const cardHeight = event.nativeEvent.layout.height;
-                    setCardHeights(previous =>
-                      previous[splitter.id] === cardHeight
-                        ? previous
-                        : {...previous, [splitter.id]: cardHeight},
-                    );
-                  }}>
-                  <View style={styles.cardTop}>
-                    <LinearGradient
-                      colors={GRADIENT}
-                      style={styles.splitterIcon}>
-                      <SplitterIcon size={17} />
-                    </LinearGradient>
-                    <Text style={styles.splitterName}>
-                      {splitter.name} ({splitter.id})
-                    </Text>
-                    <Text style={styles.type}>
-                      <Text style={styles.bold}>Type:</Text> 1:8 |{' '}
-                      {splitter.free} Free
-                    </Text>
-                  </View>
-                  <Text style={styles.details}>
-                    <Text style={styles.bold}>Optical Power :</Text> In = -10
-                    dbm | Out = -14 dbm
-                  </Text>
-                  <Text style={styles.details}>
-                    <Text style={styles.bold}>Address :</Text> Fabric Station,
-                    29, Kalkaji Main Rd, Krishna Market, Block G, Kalkaji, New
-                    Delhi, Delhi, 110019, India
-                  </Text>
-                  <View style={styles.cardBottom}>
+                    onLayout={event => {
+                      if (index >= 4) {
+                        return;
+                      }
+                      const cardHeight = event.nativeEvent.layout.height;
+                      const key = `${layoutKey}:${splitter.id}`;
+                      setCardHeights(previous =>
+                        previous[key] === cardHeight
+                          ? previous
+                          : {...previous, [key]: cardHeight},
+                      );
+                    }}>
+                    {splitter.id === nearestSplitterId && (
+                      <Text style={styles.nearestBadge}>● Nearest to you</Text>
+                    )}
+                    <View style={styles.cardTop}>
+                      <LinearGradient
+                        colors={GRADIENT}
+                        style={styles.splitterIcon}>
+                        <Text style={styles.listNumber}>{index + 1}</Text>
+                      </LinearGradient>
+                      <Text style={styles.splitterName}>
+                        {splitterTitle(splitter)}
+                      </Text>
+                      <Text style={styles.type}>
+                        <Text style={styles.bold}>Type:</Text>{' '}
+                        {splitterRatio(splitter)} | {splitter.free} Free
+                      </Text>
+                    </View>
                     <Text style={styles.details}>
-                      <Text style={styles.bold}>Lat/Lng :</Text>{' '}
-                      {splitter.latitude}, {splitter.longitude}
+                      <Text style={styles.bold}>Optical Power :</Text> In ={' '}
+                      {powerLabel(splitter.opticalPowerIn)} | Out ={' '}
+                      {powerLabel(splitter.opticalPowerOut)}
                     </Text>
-                    <Text style={styles.distanceRow}>
-                      <Text style={styles.bold}>Distance: </Text>
-                      <Text style={styles.distance}>{splitter.distance}m</Text>
+                    <Text style={styles.details}>
+                      <Text style={styles.bold}>Address :</Text>{' '}
+                      {splitter.address || '—'}
                     </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-          {renderMap(false)}
+                    <View style={styles.cardBottom}>
+                      <Text style={styles.details}>
+                        <Text style={styles.bold}>Lat/Lng :</Text>{' '}
+                        {hasSplitterCoordinate(splitter)
+                          ? `${splitter.latitude}, ${splitter.longitude}`
+                          : '—'}
+                      </Text>
+                      <Text style={styles.distanceRow}>
+                        <Text style={styles.bold}>Distance: </Text>
+                        <Text style={styles.distance}>
+                          {distanceLabel(splitter.distance)}
+                        </Text>
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+          {listReady && (!loading || splitters.length > 0) && renderMap(false)}
         </ScrollView>
         {renderFooter()}
+        {!expanded && renderMarkerDetails()}
         <Modal
           visible={expanded}
           animationType="slide"
-          onRequestClose={() => setExpanded(false)}>
+          onRequestClose={() =>
+            selectedMarker ? setSelectedMarker(null) : toggleExpanded(false)
+          }>
           <View style={[styles.screen, {paddingTop: insets.top}]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Nearby Splitters</Text>
               <TouchableOpacity
                 accessibilityRole="button"
                 accessibilityLabel="Close expanded map"
-                onPress={() => setExpanded(false)}
+                onPress={() => toggleExpanded(false)}
                 style={styles.closeButton}>
                 <Text style={styles.closeText}>Close</Text>
               </TouchableOpacity>
             </View>
             {expanded && renderMap(true)}
             {renderFooter()}
+            {renderMarkerDetails()}
           </View>
         </Modal>
       </View>
@@ -339,6 +782,73 @@ export default function LastMileConnectivityScreen({
 
 const styles = StyleSheet.create({
   screen: {flex: 1, backgroundColor: '#F4F7FA'},
+  stateCard: {
+    padding: 22,
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
+  stateText: {
+    fontFamily: FONTS.REGULAR,
+    fontSize: 12,
+    lineHeight: 19,
+    textAlign: 'center',
+    color: '#727889',
+  },
+  retryButton: {
+    backgroundColor: '#7947E8',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 7,
+  },
+  currentLocationHalo: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,133,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  currentLocationDot: {
+    width: 17,
+    height: 17,
+    borderRadius: 9,
+    backgroundColor: '#0085FF',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  locationSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  locationText: {fontFamily: FONTS.BOLD, fontSize: 11, color: '#0075E6'},
+  mapLinkSummary: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderRadius: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  mapLinkText: {fontFamily: FONTS.MEDIUM, fontSize: 10, color: '#51425F'},
+  mapLinkRetry: {
+    fontFamily: FONTS.MEDIUM,
+    fontSize: 10,
+    color: '#0075E6',
+    paddingVertical: 6,
+  },
+  mapPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#EBEDF4',
+  },
   header: {paddingHorizontal: 8, paddingBottom: 12},
   headerRow: {flexDirection: 'row', alignItems: 'center', minHeight: 44},
   backButton: {width: 28, minHeight: 44, justifyContent: 'center'},
@@ -417,6 +927,17 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 1,
   },
+  nearestCard: {
+    backgroundColor: '#F4F0FF',
+    borderWidth: 1,
+    borderColor: '#B8A0F7',
+  },
+  nearestBadge: {
+    fontFamily: FONTS.BOLD,
+    fontSize: 10,
+    color: '#7041D8',
+    marginBottom: 6,
+  },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -462,9 +983,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   expandedMap: {flex: 1, overflow: 'hidden'},
+  mapPinGroup: {flexDirection: 'row', flexWrap: 'wrap', gap: 3, maxWidth: 150},
   mapPin: {
-    width: 29,
-    height: 29,
+    minWidth: 42,
+    height: 30,
+    paddingHorizontal: 6,
+    flexDirection: 'row',
+    gap: 4,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
@@ -472,6 +997,8 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
     borderWidth: 2,
   },
+  mapPinNumber: {fontFamily: FONTS.BOLD, fontSize: 12, color: '#FFFFFF'},
+  listNumber: {fontFamily: FONTS.BOLD, fontSize: 11, color: '#FFFFFF'},
   expandButton: {
     position: 'absolute',
     top: 8,

@@ -1,5 +1,28 @@
-import React from 'react';
-import {Image, ScrollView, StyleSheet, Text, View} from 'react-native';
+import React, {useCallback, useRef, useState} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
+import {
+  getPreviewConnections,
+  mergeApiCustomerConnections,
+} from './customerPreview';
+import {getSplitterCustomerDetails} from '../../services/lastMileSplitterCustomers';
+import type {SplitterCustomer, SplitterLeg} from './types';
+import {
+  splitterTitle,
+  splitterRatio,
+  powerLabel,
+  distanceLabel,
+  hasSplitterCoordinate,
+} from '../../services/lastMileConnectivityService';
+import {
+  ActivityIndicator,
+  Image,
+  ImageBackground,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import {TouchableOpacity} from 'react-native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -10,54 +33,17 @@ import {FONTS, IMAGES} from '@res';
 import type {RootStackParamList} from '@navigation/navigator';
 import SplitterIcon from './SplitterIcon';
 
-const CUSTOMERS = [
-  {
-    tube: '1',
-    core: '2',
-    mobile: '9926066378',
-    name: 'Apex Enterprises',
-    address: 'Fabric Station, 29, Kalkaji Main Rd, Krishna Market',
-    latLng: '28.54123085, 77.25460640',
-    online: true,
-  },
-  {
-    tube: '1',
-    core: '3',
-    mobile: '6565656565',
-    name: 'Apex Enterprises',
-    address: 'G48, 11, Kalkaji, Block G, Kalkaji, New Delhi',
-    latLng: '28.54123085, 77.25460640',
-    online: true,
-  },
-  {
-    tube: '1',
-    core: '4',
-    mobile: '9999999999',
-    name: 'Apex Enterprises',
-    address: 'B-141, Third Floor, Block E, Kalkaji, New Delhi',
-    latLng: '28.54123085, 77.25460640',
-    online: false,
-  },
-  {
-    tube: '1',
-    core: '5',
-    mobile: '9926066378',
-    name: 'Apex Enterprises',
-    address: 'Near City Park, Kalkaji, Block E, New Delhi',
-    latLng: '28.54123085, 77.25460640',
-    online: false,
-  },
-];
 const COLUMNS = [
-  {key: 'tube', label: 'Tube', width: 30},
-  {key: 'core', label: 'Core', width: 30},
-  {key: 'mobile', label: 'Mobile No.', width: 78},
-  {key: 'name', label: 'Customer Name', width: 105},
-  {key: 'address', label: 'Customer Address', width: 180},
-  {key: 'latLng', label: 'Customer Lat/Long', width: 164},
-  {key: 'status', label: 'Status', width: 60},
+  {key: 'tube', label: 'Tube', width: 28},
+  {key: 'core', label: 'Core', width: 28},
+  {key: 'mobile', label: 'Mobile No.', width: 76},
+  {key: 'name', label: 'Customer Name', width: 96},
+  {key: 'address', label: 'Customer Address', width: 160},
+  {key: 'latLng', label: 'Customer Lat/Long', width: 194},
+  {key: 'status', label: 'Status', width: 82},
 ] as const;
-const ROW_HEIGHT = 34;
+const ROW_HEIGHT = 48;
+const TABLE_HEADER_HEIGHT = 32;
 
 function EditIcon() {
   return (
@@ -79,13 +65,73 @@ export default function LastMileSplitterDetailsScreen({
 }: NativeStackScreenProps<RootStackParamList, 'LastMileSplitterDetails'>) {
   const {splitter} = route.params;
   const insets = useSafeAreaInsets();
-  const title = `${splitter.name} (${splitter.id})`;
-  const occupiedLegs = 8 - splitter.free;
-  // Static rows follow the selected splitter's available leg count.
-  const customers = Array.from(
-    {length: occupiedLegs},
-    (_, index) => CUSTOMERS[index % CUSTOMERS.length],
+  const {width} = useWindowDimensions();
+  const columnScale = Math.min(1, Math.max(0.7, (width - 84) / 292));
+  const title = splitterTitle(splitter);
+  const [customers, setCustomers] = useState<(SplitterCustomer | null)[]>(() =>
+    splitter.source === 'api' ? [] : getPreviewConnections(splitter),
   );
+  const [loading, setLoading] = useState(splitter.source === 'api');
+  const [error, setError] = useState('');
+  const [legs, setLegs] = useState<SplitterLeg[]>([]);
+  const requestId = useRef(0);
+  const loadCustomers = useCallback(async () => {
+    const id = ++requestId.current;
+    if (splitter.source !== 'api') {
+      setCustomers(getPreviewConnections(splitter));
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await getSplitterCustomerDetails(splitter);
+      if (id !== requestId.current) {
+        return;
+      }
+      setLegs(result.legs);
+      setCustomers(mergeApiCustomerConnections(splitter, result.customers));
+    } catch (failure: any) {
+      if (id === requestId.current) {
+        setError(
+          failure?.message ||
+            'Could not load splitter customers. Please retry.',
+        );
+      }
+    } finally {
+      if (id === requestId.current) {
+        setLoading(false);
+      }
+    }
+  }, [splitter]);
+  useFocusEffect(
+    useCallback(() => {
+      loadCustomers();
+      return () => {
+        requestId.current += 1;
+      };
+    }, [loadCustomers]),
+  );
+  const occupiedLegs = customers.filter(Boolean).length;
+  const totalLegs = customers.length;
+  const freeLegs = totalLegs - occupiedLegs;
+  const onlineCount = customers.filter(
+    customer => customer?.online === true,
+  ).length;
+  const offlineCount = customers.filter(
+    customer => customer?.online === false,
+  ).length;
+  const displaySplitter = {
+    ...splitter,
+    totalPorts: totalLegs || splitter.totalPorts,
+    free: loading || error ? splitter.free : freeLegs,
+  };
+  const openCustomer = (index: number) =>
+    navigation.navigate('LastMileCustomerForm', {
+      splitter: displaySplitter,
+      leg: index + 1,
+      customer: customers[index] ?? undefined,
+      connectionLeg: legs.find(item => item.leg === index + 1),
+    });
 
   return (
     <Screen
@@ -96,8 +142,9 @@ export default function LastMileSplitterDetailsScreen({
       statusBgColor="#8858F9"
       statusBarStyle="light">
       <View style={styles.screen}>
-        <LinearGradient
-          colors={['#8858F9', '#6036C4']}
+        <ImageBackground
+          source={IMAGES.HeaderBkg}
+          resizeMode="stretch"
           style={[styles.header, {paddingTop: insets.top + 8}]}>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -107,9 +154,10 @@ export default function LastMileSplitterDetailsScreen({
             <Image source={IMAGES.back} style={styles.backIcon} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{title}</Text>
-        </LinearGradient>
+        </ImageBackground>
         <ScrollView
-          contentContainerStyle={{paddingBottom: Math.max(insets.bottom, 16)}}
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}>
           <View style={styles.summary}>
             <View style={styles.summaryTop}>
@@ -118,145 +166,285 @@ export default function LastMileSplitterDetailsScreen({
                 style={styles.splitterIcon}>
                 <SplitterIcon size={17} />
               </LinearGradient>
-              <Text style={styles.splitterName}>{title}</Text>
+              <View style={styles.summaryCopy}>
+                <Text style={styles.splitterName}>{title}</Text>
+              </View>
               <Text style={styles.summaryText}>
-                <Text style={styles.bold}>Type:</Text> 1:8 | {splitter.free}{' '}
-                Free
+                <Text style={styles.fieldLabel}>Type:</Text>{' '}
+                {splitterRatio(displaySplitter)} | {displaySplitter.free} Free
               </Text>
             </View>
             <Text style={styles.summaryText}>
-              <Text style={styles.bold}>Optical Power :</Text> In = -10 dbm |
-              Out = -14 dbm
+              <Text style={styles.fieldLabel}>Optical Power: </Text>In{' '}
+              {splitter.source === 'api'
+                ? powerLabel(splitter.opticalPowerIn)
+                : '−10 dBm'}{' '}
+              | Out{' '}
+              {splitter.source === 'api'
+                ? powerLabel(splitter.opticalPowerOut)
+                : '−14 dBm'}
             </Text>
             <Text style={styles.summaryText}>
-              <Text style={styles.bold}>Address :</Text> Fabric Station, 29,
-              Kalkaji Main Rd, Krishna Market, Block G, Kalkaji, New Delhi,
-              Delhi, 110019, India
+              <Text style={styles.fieldLabel}>Address: </Text>
+              {splitter.address ||
+                (splitter.source === 'api'
+                  ? '—'
+                  : 'Fabric Station, 29, Kalkaji Main Rd, Krishna Market, Block G, Kalkaji, New Delhi, Delhi, 110019, India')}
             </Text>
             <View style={styles.summaryBottom}>
-              <Text style={[styles.summaryText, styles.coordinates]}>
-                <Text style={styles.bold}>Lat/Lng :</Text> {splitter.latitude},{' '}
-                {splitter.longitude}
+              <Text selectable style={styles.coordinateText}>
+                <Text style={styles.fieldLabel}>Lat/Lng: </Text>
+                {hasSplitterCoordinate(splitter)
+                  ? `${splitter.latitude}, ${splitter.longitude}`
+                  : '—'}
               </Text>
-              <Text style={styles.summaryText}>
-                <Text style={styles.bold}>Distance: </Text>
-                <Text style={styles.distance}>{splitter.distance}m</Text>
+              <Text style={styles.distanceBadge}>
+                <Text style={styles.distanceLabel}>Distance: </Text>
+                <Text style={styles.distance}>
+                  {distanceLabel(splitter.distance)}
+                </Text>
               </Text>
             </View>
           </View>
-          <View style={styles.table}>
-            <View style={styles.legsColumn}>
-              <Text style={styles.columnHeading}>Legs</Text>
-              <View style={styles.legLine} />
-              {Array.from({length: 8}, (_, index) => (
-                <View key={index} style={styles.row}>
-                  <View style={[styles.cell, styles.legCell]}>
-                    <Text style={styles.cellText}>{index + 1}</Text>
-                  </View>
-                </View>
-              ))}
+          {loading ? (
+            <View style={styles.stateCard}>
+              <ActivityIndicator color="#8858F9" />
+              <Text style={styles.stateText}>Loading connected customers…</Text>
             </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator
-              style={styles.fieldsScroll}
-              accessibilityLabel="Customer connection details. Swipe horizontally for customer coordinates and status.">
-              <View>
-                <View style={[styles.fieldRow, styles.tableHeader]}>
-                  {COLUMNS.map(column => (
-                    <Text
-                      key={column.key}
-                      style={[styles.columnHeading, {width: column.width}]}>
-                      {column.label}
-                    </Text>
-                  ))}
+          ) : error ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.stateText}>{error}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={loadCustomers}
+                style={styles.retryButton}>
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              {totalLegs === 0 && (
+                <View style={styles.stateCard}>
+                  <Text style={styles.stateText}>
+                    No customer connections or available legs were returned for
+                    this splitter.
+                  </Text>
                 </View>
-                {Array.from({length: 8}, (_, index) => {
-                  const customer = customers[index];
-                  return (
-                    <View key={index} style={styles.fieldRow}>
-                      {customer
-                        ? COLUMNS.map(column => (
-                            <View
-                              key={column.key}
-                              style={[styles.fieldSlot, {width: column.width}]}>
-                              <View
-                                style={[
-                                  styles.cell,
-                                  column.key === 'status' && styles.statusCell,
-                                ]}>
-                                {column.key === 'status' ? (
-                                  <>
+              )}
+              <View style={styles.tableCard}>
+                <View style={styles.table}>
+                  <View style={styles.legsColumn}>
+                    <Text style={styles.columnHeading}>Legs</Text>
+                    <View style={styles.legLine} />
+                    {Array.from({length: totalLegs}, (_, index) => (
+                      <View key={index} style={styles.row}>
+                        <View style={[styles.cell, styles.legCell]}>
+                          <Text style={styles.legText}>{index + 1}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator
+                    style={styles.fieldsScroll}
+                    accessibilityLabel="Customer connection details. Swipe horizontally for customer coordinates and status.">
+                    <View>
+                      <View style={[styles.fieldRow, styles.tableHeader]}>
+                        {COLUMNS.map(column => (
+                          <Text
+                            key={column.key}
+                            style={[
+                              styles.columnHeading,
+                              {width: column.width * columnScale},
+                            ]}>
+                            {column.label}
+                          </Text>
+                        ))}
+                      </View>
+                      {Array.from({length: totalLegs}, (_, index) => {
+                        const customer = customers[index];
+                        return (
+                          <View key={index} style={styles.fieldRow}>
+                            {customer
+                              ? COLUMNS.map(column => (
+                                  <View
+                                    key={column.key}
+                                    style={[
+                                      styles.fieldSlot,
+                                      {width: column.width * columnScale},
+                                    ]}>
                                     <View
                                       style={[
-                                        styles.statusHalo,
-                                        customer.online
-                                          ? styles.onlineHalo
-                                          : styles.offlineHalo,
+                                        styles.cell,
+                                        column.key === 'status' &&
+                                          styles.statusCell,
                                       ]}>
-                                      <View
-                                        style={[
-                                          styles.statusDot,
-                                          customer.online
-                                            ? styles.onlineDot
-                                            : styles.offlineDot,
-                                        ]}
-                                      />
+                                      {column.key === 'status' ? (
+                                        customer.online === null ? (
+                                          <Text style={styles.cellText}>—</Text>
+                                        ) : (
+                                          <>
+                                            <View
+                                              style={[
+                                                styles.statusHalo,
+                                                customer.online
+                                                  ? styles.onlineHalo
+                                                  : styles.offlineHalo,
+                                              ]}>
+                                              <View
+                                                style={[
+                                                  styles.statusDot,
+                                                  customer.online
+                                                    ? styles.onlineDot
+                                                    : styles.offlineDot,
+                                                ]}
+                                              />
+                                            </View>
+                                            <Text
+                                              style={[
+                                                styles.statusText,
+                                                customer.online
+                                                  ? styles.onlineText
+                                                  : styles.offlineText,
+                                              ]}>
+                                              {customer.online ? 'ON' : 'OFF'}
+                                            </Text>
+                                          </>
+                                        )
+                                      ) : (
+                                        <Text
+                                          numberOfLines={1}
+                                          style={styles.cellText}>
+                                          {customer[column.key] || '—'}
+                                        </Text>
+                                      )}
                                     </View>
-                                    <Text
-                                      style={[
-                                        styles.statusText,
-                                        customer.online
-                                          ? styles.onlineText
-                                          : styles.offlineText,
-                                      ]}>
-                                      {customer.online ? 'ON' : 'OFF'}
-                                    </Text>
-                                  </>
-                                ) : (
-                                  <Text
-                                    numberOfLines={1}
-                                    style={styles.cellText}>
-                                    {customer[column.key]}
-                                  </Text>
-                                )}
-                              </View>
-                            </View>
-                          ))
-                        : null}
+                                  </View>
+                                ))
+                              : null}
+                          </View>
+                        );
+                      })}
                     </View>
-                  );
-                })}
-              </View>
-            </ScrollView>
-            <View style={styles.editColumn}>
-              <View style={styles.columnHeading} />
-              {Array.from({length: 8}, (_, index) => (
-                <View key={index} style={styles.row}>
-                  {customers[index] && (
-                    <View
-                      style={styles.editButton}
-                      accessibilityLabel={`Edit customer on leg ${index + 1}`}>
-                      <EditIcon />
-                    </View>
+                  </ScrollView>
+                  <View style={styles.editColumn}>
+                    <View style={styles.columnHeading} />
+                    {Array.from({length: totalLegs}, (_, index) => (
+                      <View key={index} style={styles.row}>
+                        {customers[index] && (
+                          <TouchableOpacity
+                            onPress={() => openCustomer(index)}
+                            accessibilityRole="button"
+                            style={styles.editButton}
+                            accessibilityLabel={`Edit customer on leg ${
+                              index + 1
+                            }`}>
+                            <LinearGradient
+                              pointerEvents="none"
+                              colors={['#8858F9', '#6036C4']}
+                              style={StyleSheet.absoluteFill}
+                            />
+                            <EditIcon />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    ))}
+                  </View>
+                  {customers.map((customer, index) =>
+                    customer ? null : (
+                      <View
+                        key={`empty-${index}`}
+                        style={[
+                          styles.emptySlot,
+                          {
+                            top: TABLE_HEADER_HEIGHT + index * ROW_HEIGHT,
+                          },
+                        ]}>
+                        <TouchableOpacity
+                          style={styles.addButton}
+                          onPress={() => openCustomer(index)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Add customer to leg ${
+                            index + 1
+                          }`}>
+                          <LinearGradient
+                            pointerEvents="none"
+                            colors={['#8858F9', '#6036C4']}
+                            style={StyleSheet.absoluteFill}
+                          />
+                          <Text style={styles.addText}>Add Customer</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ),
                   )}
                 </View>
-              ))}
-            </View>
-            {Array.from({length: splitter.free}, (_, index) => (
-              <View
-                key={`empty-${index}`}
-                style={[
-                  styles.emptySlot,
-                  {top: 28 + (occupiedLegs + index) * ROW_HEIGHT},
-                ]}>
-                <View style={styles.addButton}>
-                  <Text style={styles.addText}>Add Customer</Text>
-                </View>
               </View>
-            ))}
-          </View>
+            </>
+          )}
         </ScrollView>
+        {!loading && !error && (
+          <View
+            style={[
+              styles.footer,
+              {paddingBottom: Math.max(insets.bottom, 10)},
+            ]}>
+            <View style={styles.connectionSummary}>
+              <View style={styles.summaryHeadingRow}>
+                <Text style={styles.connectionSummaryTitle}>
+                  Connection Summary
+                </Text>
+                <Text style={styles.utilizationText}>
+                  {occupiedLegs}/{totalLegs} legs used
+                </Text>
+              </View>
+              {totalLegs > 0 && (
+                <View
+                  style={styles.capacityBar}
+                  accessible
+                  accessibilityLabel={`${occupiedLegs} connected legs and ${freeLegs} free legs`}>
+                  {Array.from({length: totalLegs}, (_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.capacitySegment,
+                        customers[index] && styles.usedSegment,
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+              <View style={styles.capacityLabels}>
+                <Text style={styles.capacityText}>
+                  {totalLegs
+                    ? `${Math.round(
+                        (occupiedLegs / totalLegs) * 100,
+                      )}% occupied`
+                    : 'No ports returned'}
+                </Text>
+                <Text style={styles.freeLegsText}>{freeLegs} free legs</Text>
+              </View>
+              {totalLegs > 0 && (
+                <View style={styles.statusSummaryRow}>
+                  <View
+                    style={[styles.statusSummaryItem, styles.onlineSummary]}>
+                    <View style={[styles.statusDot, styles.onlineDot]} />
+                    <Text style={styles.statusSummaryLabel}>Online</Text>
+                    <Text style={styles.statusSummaryValue}>{onlineCount}</Text>
+                  </View>
+                  <View
+                    style={[styles.statusSummaryItem, styles.offlineSummary]}>
+                    <View style={[styles.statusDot, styles.offlineDot]} />
+                    <Text style={styles.statusSummaryLabel}>Offline</Text>
+                    <Text style={styles.statusSummaryValue}>
+                      {offlineCount}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
       </View>
     </Screen>
   );
@@ -264,30 +452,54 @@ export default function LastMileSplitterDetailsScreen({
 
 const styles = StyleSheet.create({
   screen: {flex: 1, backgroundColor: '#F4F7FA'},
+  stateCard: {
+    margin: 14,
+    padding: 22,
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
+  stateText: {
+    fontFamily: FONTS.REGULAR,
+    fontSize: 12,
+    lineHeight: 19,
+    textAlign: 'center',
+    color: '#727889',
+  },
+  retryButton: {
+    backgroundColor: '#7947E8',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 7,
+  },
+  retryText: {fontFamily: FONTS.MEDIUM, fontSize: 12, color: '#FFFFFF'},
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingBottom: 12,
+    backgroundColor: '#7946E5',
   },
-  backButton: {width: 30, minHeight: 44, justifyContent: 'center'},
+  backButton: {width: 28, minHeight: 38, justifyContent: 'center'},
   backIcon: {
-    width: 19,
-    height: 19,
+    width: 18,
+    height: 18,
     resizeMode: 'contain',
     tintColor: '#FFFFFF',
   },
   headerTitle: {
     flex: 1,
-    color: '#FFFFFF',
     fontFamily: FONTS.MEDIUM,
     fontSize: 16,
+    color: '#FFFFFF',
   },
+  scroll: {flex: 1, minHeight: 0},
+  content: {flexGrow: 1, paddingBottom: 12},
   summary: {
+    paddingHorizontal: 7,
+    paddingVertical: 7,
     backgroundColor: '#FFFFFF',
-    padding: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E1E5EB',
   },
   summaryTop: {
     flexDirection: 'row',
@@ -297,66 +509,82 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   splitterIcon: {
-    width: 21,
-    height: 21,
+    width: 20,
+    height: 20,
     borderRadius: 4,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  summaryCopy: {flex: 1},
   splitterName: {
-    flexGrow: 1,
     fontFamily: FONTS.BOLD,
-    fontSize: 10,
+    fontSize: 11,
+    lineHeight: 18,
     color: '#393D45',
   },
+  fieldLabel: {fontFamily: FONTS.BOLD, fontSize: 11, color: '#393D45'},
   summaryText: {
     fontFamily: FONTS.REGULAR,
     color: '#393D45',
-    fontSize: 10,
+    fontSize: 11,
     lineHeight: 18,
   },
-  bold: {fontFamily: FONTS.BOLD},
-  summaryBottom: {flexDirection: 'row', flexWrap: 'wrap', columnGap: 8},
-  coordinates: {flexGrow: 1},
-  distance: {color: '#0085FF'},
-  table: {flexDirection: 'row', marginHorizontal: 14, marginTop: 12},
-  legsColumn: {width: 32},
+  summaryBottom: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  coordinateText: {
+    fontFamily: FONTS.REGULAR,
+    color: '#393D45',
+    fontSize: 11,
+    lineHeight: 18,
+  },
+  distanceBadge: {fontFamily: FONTS.REGULAR, fontSize: 11},
+  distanceLabel: {fontFamily: FONTS.BOLD, fontSize: 11, color: '#393D45'},
+  distance: {fontFamily: FONTS.BOLD, fontSize: 13, color: '#0075E6'},
+  tableCard: {marginTop: 10, marginHorizontal: 14},
+  table: {flexDirection: 'row'},
+  legsColumn: {width: 30},
   columnHeading: {
-    height: 28,
+    height: TABLE_HEADER_HEIGHT,
     textAlignVertical: 'center',
-    paddingTop: 6,
-    fontSize: 9,
+    paddingTop: 7,
+    fontSize: 9.5,
     fontFamily: FONTS.BOLD,
     color: '#777D85',
   },
   legLine: {
     position: 'absolute',
     width: 1,
-    left: 12,
-    top: 40,
-    bottom: 16,
+    left: 11,
+    top: TABLE_HEADER_HEIGHT + ROW_HEIGHT / 2,
+    bottom: ROW_HEIGHT / 2,
     backgroundColor: '#E1E5EB',
   },
   row: {height: ROW_HEIGHT, justifyContent: 'center'},
   fieldRow: {height: ROW_HEIGHT, flexDirection: 'row', alignItems: 'center'},
-  tableHeader: {height: 28},
+  tableHeader: {height: TABLE_HEADER_HEIGHT},
   fieldsScroll: {flex: 1},
-  fieldSlot: {paddingRight: 6},
+  fieldSlot: {paddingRight: 5},
   cell: {
-    minHeight: 26,
-    paddingHorizontal: 6,
+    minHeight: 27,
+    paddingHorizontal: 5,
     justifyContent: 'center',
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: '#E1E5EB',
-    borderRadius: 5,
     backgroundColor: '#FFFFFF',
   },
-  legCell: {width: 26, alignItems: 'center', paddingHorizontal: 0},
-  cellText: {fontFamily: FONTS.REGULAR, fontSize: 10, color: '#414651'},
+  legCell: {width: 23, alignItems: 'center', paddingHorizontal: 0},
+  legText: {fontFamily: FONTS.REGULAR, fontSize: 11, color: '#414651'},
+  cellText: {fontFamily: FONTS.MEDIUM, fontSize: 11, color: '#414651'},
   statusCell: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 3,
+    paddingHorizontal: 4,
     gap: 4,
   },
   statusHalo: {
@@ -368,33 +596,94 @@ const styles = StyleSheet.create({
   },
   onlineHalo: {backgroundColor: '#D0F5DE'},
   offlineHalo: {backgroundColor: '#FFD9D5'},
-  statusDot: {width: 9, height: 9, borderRadius: 5},
+  statusDot: {width: 8, height: 8, borderRadius: 4},
   onlineDot: {backgroundColor: '#2BC860'},
   offlineDot: {backgroundColor: '#FF443C'},
-  statusText: {fontFamily: FONTS.MEDIUM, fontSize: 10},
+  statusText: {fontFamily: FONTS.MEDIUM, fontSize: 11},
   onlineText: {color: '#24BD58'},
   offlineText: {color: '#FF443C'},
   emptySlot: {
     position: 'absolute',
-    left: 32,
+    left: 30,
     height: ROW_HEIGHT,
     justifyContent: 'center',
   },
   addButton: {
-    backgroundColor: '#0085FF',
-    minHeight: 28,
+    backgroundColor: '#8858F9',
+    overflow: 'hidden',
+    minHeight: 27,
     borderRadius: 5,
     paddingHorizontal: 10,
     justifyContent: 'center',
   },
-  addText: {fontFamily: FONTS.REGULAR, fontSize: 10, color: '#FFFFFF'},
-  editColumn: {width: 30, paddingLeft: 4},
+  addText: {fontFamily: FONTS.REGULAR, fontSize: 11, color: '#FFFFFF'},
+  editColumn: {width: 29, paddingLeft: 2},
   editButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 5,
+    width: 27,
+    height: 27,
+    borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0085FF',
+    backgroundColor: '#8858F9',
+    overflow: 'hidden',
   },
+  footer: {
+    flexShrink: 0,
+    paddingTop: 8,
+    backgroundColor: '#F4F7FA',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E4DFEC',
+  },
+  connectionSummary: {
+    marginHorizontal: 14,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  summaryHeadingRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  connectionSummaryTitle: {
+    fontFamily: FONTS.BOLD,
+    fontSize: 12,
+    color: '#393D45',
+  },
+  utilizationText: {fontFamily: FONTS.MEDIUM, fontSize: 10, color: '#7952C9'},
+  capacityBar: {flexDirection: 'row', gap: 4, marginTop: 12},
+  capacitySegment: {
+    flex: 1,
+    height: 7,
+    borderRadius: 3,
+    backgroundColor: '#ECE7F7',
+  },
+  usedSegment: {backgroundColor: '#8858F9'},
+  capacityLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  capacityText: {fontFamily: FONTS.REGULAR, fontSize: 10, color: '#85808E'},
+  freeLegsText: {fontFamily: FONTS.BOLD, fontSize: 10, color: '#7952C9'},
+  statusSummaryRow: {flexDirection: 'row', gap: 8, marginTop: 12},
+  statusSummaryItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    padding: 9,
+    borderRadius: 8,
+  },
+  onlineSummary: {backgroundColor: '#EFF9F2'},
+  offlineSummary: {backgroundColor: '#FFF3F1'},
+  statusSummaryLabel: {
+    flex: 1,
+    fontFamily: FONTS.MEDIUM,
+    fontSize: 11,
+    color: '#666370',
+  },
+  statusSummaryValue: {fontFamily: FONTS.BOLD, fontSize: 14, color: '#393D45'},
 });

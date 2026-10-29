@@ -117,7 +117,7 @@ const NetworkHero = ({version}: {version: string}) => {
       ]),
     );
     flowAnimation.start();
-    pulseAnimation.start();
+    pulseAnimation.start(); 
     return () => {
       flowAnimation.stop();
       pulseAnimation.stop();
