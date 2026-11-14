@@ -1,3 +1,6 @@
+import {useSelector} from 'react-redux';
+import type {RootState} from '../../store/reducers';
+import {selectOffline} from '../../features/onuOffline/model';
 import {DataType} from '@types';
 import {FONTS, IMAGES, SIZE} from '@res';
 import {API_ENVIRONMENT} from '../../apis/urls';
@@ -45,6 +48,7 @@ type DashboardProps = {
   onRouteFiber: () => void;
   onCircuitConnectivity: () => void;
   onLastMileConnectivity: () => void;
+  onOnuOffline: () => void;
   onModulePress: (item: DataType.SubModule) => void;
 };
 
@@ -339,8 +343,11 @@ export const HomeDashboard = ({
   onRouteFiber,
   onCircuitConnectivity,
   onLastMileConnectivity,
+  onOnuOffline,
   onModulePress,
 }: DashboardProps) => {
+  const onu = useSelector((state: RootState) => state.onuOffline);
+  const offlineCount = useMemo(() => selectOffline(onu.records).length, [onu.records]);
   const {width} = useWindowDimensions();
   const compact = width < 360;
   const employee = dashboardList?.employeeDetails as any;
@@ -501,6 +508,18 @@ export const HomeDashboard = ({
             icon={IMAGES.Circuit}
             iconNode={<SplitterIcon size={30} color="#7947E8" />}
             onPress={onLastMileConnectivity}
+          />
+        </View>
+
+        <View style={[styles.actionsRow, styles.secondActionRow]}>
+          <ActionCard
+            title="ONU Offline Customers"
+            subtitle={onu.receivedAt ? `${offlineCount} known offline • View Customers ›` : 'Waiting for live data • View Customers ›'}
+            color="#D92D3A"
+            bg="#FFF0F1"
+            icon={IMAGES.wifiOff}
+            iconNode={<View style={styles.onuIcon}><TowerIcon color="#D92D3A" size={30} /><View style={styles.onuStatusDot} /></View>}
+            onPress={onOnuOffline}
           />
         </View>
 
@@ -680,6 +699,8 @@ const shadow = {
 };
 
 const styles = StyleSheet.create({
+  onuIcon: {width: 32, height: 36},
+  onuStatusDot: {position: 'absolute', right: 0, bottom: 0, width: 10, height: 10, borderRadius: 5, backgroundColor: '#D92D3A', borderWidth: 2, borderColor: '#FFFFFF'},
   root: {flex: 1, backgroundColor: '#F8F8FB'},
   headerBg: {
     height: SIZE.MVS(202),

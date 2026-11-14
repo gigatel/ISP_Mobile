@@ -1,4 +1,4 @@
-import React, {FC, useEffect, useMemo, useRef, useState} from 'react';
+import React, {FC, useMemo, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +18,7 @@ import {
 import LinearGradient from 'react-native-linear-gradient';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useMasterFormKeyboard} from '../../hooks/useMasterFormKeyboard';
 import {
   launchCamera,
   CameraOptions,
@@ -99,8 +100,9 @@ const getGeneratedMasterName = (label: string) =>
 
 const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
+  const {scrollRef, keyboardOverlap, revealFocusedInput, onScroll} =
+    useMasterFormKeyboard(SIZE.MS(24));
   const dispatch = useDispatch<StoreDispatch>();
-  const formScrollRef = useRef<ScrollView | null>(null);
   const isRouteMasterSelectionFlow = Boolean(
     route.params?.routeMasterSelectionMode,
   );
@@ -167,30 +169,11 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
     initialMasterOption,
   );
   const [showMasterTypeDropdown, setShowMasterTypeDropdown] = useState(false);
-  const [keyboardInset, setKeyboardInset] = useState(0);
   const [addressLookupMessage, setAddressLookupMessage] = useState(
     initialAddress
       ? 'Address matched to the current GPS location.'
       : 'No exact mapped address found. Enter the master address manually.',
   );
-
-  useEffect(() => {
-    const showEvent =
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent =
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSubscription = Keyboard.addListener(showEvent, event => {
-      setKeyboardInset(event.endCoordinates.height);
-    });
-    const hideSubscription = Keyboard.addListener(hideEvent, () => {
-      setKeyboardInset(0);
-    });
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, []);
 
   const selectedMasterType = selectedMaster?.value || '';
   const selectedMasterLabel = selectedMaster?.label || 'Master';
@@ -756,7 +739,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
       preset="fixed"
       isSafeArea={false}
       isNavSafeArea={false}
-      keyboardAvoidingEnabled={false}
+      keyboardAvoidingEnabled={Platform.OS === 'ios'}
       statusBgColor={isRouteMasterSelectionFlow ? '#8858F9' : '#F4F7FB'}
       statusBarStyle={isRouteMasterSelectionFlow ? 'light' : 'dark'}>
       <StatusBar
@@ -807,11 +790,15 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
         </LinearGradient>
 
         <ScrollView
-          ref={formScrollRef}
+          ref={scrollRef}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          onLayout={revealFocusedInput}
+          onContentSizeChange={revealFocusedInput}
           style={styles.scroll}
           contentContainerStyle={[
             styles.scrollContent,
-            {paddingBottom: insets.bottom + SIZE.MS(96) + keyboardInset},
+            {paddingBottom: SIZE.MS(24) + keyboardOverlap},
           ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={
@@ -850,6 +837,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                 </Text>
                 <View style={styles.latLngInputWrap}>
                   <TextInput
+                    onFocus={revealFocusedInput}
                     value={latLngText}
                     onChangeText={setLatLngText}
                     placeholder="Enter Lat/Lng"
@@ -954,6 +942,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               Address<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
+              onFocus={revealFocusedInput}
               value={masterAddress}
               onChangeText={setMasterAddress}
               placeholder="Enter the exact master address"
@@ -967,6 +956,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                   City<Text style={styles.required}> *</Text>
                 </Text>
                 <TextInput
+                  onFocus={revealFocusedInput}
                   value={city}
                   onChangeText={setCity}
                   placeholder="Enter City"
@@ -981,6 +971,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                   State<Text style={styles.required}> *</Text>
                 </Text>
                 <TextInput
+                  onFocus={revealFocusedInput}
                   value={stateName}
                   onChangeText={setStateName}
                   placeholder="Enter State"
@@ -997,6 +988,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                   Area<Text style={styles.required}> *</Text>
                 </Text>
                 <TextInput
+                  onFocus={revealFocusedInput}
                   value={area}
                   onChangeText={setArea}
                   placeholder="Enter Area"
@@ -1011,6 +1003,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
                   Pincode<Text style={styles.required}> *</Text>
                 </Text>
                 <TextInput
+                  onFocus={revealFocusedInput}
                   value={pincode}
                   onChangeText={value =>
                     setPincode(value.replace(/\D/g, '').slice(0, 6))
@@ -1028,6 +1021,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               Country<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
+              onFocus={revealFocusedInput}
               value={country}
               onChangeText={setCountry}
               placeholder="Enter Country"
@@ -1038,6 +1032,7 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
 
             <Text style={styles.label}>Landmark</Text>
             <TextInput
+              onFocus={revealFocusedInput}
               value={landmark}
               onChangeText={setLandmark}
               placeholder="Enter Landmark"
@@ -1058,13 +1053,9 @@ const AddMasterForm: FC<AddMasterFormProps> = ({navigation, route}) => {
               Remarks<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
+              onFocus={revealFocusedInput}
               value={remarks}
               onChangeText={setRemarks}
-              onFocus={() => {
-                setTimeout(() => {
-                  formScrollRef.current?.scrollToEnd({animated: true});
-                }, 250);
-              }}
               placeholder="Enter Remarks"
               placeholderTextColor="#9CA3AF"
               style={styles.input}
@@ -1190,6 +1181,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: SIZE.MS(14),
     paddingTop: SIZE.MS(8),
+    paddingBottom: SIZE.MS(12),
   },
   formCard: {
     backgroundColor: COLORS.WHITE,
@@ -1492,10 +1484,6 @@ const styles = StyleSheet.create({
     color: '#1577FF',
   },
   bottomActions: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     flexDirection: 'row',
     gap: SIZE.MS(8),
     paddingTop: SIZE.MS(10),

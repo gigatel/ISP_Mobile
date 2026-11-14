@@ -1,9 +1,8 @@
-import React, {FC, useEffect, useMemo, useRef, useState} from 'react';
+import React, {FC, useEffect, useMemo, useState} from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
-  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -18,6 +17,7 @@ import {
 import LinearGradient from 'react-native-linear-gradient';
 import {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useMasterFormKeyboard} from '../../hooks/useMasterFormKeyboard';
 import {
   CameraOptions,
   ImagePickerResponse,
@@ -346,6 +346,8 @@ const getKnownCount = (master: any, masterType: string) => {
 
 const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
+  const {scrollRef, keyboardOverlap, revealFocusedInput, onScroll} =
+    useMasterFormKeyboard(SIZE.MS(24));
   const dispatch = useDispatch<StoreDispatch>();
   const {
     selectedMasterType,
@@ -381,44 +383,9 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
     useState(false);
   const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
-  const scrollViewRef = useRef<ScrollView>(null);
-  const bottomFieldFocusedRef = useRef(false);
   const isSplitterFlow = selectedMasterType.toLowerCase() === 'splitter';
-
-  const keepBottomFieldVisible = () => {
-    bottomFieldFocusedRef.current = true;
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({animated: true});
-    }, keyboardHeight > 0 ? 100 : 400);
-  };
-
-  const clearBottomFieldFocus = () => {
-    bottomFieldFocusedRef.current = false;
-  };
-
-  useEffect(() => {
-    const keyboardShowListener = Keyboard.addListener('keyboardDidShow', event => {
-      setKeyboardHeight(event.endCoordinates.height);
-      if (bottomFieldFocusedRef.current) {
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            scrollViewRef.current?.scrollToEnd({animated: true});
-          }, 100);
-        });
-      }
-    });
-    const keyboardHideListener = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardHeight(0);
-    });
-
-    return () => {
-      keyboardShowListener.remove();
-      keyboardHideListener.remove();
-    };
-  }, []);
 
   useEffect(() => {
     const loadSupportDetails = async () => {
@@ -557,8 +524,9 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       const uri = response.assets?.[0]?.uri;
       if (!response.didCancel && !response.errorCode && uri) {
         try {
-          const watermarkedUri =
-            await ImageWatermark.applyLocationWatermark(uri);
+          const watermarkedUri = await ImageWatermark.applyLocationWatermark(
+            uri,
+          );
           if (slot === 1) {
             setImage1(watermarkedUri);
           } else {
@@ -607,10 +575,7 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       selectedMasterType === 'pop' &&
       supportType.toLowerCase() !== 'building'
     ) {
-      Alert.alert(
-        'Building Required',
-        'POP can only be placed on a Building.',
-      );
+      Alert.alert('Building Required', 'POP can only be placed on a Building.');
       return;
     }
 
@@ -619,7 +584,10 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
       return;
     }
     if (isSplitterFlow && !splitterType) {
-      Alert.alert('Spliter/FatBox Type', 'Please select a Spliter/FatBox type.');
+      Alert.alert(
+        'Spliter/FatBox Type',
+        'Please select a Spliter/FatBox type.',
+      );
       return;
     }
     if (isSplitterFlow && !splitterName.trim()) {
@@ -859,14 +827,15 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
         </View>
 
         <ScrollView
-          ref={scrollViewRef}
+          ref={scrollRef}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          onLayout={revealFocusedInput}
+          onContentSizeChange={revealFocusedInput}
           style={styles.scroll}
           contentContainerStyle={[
             styles.scrollContent,
-            {
-              paddingBottom:
-                insets.bottom + SIZE.MS(110) + keyboardHeight,
-            },
+            {paddingBottom: SIZE.MS(24) + keyboardOverlap},
           ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
@@ -1043,10 +1012,9 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
                   Spliter/FatBox Name<Text style={styles.required}> *</Text>
                 </Text>
                 <TextInput
+                  onFocus={revealFocusedInput}
                   value={splitterName}
                   onChangeText={setSplitterName}
-                  onFocus={keepBottomFieldVisible}
-                  onBlur={clearBottomFieldFocus}
                   placeholder="Enter Spliter/FatBox Name"
                   placeholderTextColor="#9CA3AF"
                   style={styles.splitterNameInput}
@@ -1057,10 +1025,9 @@ const AddAirMasterOnSupport: FC<Props> = ({navigation, route}) => {
               Remarks<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
+              onFocus={revealFocusedInput}
               value={remarks}
               onChangeText={setRemarks}
-              onFocus={keepBottomFieldVisible}
-              onBlur={clearBottomFieldFocus}
               placeholder="Enter Remarks"
               placeholderTextColor="#9CA3AF"
               style={styles.remarksInput}
@@ -1171,7 +1138,7 @@ const styles = StyleSheet.create({
   scroll: {flex: 1},
   scrollContent: {
     paddingHorizontal: SIZE.MS(12),
-    paddingBottom: SIZE.MS(100),
+    paddingBottom: SIZE.MS(12),
   },
   supportCard: {
     borderRadius: SIZE.MS(7),
@@ -1464,10 +1431,6 @@ const styles = StyleSheet.create({
     color: '#252A33',
   },
   bottomActions: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     flexDirection: 'row',
     gap: SIZE.MS(8),
     paddingTop: SIZE.MS(10),

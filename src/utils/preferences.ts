@@ -168,3 +168,11 @@ export const mmkvStorage = {
     return Promise.resolve();
   },
 };
+
+// Observe session changes without polling or tying connection lifetime to a screen.
+export const observeSession = (listener: () => void) => {
+  const subscription = storage.addOnValueChangedListener(key => {
+    if (['API_AUTH_TOKEN', 'LOGIN_RESPONSE', 'COMPANY_ID'].includes(key)) listener();
+  });
+  return () => subscription.remove();
+};

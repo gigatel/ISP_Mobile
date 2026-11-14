@@ -1,3 +1,4 @@
+import {onuOfflineReducer} from './slices/onuOffline.slice';
 import { combineReducers, UnknownAction } from 'redux';
 import { store } from './store';
 import { loginReducer } from './slices/login.slice';
@@ -43,6 +44,7 @@ const disabledChamberComplaintReducer = (
 ) => state;
 
 const appReducer = combineReducers({
+  onuOffline: onuOfflineReducer,
   login: loginReducer,
   permission: permissionReducer,
   dashboard: dashboardReducer,

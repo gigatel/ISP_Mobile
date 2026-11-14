@@ -1246,6 +1246,7 @@ const Home: FC<ScreenProps.Home> = ({loading, dashboardList, navigation}) => {
             onLastMileConnectivity={() =>
               navigator?.getParent()?.navigate('LastMileConnectivity')
             }
+            onOnuOffline={() => navigator?.getParent()?.navigate('OnuOfflineCustomers')}
             onModulePress={moduleNavigation}
           />
 

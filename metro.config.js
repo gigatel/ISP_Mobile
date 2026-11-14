@@ -16,6 +16,8 @@ const config = {
     ),
   },
   resolver: {
+    // Avoid the enclosing home-directory Watchman watch on this machine.
+    useWatchman: false,
     assetExts: assetExts.filter(ext => ext !== 'svg'),
     sourceExts: [...sourceExts, 'svg'],
   },

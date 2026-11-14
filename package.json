@@ -19,6 +19,7 @@
   "dependencies": {
     "@hookform/resolvers": "^5.2.1",
     "@mapbox/polyline": "^1.2.1",
+    "@microsoft/signalr": "^8.0.29",
     "@notifee/react-native": "^9.1.8",
     "@react-native-camera-roll/camera-roll": "^7.10.2",
     "@react-native-clipboard/clipboard": "^1.16.3",
@@ -70,6 +71,7 @@
     "react-native-svg": "15.15.5",
     "react-native-system-navigation-bar": "^2.6.4",
     "react-native-tts": "^4.1.1",
+    "react-native-url-polyfill": "^2.0.0",
     "react-native-webview": "^13.13.5",
     "react-native-year-month-pickers": "1.1.4",
     "react-redux": "^9.2.0",

@@ -1,3 +1,5 @@
+import OnuOfflineCustomersScreen from '../screens/OnuOfflineCustomersScreen';
+import {mountOnuSession} from '../services/onuOfflineSignalR';
 // navigator.tsx
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
@@ -72,6 +74,7 @@ import LastMileCustomerFormScreen from '@screens/LastMileConnectivityScreen/Cust
 import InfraConnectivityScreen from '@screens/InfraConnectivityScreen';
 import type {PausedRouteSnapshot} from '../services/pausedRouteStorage';
 export interface RootStackParamList {
+  OnuOfflineCustomers: undefined;
   Splash: undefined;
   BottomTab: undefined;
   addMaster: undefined;
@@ -341,6 +344,7 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
     <Stack.Navigator
       screenOptions={{headerShown: false}}
       initialRouteName={initialRoute}>
+      <Stack.Screen name="OnuOfflineCustomers" component={OnuOfflineCustomersScreen} />
       <Stack.Screen name="Splash" component={Splash} />
       <Stack.Screen name="Login" component={Login} />
       <Stack.Screen name="BottomTab" component={BottomTab} />
@@ -517,6 +521,7 @@ const RootStack: FC<{initialRoute: string}> = ({initialRoute}) => {
 };
 const RootNavigator = ({}) => {
   const [initialRoute, setInitialRoute] = useState('');
+  useEffect(() => mountOnuSession(), []);
   const getActiveRouteName = (state: any): string | undefined => {
     if (!state) return undefined;
     const route = state.routes?.[state.index ?? 0];
